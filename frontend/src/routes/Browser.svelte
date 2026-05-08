@@ -3756,12 +3756,16 @@ ${logsText || '(no logs)'}
       <p class="browser-loading-text">Loading from blockchain...</p>
     </div>
     
-    <!-- Content Frame -->
+    <!-- Content Frame
+         Clipboard: TELA apps (e.g. Villager "Paste" using navigator.clipboard.readText)
+         need sandbox allow-clipboard-* + allow= delegation; otherwise readText fails
+         silently or with NotAllowedError inside the iframe (differs by OS/webview). -->
     <iframe
       bind:this={contentFrame}
       class="browser-content-frame"
       style:display={!showWelcome && !loading ? 'block' : 'none'}
-      sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-clipboard-read allow-clipboard-write"
+      allow="clipboard-read; clipboard-write"
       title="App Content"
     ></iframe>
     
