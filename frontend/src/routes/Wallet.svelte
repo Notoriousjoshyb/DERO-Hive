@@ -283,14 +283,30 @@
   // ============================================
   // POLLING
   // ============================================
-  let balanceInterval;
-  
+  // Heartbeat is intentionally tight (Engram-style "pulse") so the dashboard
+  // feels live. Per-tick work is three in-memory walletapi reads -- balance,
+  // height, daemon height -- plus a transaction-history reload only when the
+  // wallet height has actually advanced. Push channels (wallet:newTransaction,
+  // wallet:balanceChanged) supplement this when XSWD is subscribed. A full
+  // SyncWallet is reserved for explicit user actions (manual Refresh, wallet
+  // open, registration complete) where the user is waiting on freshness.
+  const WALLET_REFRESH_INTERVAL_MS = 5000;
+  let refreshInterval;
+  let activeRefresh = null;
+  let lastSyncedWalletHeight = 0;
+
   function startPolling() {
-    balanceInterval = setInterval(refreshBalance, 15000);
+    stopPolling();
+    refreshInterval = setInterval(() => {
+      refreshWalletSnapshot({ notifyIncoming: true });
+    }, WALLET_REFRESH_INTERVAL_MS);
   }
-  
+
   function stopPolling() {
-    if (balanceInterval) clearInterval(balanceInterval);
+    if (refreshInterval) {
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
   }
   
   // ============================================
@@ -307,8 +323,7 @@
           walletPath: status.path,
         }));
         walletPath = status.path || '';
-        await refreshBalance();
-        await loadTransactionHistory();
+        await refreshWalletSnapshot({ forceSync: true });
         dashboardLoading = false;
         startPolling();
         loadWalletPath();
@@ -338,6 +353,14 @@
       });
       EventsOn('wallet:daemon_connection_warning', (data) => {
         console.warn('[WALLET] Daemon connection warning:', data);
+      });
+
+      EventsOn('wallet:newTransaction', () => {
+        refreshWalletSnapshot({ forceHistory: true, notifyIncoming: true });
+      });
+
+      EventsOn('wallet:balanceChanged', () => {
+        refreshWalletSnapshot();
       });
       
       // Listen for wallet unregistered status (new wallets)
@@ -443,6 +466,8 @@
     EventsOff('network-mode-changed');
     EventsOff('wallet:sync_warning');
     EventsOff('wallet:daemon_connection_warning');
+    EventsOff('wallet:newTransaction');
+    EventsOff('wallet:balanceChanged');
     EventsOff('wallet:unregistered');
     EventsOff('wallet:registration_started');
     EventsOff('wallet:registration_progress');
@@ -575,8 +600,7 @@
           address: result.address,
           walletPath: result.path,
         }));
-        await refreshBalance();
-        await loadTransactionHistory();
+        await refreshWalletSnapshot({ forceSync: true });
         startPolling();
         loadWalletPath();
         SubscribeToWalletEvents().catch(() => {});
@@ -663,6 +687,59 @@
       isSyncing = false;
     }
   }
+
+  // Coalesces concurrent refreshes. A cheap refresh piggybacks on any
+  // in-flight refresh; a forceSync or forceHistory refresh waits for the
+  // in-flight one and then runs a fresh pass so manual Refresh and push
+  // events always reflect daemon state.
+  //
+  // History reload is gated on real signals (height advance, push event, or
+  // explicit force) instead of firing every tick. This matches Engram's
+  // height-bounded Show_Transfers pattern: when no block has been seen, no
+  // tx can have arrived, so re-fetching history is wasted work.
+  async function refreshWalletSnapshot({
+    forceSync = false,
+    forceHistory = false,
+    notifyIncoming = false,
+  } = {}) {
+    if (!$walletState.isOpen) return;
+
+    if (activeRefresh) {
+      await activeRefresh;
+      if (!forceSync && !forceHistory) return;
+    }
+
+    const previousLatestTxId = transactionHistory[0]?.txid || null;
+
+    activeRefresh = (async () => {
+      try {
+        await refreshBalance(forceSync);
+
+        const newHeight = syncStatus?.walletHeight ?? 0;
+        const heightAdvanced = newHeight > lastSyncedWalletHeight;
+
+        if (forceSync || forceHistory || heightAdvanced) {
+          await loadTransactionHistory();
+          if (newHeight > 0) lastSyncedWalletHeight = newHeight;
+        }
+
+        const latestTx = transactionHistory[0];
+        if (
+          notifyIncoming &&
+          previousLatestTxId &&
+          latestTx &&
+          latestTx.txid !== previousLatestTxId &&
+          (latestTx.incoming || latestTx.coinbase)
+        ) {
+          toast.success(`Received ${formatBalance(latestTx.amount)} DERO`);
+        }
+      } finally {
+        activeRefresh = null;
+      }
+    })();
+
+    await activeRefresh;
+  }
   
   async function loadTransactionHistory(limit = historyLimit) {
     try {
@@ -709,11 +786,9 @@
   
   
   async function refreshAll() {
-    // Force sync when user manually refreshes
-    await refreshBalance(true);
-    await loadTransactionHistory();
+    await refreshWalletSnapshot({ forceSync: true });
     await checkRegistrationStatus();
-    
+
     if (syncStatus && !syncStatus.synced && syncStatus.behindBlocks > 0) {
       toast.info(`Syncing: ${syncStatus.behindBlocks} blocks behind`);
     } else {
@@ -850,8 +925,7 @@
           toast.warning(result.networkWarning);
         }
         
-        await refreshBalance();
-        await loadTransactionHistory();
+        await refreshWalletSnapshot({ forceSync: true });
         await checkRegistrationStatus();
         dashboardLoading = false;
         startPolling();
@@ -884,6 +958,8 @@
           walletPath: '',
         }));
         transactionHistory = [];
+        lastSyncedWalletHeight = 0;
+        syncStatus = null;
         activeSection = 'dashboard';
         addressType = 'standard';
         integratedAddress = '';
@@ -1080,8 +1156,7 @@
         sendTxid = result.result?.txid || result.txid;
         sendStep = 3;
         toast.success('Transaction sent successfully!');
-        await refreshBalance();
-        await loadTransactionHistory();
+        await refreshWalletSnapshot();
       } else {
         sendError = handleBackendError(result, { showToast: false }) || 'Transaction failed';
       }
