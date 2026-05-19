@@ -992,3 +992,43 @@ func TestJSONRoundTrip_VirtualShardDOCInfo(t *testing.T) {
 	}
 }
 
+func TestLongestCommonPathPrefix(t *testing.T) {
+	a := "/home/user/project/static/index.html"
+	b := "/home/user/project/static/assets/icon.png"
+	got := longestCommonPathPrefix(a, b)
+	want := "/home/user/project/static"
+	if got != want {
+		t.Errorf("longestCommonPathPrefix() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDropPaths_MultiFile(t *testing.T) {
+	app := &App{}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "static")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	html := filepath.Join(sub, "index.html")
+	if err := os.WriteFile(html, []byte("<html></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	assetDir := filepath.Join(sub, "assets")
+	if err := os.MkdirAll(assetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ico := filepath.Join(assetDir, "favicon.ico")
+	if err := os.WriteFile(ico, []byte("ico"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := app.ResolveDropPaths([]string{html, ico})
+	if result["success"] != true {
+		t.Fatalf("ResolveDropPaths failed: %v", result["error"])
+	}
+	folder, _ := result["folderPath"].(string)
+	if folder != sub {
+		t.Errorf("folderPath = %q, want %q", folder, sub)
+	}
+}
+

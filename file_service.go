@@ -817,6 +817,165 @@ func (a *App) SelectFiles() map[string]interface{} {
 	}
 }
 
+// LoadFilesFromPaths reads dropped or resolved filesystem paths into the same shape as SelectFiles.
+func (a *App) LoadFilesFromPaths(paths []string) map[string]interface{} {
+	if len(paths) == 0 {
+		return map[string]interface{}{
+			"success": false,
+			"error":   "No paths provided",
+		}
+	}
+
+	var files []map[string]interface{}
+	for _, filePath := range paths {
+		info, err := os.Stat(filePath)
+		if err != nil {
+			a.logToConsole(fmt.Sprintf("[WARN] LoadFilesFromPaths: Could not stat %s - %v", filePath, err))
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			a.logToConsole(fmt.Sprintf("[WARN] LoadFilesFromPaths: Could not read %s - %v", filePath, err))
+			continue
+		}
+
+		files = append(files, map[string]interface{}{
+			"name":   info.Name(),
+			"path":   filePath,
+			"subDir": "/",
+			"size":   info.Size(),
+			"type":   detectMimeType(info.Name()),
+			"data":   string(content),
+		})
+	}
+
+	if len(files) == 0 {
+		return map[string]interface{}{
+			"success": false,
+			"error":   "No readable files in drop",
+		}
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"files":   files,
+	}
+}
+
+// ResolveDropPaths picks a folder path suitable for batch upload from native file-drop paths.
+func (a *App) ResolveDropPaths(paths []string) map[string]interface{} {
+	if len(paths) == 0 {
+		return map[string]interface{}{
+			"success": false,
+			"error":   "No paths provided",
+		}
+	}
+
+	absPaths := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		absPaths = append(absPaths, abs)
+	}
+
+	if len(absPaths) == 0 {
+		return map[string]interface{}{
+			"success": false,
+			"error":   "No valid paths in drop",
+		}
+	}
+
+	if len(absPaths) == 1 {
+		info, err := os.Stat(absPaths[0])
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Cannot access path: %v", err),
+			}
+		}
+		folder := absPaths[0]
+		if !info.IsDir() {
+			folder = filepath.Dir(absPaths[0])
+		}
+		return map[string]interface{}{
+			"success":    true,
+			"folderPath": folder,
+			"paths":      paths,
+		}
+	}
+
+	dirs := make([]string, len(absPaths))
+	for i, p := range absPaths {
+		info, err := os.Stat(p)
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Cannot access %s: %v", p, err),
+			}
+		}
+		if info.IsDir() {
+			dirs[i] = p
+		} else {
+			dirs[i] = filepath.Dir(p)
+		}
+	}
+
+	folder := dirs[0]
+	for _, d := range dirs[1:] {
+		folder = longestCommonPathPrefix(folder, d)
+		if folder == "" {
+			break
+		}
+	}
+	if folder == "" {
+		folder = dirs[0]
+	}
+
+	return map[string]interface{}{
+		"success":    true,
+		"folderPath": folder,
+		"paths":      paths,
+	}
+}
+
+// longestCommonPathPrefix returns the longest shared directory prefix for two absolute paths.
+func longestCommonPathPrefix(a, b string) string {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if a == b {
+		return a
+	}
+
+	sep := string(filepath.Separator)
+	aParts := strings.Split(a, sep)
+	bParts := strings.Split(b, sep)
+	common := make([]string, 0, len(aParts))
+	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+		if aParts[i] != bParts[i] {
+			break
+		}
+		common = append(common, aParts[i])
+	}
+	if len(common) == 0 {
+		return ""
+	}
+	prefix := filepath.Join(common...)
+	if strings.HasPrefix(a, sep) && !strings.HasPrefix(prefix, sep) {
+		prefix = sep + prefix
+	}
+	return prefix
+}
+
 // detectMimeType returns the MIME type based on file extension
 func detectMimeType(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))

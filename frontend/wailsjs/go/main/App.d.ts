@@ -441,6 +441,8 @@ export function ListDirectory(arg1:string):Promise<Record<string, any>>;
 
 export function ListRecentWallets():Promise<Array<string>>;
 
+export function LoadFilesFromPaths(arg1:Array<string>):Promise<Record<string, any>>;
+
 export function ManuallyAllowApp(arg1:string):Promise<Record<string, any>>;
 
 export function ManuallyBlockApp(arg1:string):Promise<Record<string, any>>;
@@ -512,6 +514,8 @@ export function RequestInterceptor(arg1:string):Promise<Record<string, any>>;
 export function ResetSimulator():Promise<Record<string, any>>;
 
 export function ResolveDeroName(arg1:string):Promise<Record<string, any>>;
+
+export function ResolveDropPaths(arg1:Array<string>):Promise<Record<string, any>>;
 
 export function RespondToXSWDRequest(arg1:string,arg2:boolean,arg3:string):Promise<void>;
 

@@ -20,11 +20,9 @@
       bind:this={batchDropzoneElement}
       class="dropzone"
       class:active={batchDragging}
-      on:dragover|preventDefault={() => batchDragging = true}
-      on:dragleave={() => batchDragging = false}
-      on:drop|preventDefault={() => {
-        batchDragging = false;
-      }}
+      on:dragover|preventDefault={() => { batchDragging = true; }}
+      on:dragleave={() => { batchDragging = false; }}
+      on:drop|preventDefault={() => { batchDragging = false; }}
       on:click={async () => {
         const selected = await selectFolder();
         if (selected) {

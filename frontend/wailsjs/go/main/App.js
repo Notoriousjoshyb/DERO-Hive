@@ -878,6 +878,10 @@ export function ListRecentWallets() {
   return window['go']['main']['App']['ListRecentWallets']();
 }
 
+export function LoadFilesFromPaths(arg1) {
+  return window['go']['main']['App']['LoadFilesFromPaths'](arg1);
+}
+
 export function ManuallyAllowApp(arg1) {
   return window['go']['main']['App']['ManuallyAllowApp'](arg1);
 }
@@ -1020,6 +1024,10 @@ export function ResetSimulator() {
 
 export function ResolveDeroName(arg1) {
   return window['go']['main']['App']['ResolveDeroName'](arg1);
+}
+
+export function ResolveDropPaths(arg1) {
+  return window['go']['main']['App']['ResolveDropPaths'](arg1);
 }
 
 export function RespondToXSWDRequest(arg1, arg2, arg3) {

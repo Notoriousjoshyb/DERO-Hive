@@ -116,17 +116,16 @@
     };
     window.addEventListener('focus', handleWindowFocus);
 
-    // Secondary defense against webview navigating to dropped files.
-    // Primary fix is DisableWebViewDrop: true in main.go (Go/native level).
-    // This JS layer catches any edge cases the native flag might miss.
-    const preventFileDrop = (e) => {
-      if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+    // Prevent WebKit from navigating to dropped files (Linux #3686).
+    // Only preventDefault — do not stopPropagation, so Wails drag listeners still run.
+    const preventFileDropNavigation = (e) => {
+      if (e.dataTransfer?.types?.includes('Files')) {
         e.preventDefault();
-        e.stopPropagation();
       }
     };
-    window.addEventListener('dragover', preventFileDrop, true);
-    window.addEventListener('drop', preventFileDrop, true);
+    for (const evtName of ['dragover', 'drop', 'dragleave', 'dragenter']) {
+      window.addEventListener(evtName, preventFileDropNavigation, true);
+    }
     
     // Minimum splash duration (allows animation to complete)
     const splashMinTime = new Promise(resolve => setTimeout(resolve, 3500));

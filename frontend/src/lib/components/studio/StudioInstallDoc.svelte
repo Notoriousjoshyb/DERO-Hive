@@ -15,6 +15,7 @@
     X
   } from 'lucide-svelte';
 
+  export let dropzoneElement = null;
   export let stagedFiles = [];
   export let docDescription = '';
   export let docIconURL = '';
@@ -49,8 +50,10 @@
     </button>
   </p>
   
-  <!-- Drop Zone -->
-  <DropZone on:filesStaged={handleFilesStaged} />
+  <!-- Drop Zone (dropzoneElement used by Studio.svelte native OnFileDrop on Linux) -->
+  <div bind:this={dropzoneElement} class="studio-doc-drop-host">
+    <DropZone on:filesStaged={handleFilesStaged} />
+  </div>
   
   <!-- v6.1 Staged Files List -->
   {#if stagedFiles.length > 0}

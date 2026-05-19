@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { walletState, settingsState, navigateTo, syncNetworkMode, toast } from '../lib/stores/appState.js';
   import StudioBatchUpload from '../lib/components/studio/StudioBatchUpload.svelte';
   import DiffViewer from '../lib/components/DiffViewer.svelte';
@@ -23,10 +23,12 @@
     IsInSimulatorMode, GetSimulatorDeploymentInfo, CloneTELA, GetClonePath,
     StartLocalDevServer, StopLocalDevServer, GetLocalDevServerStatus, RefreshLocalDevServer,
     StartSimulatorMode, StopSimulatorMode, GetSimulatorStatus, SetNetworkMode,
-    ShardFile, ConstructFromShards, OpenURLInBrowserIfAllowed
+    ShardFile, ConstructFromShards, OpenURLInBrowserIfAllowed,
+    ResolveDropPaths, LoadFilesFromPaths
   } from '../../wailsjs/go/main/App.js';
   import { ClipboardSetText } from '../../wailsjs/runtime/runtime.js';
   import { EventsOn, EventsOff, OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime.js';
+  import { isDropPointInElement } from '../lib/utils/fileDrop.js';
   import { 
     Globe, FlaskConical, Gamepad2, FileText, FolderUp, FolderDown, Layers, RefreshCw, 
     Package, Copy, Server, GitCompare, AlertTriangle, X, Plus, Loader2, Lock, Eye, Square,
@@ -157,8 +159,9 @@
   // Deploy SC state moved to StudioDeploySC.svelte
   let deploySCRef; // Reference to StudioDeploySC component for confirmation flow
 
-  // Dropzone element reference for native drag-and-drop
+  // Dropzone element references for native drag-and-drop (Wails OnFileDrop)
   let batchDropzoneElement;
+  let docDropzoneElement;
   let shardDropzoneElement;
   let shardDragging = false;
   
@@ -169,53 +172,83 @@
     // Listen for file change events (hot reload)
     EventsOn('localdev:reload', handleFileChange);
     
-    // Set up Wails native drag-and-drop handler for REAL filesystem paths
-    // (Browser drag-and-drop API only provides virtual paths for security)
-    OnFileDrop((x, y, paths) => {
-      // Handle batch-upload tab (folder drops)
-      if (activeTab === 'batch-upload' && !batchFolderPath) {
-        if (batchDropzoneElement) {
-          const rect = batchDropzoneElement.getBoundingClientRect();
-          if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-            if (paths && paths.length > 0) {
-              batchFolderPath = paths[0];
-              batchDragging = false;
-            }
-          }
-        }
-        return;
-      }
-      
-      // Handle shards tab (file drops for sharding)
-      if (activeTab === 'shards' && shardMode === 'shard' && !shardFilePath) {
-        if (shardDropzoneElement) {
-          const rect = shardDropzoneElement.getBoundingClientRect();
-          if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-            if (paths && paths.length > 0) {
-              shardFilePath = paths[0];
-              shardDragging = false;
-              shardError = '';
-            }
-          }
-        }
-        return;
-      }
-      
-      // Handle shards tab reconstruct mode (folder drops)
-      if (activeTab === 'shards' && shardMode === 'reconstruct' && !shardFolderPath) {
-        if (shardDropzoneElement) {
-          const rect = shardDropzoneElement.getBoundingClientRect();
-          if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-            if (paths && paths.length > 0) {
-              shardFolderPath = paths[0];
-              shardDragging = false;
-              shardError = '';
-            }
-          }
-        }
-      }
-    }, true); // useDropTarget = true
+    // Native file drop (real filesystem paths). Register after DOM is ready — required on Linux.
+    // useDropTarget=false: we hit-test ourselves (fixes DPI/coord mismatch with Wails filter).
+    await tick();
+    OnFileDrop(handleNativeFileDrop, false);
   });
+
+  async function handleNativeFileDrop(x, y, paths) {
+    if (!paths || paths.length === 0) {
+      return;
+    }
+
+    batchDragging = false;
+    shardDragging = false;
+
+    // Install DOC — one or more files onto the drop zone
+    if (activeTab === 'install-doc' && isDropPointInElement(x, y, docDropzoneElement)) {
+      try {
+        const result = await LoadFilesFromPaths(paths);
+        if (result?.success && result.files?.length) {
+          await handleFilesStaged({ detail: { files: result.files } });
+        } else if (result?.error) {
+          toast.error(result.error);
+        }
+      } catch (err) {
+        console.error('[Studio] Install DOC drop failed:', err);
+        toast.error('Could not load dropped files');
+      }
+      return;
+    }
+
+    // Batch Upload — folder or multi-file selection (e.g. Dolphin)
+    if (activeTab === 'batch-upload' && !batchFolderPath && isDropPointInElement(x, y, batchDropzoneElement)) {
+      try {
+        const resolved = await ResolveDropPaths(paths);
+        if (resolved?.success && resolved.folderPath) {
+          batchFolderPath = resolved.folderPath;
+        } else if (resolved?.error) {
+          toast.error(resolved.error);
+        }
+      } catch (err) {
+        console.error('[Studio] Batch drop failed:', err);
+        toast.error('Could not use dropped folder');
+      }
+      return;
+    }
+
+    // DocShards — single file
+    if (activeTab === 'shards' && shardMode === 'shard' && !shardFilePath && isDropPointInElement(x, y, shardDropzoneElement)) {
+      try {
+        const loaded = await LoadFilesFromPaths(paths);
+        if (loaded?.success && loaded.files?.[0]?.path) {
+          shardFilePath = loaded.files[0].path;
+          shardError = '';
+        } else if (loaded?.error) {
+          toast.error(loaded.error);
+        }
+      } catch (err) {
+        console.error('[Studio] Shard file drop failed:', err);
+      }
+      return;
+    }
+
+    // DocShards — reconstruct folder
+    if (activeTab === 'shards' && shardMode === 'reconstruct' && !shardFolderPath && isDropPointInElement(x, y, shardDropzoneElement)) {
+      try {
+        const resolved = await ResolveDropPaths(paths);
+        if (resolved?.success && resolved.folderPath) {
+          shardFolderPath = resolved.folderPath;
+          shardError = '';
+        } else if (resolved?.error) {
+          toast.error(resolved.error);
+        }
+      } catch (err) {
+        console.error('[Studio] Shard folder drop failed:', err);
+      }
+    }
+  }
   
   onDestroy(() => {
     EventsOff('localdev:reload');
@@ -1962,6 +1995,7 @@
     <div class="page-content">
     {#if activeTab === 'install-doc'}
       <StudioInstallDoc
+        bind:dropzoneElement={docDropzoneElement}
         walletIsOpen={$walletState.isOpen}
         bind:docDescription
         bind:docIconURL
