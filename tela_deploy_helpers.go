@@ -58,6 +58,12 @@ func (a *App) validateDocContent(content string, fileName string) error {
 	return nil
 }
 
+// mustCompressDocContent enforces DVM-safe storage for DOC payloads.
+// Static assets are binary and CSS frequently trips DVM parsing when embedded raw.
+func mustCompressDocContent(docType string, userRequested bool) bool {
+	return userRequested || docType == tela.DOC_STATIC || docType == tela.DOC_CSS
+}
+
 // getCodeSizeInKB calculates the size of code in KB, counting newlines (from tela-cli)
 func getCodeSizeInKB(code string) float64 {
 	newLines := strings.Count(code, "\n")
@@ -248,11 +254,12 @@ func (a *App) prepareDOCForDeployment(docInfo DOCInfo, wallet *walletapi.Wallet_
 		return nil, fmt.Errorf("invalid docType %q for %s - must be one of: TELA-HTML-1, TELA-JS-1, TELA-CSS-1, TELA-JSON-1, TELA-MD-1, TELA-GO-1, TELA-STATIC-1", docInfo.DocType, docInfo.Name)
 	}
 
-	// Handle compression if requested
+	// Handle compression (forced for static/CSS for DVM safety)
 	docCode := string(data)
 	fileName := docInfo.Name
 
-	if docInfo.Compressed {
+	shouldCompress := mustCompressDocContent(docInfo.DocType, docInfo.Compressed)
+	if shouldCompress {
 		ext := filepath.Ext(fileName)
 		if !tela.IsCompressedExt(ext) {
 			compressed, err := tela.Compress(data, tela.COMPRESSION_GZIP)
@@ -261,6 +268,10 @@ func (a *App) prepareDOCForDeployment(docInfo DOCInfo, wallet *walletapi.Wallet_
 			}
 			docCode = compressed
 			fileName = fileName + tela.COMPRESSION_GZIP
+
+			if !docInfo.Compressed {
+				a.logToConsole(fmt.Sprintf("[COMPRESS] Forced compression for %s (%s)", docInfo.Name, docInfo.DocType))
+			}
 
 			// Log compression results
 			originalSize := len(data)
@@ -307,7 +318,7 @@ func (a *App) prepareDOCForDeployment(docInfo DOCInfo, wallet *walletapi.Wallet_
 		},
 	}
 
-	if docInfo.Compressed {
+	if shouldCompress {
 		doc.Compression = tela.COMPRESSION_GZIP
 	}
 
