@@ -638,19 +638,7 @@ func (swm *SimulatorWalletManager) CloseAll() {
 // never re-initialized (daemon still running from previous session), this
 // will transparently reconnect before returning wallets.
 func (a *App) GetSimulatorTestWallets() map[string]interface{} {
-	// Auto-reconnect: network is simulator but manager not initialized yet
-	if (a.simulatorManager == nil || !a.simulatorManager.isInitialized) {
-		if net, _ := a.settings["network"].(string); net == "simulator" {
-			if err := a.daemonClient.TestConnection(); err == nil {
-				if a.simulatorManager == nil {
-					a.simulatorManager = NewSimulatorManager(a)
-				}
-				if err := a.simulatorManager.ReconnectSimulatorMode(); err != nil {
-					a.logToConsole(fmt.Sprintf("[WARN] Simulator reconnect failed: %v", err))
-				}
-			}
-		}
-	}
+	a.ensureSimulatorReconnectedIfNeeded()
 
 	if a.simulatorManager == nil || a.simulatorManager.walletManager == nil {
 		return map[string]interface{}{

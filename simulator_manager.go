@@ -449,6 +449,32 @@ func (sm *SimulatorManager) ReconnectSimulatorMode() error {
 	return nil
 }
 
+// ensureSimulatorReconnectedIfNeeded attaches SimulatorManager to an already-running
+// local simulator when settings say simulator but this session has not initialized it
+// (e.g. derod survived an app rebuild). Keeps Settings "Running" in sync with the sidebar.
+func (a *App) ensureSimulatorReconnectedIfNeeded() {
+	if net, _ := a.settings["network"].(string); net != "simulator" {
+		return
+	}
+	if a.simulatorManager != nil && a.simulatorManager.isInitialized {
+		return
+	}
+	if err := a.daemonClient.TestConnection(); err != nil {
+		return
+	}
+	if info, err := a.daemonClient.GetInfo(); err == nil {
+		if inferred, ok := inferNetworkModeFromDaemonInfo(info, a.daemonClient.GetEndpoint()); ok && inferred != NetworkSimulator {
+			return
+		}
+	}
+	if a.simulatorManager == nil {
+		a.simulatorManager = NewSimulatorManager(a)
+	}
+	if err := a.simulatorManager.ReconnectSimulatorMode(); err != nil {
+		a.logToConsole(fmt.Sprintf("[WARN] Auto-reconnect simulator: %v", err))
+	}
+}
+
 // StopSimulatorMode stops all simulator services
 func (sm *SimulatorManager) StopSimulatorMode() map[string]interface{} {
 	sm.Lock()
@@ -668,6 +694,8 @@ func (a *App) StopSimulatorMode() map[string]interface{} {
 
 // GetSimulatorStatus returns the current simulator status
 func (a *App) GetSimulatorStatus() map[string]interface{} {
+	a.ensureSimulatorReconnectedIfNeeded()
+
 	if a.simulatorManager == nil {
 		return map[string]interface{}{
 			"success":       true,

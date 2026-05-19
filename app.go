@@ -305,6 +305,12 @@ func (a *App) startBackgroundServices() {
 			}
 		}()
 
+		// Sync simulator UI when derod survived a previous session (network=simulator, :20000 up).
+		go func() {
+			time.Sleep(1 * time.Second)
+			a.ensureSimulatorReconnectedIfNeeded()
+		}()
+
 		// Auto-start Gnomon if enabled
 		go func() {
 			time.Sleep(2 * time.Second) // Wait for daemon connection test
