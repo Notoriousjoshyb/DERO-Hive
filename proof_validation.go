@@ -13,21 +13,22 @@ const (
 	// Prevents uint64 to int64 wraparound attacks
 	MAX_INT64_SAFE = 9223372036854775807
 
-	// Maximum reasonable transfer amount in atomic units
-	// DERO hard cap: 21M DERO (like Bitcoin, this will never increase)
-	// Setting max at 22M DERO = 22 trillion atomic units
-	// This is ~5% above hard cap, allows buffer while blocking impossible amounts
-	MAX_REASONABLE_AMOUNT_ATOMIC = 22_000_000_000_000 // 22 million DERO
-
-	// For display and calculations
+	// For display and calculations: 1 DERO = 100,000 atomic units
+	// (matches derohe globals.go and GetInfo RPC supply conversion)
 	ATOMIC_UNITS_PER_DERO = 100_000
 
+	// Maximum reasonable transfer amount in atomic units
+	// DERO hard cap: 21M DERO (like Bitcoin, this will never increase)
+	// Setting max at 22M DERO = ~5% above hard cap.
+	// Blocks impossible amounts while leaving a buffer.
+	MAX_REASONABLE_AMOUNT_ATOMIC = 22_000_000 * ATOMIC_UNITS_PER_DERO // 2_200_000_000_000
+
 	// Hard cap reference
-	DERO_HARD_CAP_ATOMIC = 21_000_000_000_000 // 21 million DERO in atomic units
+	DERO_HARD_CAP_ATOMIC = 21_000_000 * ATOMIC_UNITS_PER_DERO // 2_100_000_000_000
 
 	// Current approximate circulating supply (for context display)
 	// This is approximate - actual supply can be queried from daemon
-	CURRENT_SUPPLY_APPROX_ATOMIC = 16_500_000_000_000 // ~16.5 million DERO
+	CURRENT_SUPPLY_APPROX_ATOMIC = 16_500_000 * ATOMIC_UNITS_PER_DERO // 1_650_000_000_000
 )
 
 // ProofValidationResult holds the validation result with context
@@ -117,7 +118,7 @@ func DetectSuspiciousProofPatterns(amount uint64) []string {
 	}
 
 	// Warning 3: Very large amount (> 1M DERO) - not fake, just notable
-	largeThreshold := uint64(1_000_000_000_000) // 1M DERO
+	largeThreshold := uint64(1_000_000 * ATOMIC_UNITS_PER_DERO) // 1M DERO
 	if amount > largeThreshold && amount <= CURRENT_SUPPLY_APPROX_ATOMIC {
 		amountDero := amount / ATOMIC_UNITS_PER_DERO
 		warnings = append(warnings,
