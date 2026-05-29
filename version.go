@@ -3,7 +3,7 @@ package main
 // Version information - set at build time via ldflags
 // Example: go build -ldflags "-X main.AppVersion=1.0.0 -X main.BuildDate=2026-04-18 -X main.GitCommit=abc1234"
 var (
-	AppVersion = "1.0.4"
+	AppVersion = "1.0.5"
 	BuildDate  = "dev"
 	GitCommit  = "unknown"
 )
