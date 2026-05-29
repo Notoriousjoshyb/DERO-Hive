@@ -256,6 +256,13 @@ export const settingsState = writable({
   privacyMode: false,
 });
 
+// Effective privacy masks — single source of truth for "is this masked right now".
+// Signal Dark (privacyMode) is the one privacy model: when armed it masks every
+// sensitive field at once. (The legacy per-field hideBalance/hideAddress toggles
+// were retired in favor of this single control.) Components read these for *display*.
+export const addressMasked = derived(settingsState, $s => $s.privacyMode);
+export const balanceMasked = derived(settingsState, $s => $s.privacyMode);
+
 // Load settings from backend and sync to frontend store
 export async function loadSettings() {
   try {

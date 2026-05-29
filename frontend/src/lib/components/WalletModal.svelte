@@ -1,6 +1,6 @@
 <script>
   import { fly, fade } from 'svelte/transition';
-  import { walletState, settingsState, walletRequests, activeWalletRequest, approveWalletRequest, denyWalletRequest, handleBackendError } from '../stores/appState.js';
+  import { walletState, settingsState, addressMasked, walletRequests, activeWalletRequest, approveWalletRequest, denyWalletRequest, handleBackendError } from '../stores/appState.js';
   import { OpenWallet, GetBalance, ListRecentWallets, SelectWalletFile, GetRecentWalletsWithInfo, SwitchWallet } from '../../../wailsjs/go/main/App.js';
 
   // Derived from activeWalletRequest
@@ -559,7 +559,7 @@
             <div>
               <p class="modal-wallet-label">CURRENT WALLET</p>
               <p class="modal-wallet-address">
-                {$settingsState.hideAddress ? '••••••••••••••••' : `${$walletState.address?.slice(0, 16)}...`}
+                {$addressMasked ? '••••••••••••••••' : `${$walletState.address?.slice(0, 16)}...`}
               </p>
             </div>
             <button
