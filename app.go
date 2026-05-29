@@ -104,6 +104,8 @@ func NewApp() *App {
 			"allow_github_check": true, // Allow pinging GitHub for derod updates
 			"hide_balance":       false,
 			"hide_address":       false,
+			"avatar_hidden":      false,
+			"privacy_mode":       false,
 		},
 		history:     make([]string, 0),
 		consoleLogs: make([]ConsoleLog, 0),

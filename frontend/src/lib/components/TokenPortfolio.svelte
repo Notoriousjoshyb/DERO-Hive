@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, RemoveTrackedToken } from '../../../wailsjs/go/main/App.js';
-  import { walletState, toast } from '../stores/appState.js';
+  import { walletState, balanceMasked, toast } from '../stores/appState.js';
   import { Coins, RefreshCw, Copy, Plus, ArrowUp, Trash2, Info } from 'lucide-svelte';
   
   import AddTokenModal from './AddTokenModal.svelte';
@@ -20,6 +20,9 @@
   
   // Reactive to wallet state changes
   $: localWalletOpen = $walletState.isOpen;
+
+  // Token balances follow the shared mask, so the whole portfolio goes quiet
+  // at once when Signal Dark is armed (or hide-balance is toggled).
   
   onMount(async () => {
     await checkAndLoad();
@@ -230,7 +233,7 @@
           </div>
           
           <div class="token-balance">
-            <span class="balance-value">{formatBalance(token.balance)}</span>
+            <span class="balance-value">{$balanceMasked ? '••••••' : formatBalance(token.balance)}</span>
             {#if token.symbol}
               <span class="balance-symbol">{token.symbol}</span>
             {/if}

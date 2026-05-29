@@ -30,6 +30,8 @@ var persistedSettingKeys = []string{
 	"epoch_enabled",
 	"hide_balance",
 	"hide_address",
+	"avatar_hidden",
+	"privacy_mode",
 }
 
 // Settings Functions

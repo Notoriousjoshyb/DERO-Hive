@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { appState, walletState, settingsState, requestWalletApproval, syncNetworkMode, toast, combinedSyncProgress, navigateTo } from '../stores/appState.js';
+  import { appState, walletState, settingsState, requestWalletApproval, syncNetworkMode, toast, combinedSyncProgress, navigateTo, saveSetting } from '../stores/appState.js';
   import { 
     GetEpochStats, SetNetworkMode,
     StartSimulatorMode, StopSimulatorMode, GetSimulatorStatus,
@@ -15,7 +15,8 @@
   import { 
     Globe, Palette, Blocks, Wallet, Settings, 
     Diamond,
-    Globe2, FlaskConical, Gamepad2, Radio, FolderOpen
+    Globe2, FlaskConical, Gamepad2, Radio, FolderOpen,
+    Lock, Unlock
   } from 'lucide-svelte';
   import { getAvatarUrl, clearAvatarCache } from '../utils/avatarService.js';
   
@@ -100,6 +101,26 @@
   let walletAvatarUrl = null;
   let loadingAvatar = false;
   let currentAvatarSize = null;
+
+  // Signal Dark (stealth mode) — the wallet identity loses signal lock.
+  // Armed from the wild-card panel ("GO DARK"); masks address, balance, tokens and the
+  // identity core in one synchronized beat. Reuses the existing privacyMode setting, so
+  // persistence (app_settings.go / appState.js) is unchanged.
+  let signalDropping = false; // drives the one-shot power-down/up flicker on the core
+
+  async function toggleSignalDark(event) {
+    event?.stopPropagation();
+    const goingDark = !$settingsState.privacyMode;
+    signalDropping = true;
+    await saveSetting('privacyMode', goingDark);
+    toast.info(goingDark ? 'Signal dark — identity masked' : 'Signal restored');
+    setTimeout(() => { signalDropping = false; }, 620);
+  }
+
+  $: isPrivacyActive = $settingsState.privacyMode;
+  $: isAddressHidden = isPrivacyActive || $settingsState.hideAddress;
+  $: isBalanceHidden = isPrivacyActive || $settingsState.hideBalance;
+  $: isAvatarHidden = isPrivacyActive || $settingsState.avatarHidden;
   
   // Load avatar when wallet connects or address changes
   $: if (walletDisplayAddress && walletIsConnected) {
@@ -1078,7 +1099,7 @@
   
   <!-- v6.2 Wallet Anchor - Smart States -->
   <div class="wallet-section" class:wallet-section-collapsed={collapsed}>
-    <button
+    <div
       class="wallet-anchor"
       class:wallet-anchor-connected={walletIsConnected && !$appState.pendingXSWDRequests?.length}
       class:wallet-anchor-disconnected={!walletIsConnected && !xswdReadyNoWallet}
@@ -1088,20 +1109,36 @@
     >
       {#if collapsed}
         <!-- v6.3 Edge Rail: Avatar or Dot + badge -->
-        {#if walletIsConnected && walletAvatarUrl}
-          <img 
-            src={walletAvatarUrl} 
-            alt="Wallet avatar"
-            title="Edit avatar in Villager"
-            class="wallet-avatar wallet-avatar-collapsed wallet-avatar-clickable"
-            class:wallet-avatar-pending={walletIsConnected && $appState.pendingXSWDRequests?.length > 0}
-            on:click={handleAvatarClick}
-          />
+        {#if walletIsConnected}
+          {#if !isAvatarHidden && walletAvatarUrl}
+            <img 
+              src={walletAvatarUrl} 
+              alt="Wallet avatar"
+              title="Edit avatar in Villager"
+              class="wallet-avatar wallet-avatar-collapsed wallet-avatar-clickable"
+              class:wallet-avatar-pending={walletIsConnected && $appState.pendingXSWDRequests?.length > 0}
+              on:click={handleAvatarClick}
+            />
+          {:else if isAvatarHidden}
+            <div
+              class="core-dormant core-dormant-sm"
+              class:signal-dropping={signalDropping}
+              on:click|stopPropagation={toggleSignalDark}
+              title="Signal dark — click to restore"
+            >
+              <Lock size={11} strokeWidth={1.75} />
+            </div>
+          {:else}
+            <span class="wallet-dot"
+              class:dot-ok={walletIsConnected && !$appState.pendingXSWDRequests?.length}
+              class:dot-err={!walletIsConnected && !xswdReadyNoWallet}
+              class:dot-warn={walletIsConnected && $appState.pendingXSWDRequests?.length > 0}
+              class:dot-cyan={xswdReadyNoWallet}></span>
+          {/if}
         {:else}
           <span class="wallet-dot" 
-            class:dot-ok={walletIsConnected && !$appState.pendingXSWDRequests?.length}
-            class:dot-err={!walletIsConnected && !xswdReadyNoWallet}
-            class:dot-warn={walletIsConnected && $appState.pendingXSWDRequests?.length > 0}
+            class:dot-ok={false}
+            class:dot-err={!xswdReadyNoWallet}
             class:dot-cyan={xswdReadyNoWallet}></span>
         {/if}
         {#if connectedApps.length > 0}
@@ -1112,9 +1149,11 @@
           <span class="rail-tooltip-label">Wallet</span>
           {#if walletMode === 'integrated'}
             <span class="rail-tooltip-value tt-ok">
-              {$settingsState.hideAddress ? '••••••••' : formatAddressForDisplay(walletDisplayAddress)}
+              {isAddressHidden ? '••••••••' : formatAddressForDisplay(walletDisplayAddress)}
             </span>
-            <span class="rail-tooltip-value tt-dim">Wallet Ready</span>
+            <span class="rail-tooltip-value" class:tt-dim={!isPrivacyActive} class:tt-dark={isPrivacyActive}>
+              {isPrivacyActive ? 'SIGNAL DARK' : 'Wallet Ready'}
+            </span>
             {#if connectedApps.length > 0}
               <span class="rail-tooltip-value tt-dim">{connectedApps.length} {connectedApps.length === 1 ? 'app' : 'apps'}</span>
             {/if}
@@ -1128,15 +1167,28 @@
         </div>
       {:else}
         <span class="dot-column">
-          {#if walletIsConnected && walletAvatarUrl}
-            <img 
-              src={walletAvatarUrl} 
-              alt="Wallet avatar"
-              title="Edit avatar in Villager"
-              class="wallet-avatar wallet-avatar-expanded wallet-avatar-clickable"
-              class:wallet-avatar-pending={walletIsConnected && $appState.pendingXSWDRequests?.length > 0}
-              on:click={handleAvatarClick}
-            />
+          {#if walletIsConnected}
+            <div class="avatar-container">
+              {#if !isAvatarHidden}
+                <img
+                  src={walletAvatarUrl}
+                  alt="Wallet avatar"
+                  title="Edit avatar in Villager"
+                  class="wallet-avatar wallet-avatar-expanded wallet-avatar-clickable"
+                  class:wallet-avatar-pending={walletIsConnected && $appState.pendingXSWDRequests?.length > 0}
+                  on:click={handleAvatarClick}
+                />
+              {:else}
+                <div
+                  class="core-dormant"
+                  class:signal-dropping={signalDropping}
+                  on:click|stopPropagation={toggleSignalDark}
+                  title="Signal dark — click to restore"
+                >
+                  <Lock size={15} strokeWidth={1.75} />
+                </div>
+              {/if}
+            </div>
           {:else}
             <span class="wallet-dot" 
               class:dot-ok={walletIsConnected && !$appState.pendingXSWDRequests?.length}
@@ -1148,13 +1200,15 @@
         <div class="wallet-anchor-content">
           <span class="wallet-anchor-address" class:disconnected={!walletIsConnected} class:xswd-only={xswdReadyNoWallet}>
             {#if walletIsConnected}
-              {$settingsState.hideAddress ? '••••••••' : formatAddressForDisplay(walletDisplayAddress)}
+              {isAddressHidden ? '••••••••' : formatAddressForDisplay(walletDisplayAddress)}
             {:else}
               Connect Wallet
             {/if}
           </span>
           <span class="wallet-anchor-status">
-            {#if $appState.pendingXSWDRequests?.length > 0}
+            {#if isPrivacyActive}
+              <span class="status-dark">SIGNAL DARK</span>
+            {:else if $appState.pendingXSWDRequests?.length > 0}
               <span class="status-warn">{$appState.pendingXSWDRequests.length === 1 ? 'App requesting access' : `${$appState.pendingXSWDRequests.length} apps requesting access`}</span>
             {:else if walletMode === 'integrated'}
               {#if walletNetworkMismatch}
@@ -1178,215 +1232,173 @@
           </span>
         </div>
       {/if}
-    </button>
+    </div>
     
     <!-- Wallet Menu - Rendered in Sidebar -->
     {#if showWalletMenu && !collapsed}
-      <div class="wallet-menu" on:click|stopPropagation>
-        <!-- Current Wallet -->
-        <div class="wallet-menu-section">
-          <p class="wallet-menu-label">CURRENT WALLET</p>
-          <p class="wallet-menu-address">
-            {#if $walletState.address}
-              {$settingsState.hideAddress ? '••••••••••••••' : `${$walletState.address.slice(0, 12)}...${$walletState.address.slice(-8)}`}
-            {:else if $appState.engramConnected}
-              Engram Wallet (External)
-            {:else if xswdReadyNoWallet}
-              XSWD Active
-            {:else}
-              Not Connected
-            {/if}
-          </p>
-          {#if $walletState.balance !== undefined && $walletState.isOpen}
-            <p class="wallet-menu-balance">
-              {$settingsState.hideBalance ? '••••••••' : `${($walletState.balance / 100000).toFixed(5)} DERO`}
-            </p>
-          {/if}
-          {#if walletNetworkMismatch && $walletState.isOpen}
-            <p class="wallet-menu-warning">
-              Address prefix ({walletAddressNetwork === 'simulator' ? 'deto' : 'dero'}) does not match selected network ({currentNetwork.label})
-            </p>
-          {/if}
-        </div>
-        
-        {#if switchingWallet}
-          <!-- Password input for switching -->
-          <div class="wallet-switch-section">
-            <p class="wallet-switch-label">Switch to: <span class="wallet-switch-name">{switchingWallet.filename}</span></p>
-            <input
-              type="password"
-              bind:value={switchPassword}
-              placeholder="Enter password..."
-              class="input input-sm"
-              on:keydown={(e) => e.key === 'Enter' && confirmSwitch()}
-              on:click|stopPropagation
-            />
-            {#if switchError}
-              <p class="wallet-switch-error">{switchError}</p>
-            {/if}
-            <div class="wallet-switch-actions">
-              <button
-                on:click|stopPropagation={() => { switchingWallet = null; switchPassword = ''; switchError = ''; }}
-                class="btn btn-secondary btn-sm"
-              >
-                Cancel
-              </button>
-              <button
-                on:click|stopPropagation={confirmSwitch}
-                disabled={!switchPassword || connecting}
-                class="btn btn-primary btn-sm"
-              >
-                {connecting ? '...' : 'Switch'}
-              </button>
-            </div>
-          </div>
-        {:else}
-          <!-- Other wallets list -->
-          {#if effectiveNetwork === 'simulator'}
-            <div class="wallet-quickswitch-list">
-              <p class="wallet-menu-label">TEST WALLETS</p>
-              {#if simulatorWalletsLoading}
-                <p class="wallet-quick-hint">Loading test wallets...</p>
-              {:else if simulatorQuickWallets.length === 0}
-                <p class="wallet-quick-hint">No simulator wallets available yet</p>
+      <div class="wallet-menu identity-console" class:stealth={isPrivacyActive} on:click|stopPropagation>
+        <!-- Identity console — the lock-reactor core IS the privacy control -->
+        <div class="console-identity" class:signal-dropping={signalDropping}>
+          <button
+            class="reactor-core"
+            class:armed={isPrivacyActive}
+            class:signal-dropping={signalDropping}
+            on:click|stopPropagation={toggleSignalDark}
+            title={isPrivacyActive ? 'Stealth on — tap to go live' : 'Tap to go dark'}
+            aria-label={isPrivacyActive ? 'Privacy mode on — tap to disable' : 'Tap to enable privacy mode'}
+          >
+            <span class="reactor-sonar" aria-hidden="true"></span>
+            <span class="reactor-glyph">
+              {#if isPrivacyActive}
+                <Lock size={26} strokeWidth={1.75} />
               {:else}
-                {#each simulatorQuickWallets.slice(0, 8) as wallet}
-                  {@const isCurrentSimWallet = !!$walletState.address && wallet.address === $walletState.address}
-                  <button
-                    on:click|stopPropagation={() => handleSimulatorQuickSwitch(wallet)}
-                    class="wallet-option wallet-option-test"
-                    disabled={isCurrentSimWallet || switchingSimulatorWalletIndex === wallet.index}
-                  >
-                    <span class="wallet-option-icon"><Gamepad2 size={14} strokeWidth={1.5} /></span>
-                    <div class="wallet-option-info">
-                      <p class="wallet-option-name">Test Wallet #{wallet.index}</p>
-                      <p class="wallet-option-addr">
-                        {$settingsState.hideAddress ? '••••••••' : formatAddressForDisplay(wallet.address)} ·
-                        {$settingsState.hideBalance ? '••••' : `${formatBalanceAtomic(wallet.balance)} DERO`}
-                      </p>
-                    </div>
-                    {#if isCurrentSimWallet}
-                      <span class="wallet-test-active">Active</span>
-                    {:else if switchingSimulatorWalletIndex === wallet.index}
-                      <span class="wallet-test-active">...</span>
-                    {/if}
-                  </button>
-                {/each}
-                <p class="wallet-quick-hint">Open Wallet tab for full simulator wallet list</p>
+                <Unlock size={26} strokeWidth={1.75} />
               {/if}
-            </div>
-          {/if}
+            </span>
+          </button>
 
-          {#if recentWalletsInfo.filter(w => !w.isCurrent).length > 0}
-            <div class="wallet-quickswitch-list">
-              <p class="wallet-menu-label">QUICK SWITCH</p>
-              {#each recentWalletsInfo.filter(w => !w.isCurrent).slice(0, 5) as wallet}
-                <div class="wallet-option-row">
-                  <button
-                    on:click|stopPropagation={() => handleQuickSwitch(wallet)}
-                    class="wallet-option"
-                  >
-                    <span class="wallet-option-icon"><FolderOpen size={14} /></span>
-                    <div class="wallet-option-info">
-                      <p class="wallet-option-name">{wallet.filename}</p>
-                      {#if wallet.addressPrefix}
-                        <p class="wallet-option-addr">{wallet.addressPrefix}</p>
-                      {/if}
-                    </div>
-                  </button>
-                  <button
-                    on:click|stopPropagation={(e) => handleRemoveWallet(wallet, e)}
-                    class="wallet-remove-btn"
-                    title="Remove from recent"
-                  >
-                    <Icons name="close" size={12} />
-                  </button>
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          <!-- Manage Avatar -->
-          <div class="wallet-menu-action">
-            <button
-              on:click|stopPropagation={handleAvatarClick}
-              class="manage-avatar-btn"
-              title="Edit your avatar in Villager"
-            >
-              <span class="manage-avatar-title">Manage Avatar</span>
-              <span class="manage-avatar-subtitle">Edit in Villager</span>
-            </button>
-          </div>
-          
-          <!-- Connected Apps (XSWD Connections) -->
-          <div class="connected-apps-section">
-            <button
-              on:click|stopPropagation={toggleConnectedApps}
-              class="connected-apps-toggle"
-            >
-              <Icons name="link" size={12} />
-              <span>Connected Apps</span>
-              <span class="apps-count">{connectedApps.length}</span>
-              <span class="toggle-arrow">{showConnectedApps ? '▲' : '▼'}</span>
-            </button>
-            
-            {#if showConnectedApps}
-              <div class="connected-apps-list">
-                {#if loadingApps}
-                  <p class="apps-loading">Loading...</p>
-                {:else if connectedApps.length === 0}
-                  <p class="apps-empty">No apps connected</p>
+          <div class="console-readout">
+            <p class="console-address" class:masked={isAddressHidden}>
+              {#if $walletState.address}
+                {isAddressHidden ? '••••••••••••••' : `${$walletState.address.slice(0, 12)}…${$walletState.address.slice(-8)}`}
+              {:else if $appState.engramConnected}
+                Engram Wallet (External)
+              {:else if xswdReadyNoWallet}
+                XSWD Active
+              {:else}
+                Not Connected
+              {/if}
+            </p>
+            {#if $walletState.balance !== undefined && $walletState.isOpen}
+              <div class="console-balance">
+                {#if isBalanceHidden}
+                  <span class="orb-redaction" aria-label="balance hidden">
+                    {#each Array(8).fill(0) as _}<span class="orb"></span>{/each}
+                  </span>
                 {:else}
-                  {#each connectedApps as app}
-                    <div class="connected-app-item">
-                      <div class="app-info">
-                        <p class="app-name">{app.appName || 'Unknown App'}</p>
-                        <p class="app-origin">{app.origin || 'Unknown origin'}</p>
-                        {#if app.permissions}
-                          <div class="app-permissions">
-                            {#each Object.entries(app.permissions).filter(([_, v]) => v) as [perm, _]}
-                              <span class="app-permission-badge">{getPermissionLabel(perm)}</span>
-                            {/each}
-                          </div>
-                        {/if}
-                        {#if app.subscriptions}
-                          <div class="app-subscriptions">
-                            {#if app.subscriptions.new_topoheight}
-                              <span class="sub-badge">Height</span>
-                            {/if}
-                            {#if app.subscriptions.new_balance}
-                              <span class="sub-badge">Balance</span>
-                            {/if}
-                            {#if app.subscriptions.new_entry}
-                              <span class="sub-badge">Entries</span>
-                            {/if}
-                          </div>
-                        {/if}
-                      </div>
-                      <button
-                        on:click|stopPropagation={() => revokeApp(app.origin)}
-                        class="app-revoke-btn"
-                        title="Revoke access"
-                      >
-                        <Icons name="close" size={14} />
-                      </button>
-                    </div>
-                  {/each}
+                  <span class="console-balance-value">{($walletState.balance / 100000).toFixed(5)}</span>
+                  <span class="console-unit">DERO</span>
                 {/if}
               </div>
             {/if}
           </div>
-          
-          <!-- Disconnect button -->
-          <div class="wallet-menu-footer">
-            <button
-              on:click|stopPropagation={toggleWalletConnection}
-              class="wallet-disconnect-btn"
-            >
-              Disconnect Wallet
-            </button>
+
+          {#if walletNetworkMismatch && $walletState.isOpen}
+            <p class="wallet-menu-warning ident-warning">
+              Address prefix ({walletAddressNetwork === 'simulator' ? 'deto' : 'dero'}) does not match selected network ({currentNetwork.label})
+            </p>
+          {/if}
+        </div>
+
+        <div class="console-div"></div>
+        
+        <!-- Zone 3 — Wallets (switch in-row, no full-panel swap) -->
+        {#if effectiveNetwork === 'simulator'}
+          <div class="wallet-quickswitch-list">
+            <p class="wallet-menu-label">TEST WALLETS</p>
+            {#if simulatorWalletsLoading}
+              <p class="wallet-quick-hint">Loading test wallets...</p>
+            {:else if simulatorQuickWallets.length === 0}
+              <p class="wallet-quick-hint">No simulator wallets available yet</p>
+            {:else}
+              {#each simulatorQuickWallets.slice(0, 8) as wallet}
+                {@const isCurrentSimWallet = !!$walletState.address && wallet.address === $walletState.address}
+                <button
+                  on:click|stopPropagation={() => handleSimulatorQuickSwitch(wallet)}
+                  class="wallet-option wallet-option-test"
+                  disabled={isCurrentSimWallet || switchingSimulatorWalletIndex === wallet.index}
+                >
+                  <span class="wallet-option-icon"><Gamepad2 size={14} strokeWidth={1.5} /></span>
+                  <div class="wallet-option-info">
+                    <p class="wallet-option-name">Test Wallet #{wallet.index}</p>
+                    <p class="wallet-option-addr">
+                      {isAddressHidden ? '••••••••' : formatAddressForDisplay(wallet.address)} ·
+                      {isBalanceHidden ? '••••' : `${formatBalanceAtomic(wallet.balance)} DERO`}
+                    </p>
+                  </div>
+                  {#if isCurrentSimWallet}
+                    <span class="wallet-test-active">Active</span>
+                  {:else if switchingSimulatorWalletIndex === wallet.index}
+                    <span class="wallet-test-active">...</span>
+                  {/if}
+                </button>
+              {/each}
+              <p class="wallet-quick-hint">Open Wallet tab for full simulator wallet list</p>
+            {/if}
           </div>
         {/if}
+
+        {#if recentWalletsInfo.filter(w => !w.isCurrent).length > 0}
+          <div class="wallet-quickswitch-list">
+            <p class="wallet-menu-label">WALLETS</p>
+            {#each recentWalletsInfo.filter(w => !w.isCurrent).slice(0, 5) as wallet}
+              <div class="wallet-option-row">
+                <button
+                  on:click|stopPropagation={() => handleQuickSwitch(wallet)}
+                  class="wallet-option"
+                  class:switching={switchingWallet && switchingWallet.path === wallet.path}
+                >
+                  <span class="wallet-option-icon"><FolderOpen size={14} /></span>
+                  <div class="wallet-option-info">
+                    <p class="wallet-option-name">{wallet.filename}</p>
+                    {#if wallet.addressPrefix}
+                      <p class="wallet-option-addr">{isAddressHidden ? '••••••••' : wallet.addressPrefix}</p>
+                    {/if}
+                  </div>
+                  <span class="wallet-option-switch">⇄</span>
+                </button>
+                <button
+                  on:click|stopPropagation={(e) => handleRemoveWallet(wallet, e)}
+                  class="wallet-remove-btn"
+                  title="Remove from recent"
+                >
+                  <Icons name="close" size={12} />
+                </button>
+              </div>
+              {#if switchingWallet && switchingWallet.path === wallet.path}
+                <!-- In-row accordion: password expands under the selected wallet -->
+                <div class="wallet-switch-inline">
+                  <input
+                    type="password"
+                    bind:value={switchPassword}
+                    placeholder="Password for {wallet.filename}…"
+                    class="input input-sm"
+                    on:keydown={(e) => e.key === 'Enter' && confirmSwitch()}
+                    on:click|stopPropagation
+                  />
+                  {#if switchError}
+                    <p class="wallet-switch-error">{switchError}</p>
+                  {/if}
+                  <div class="wallet-switch-actions">
+                    <button
+                      on:click|stopPropagation={() => { switchingWallet = null; switchPassword = ''; switchError = ''; }}
+                      class="btn btn-secondary btn-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      on:click|stopPropagation={confirmSwitch}
+                      disabled={!switchPassword || connecting}
+                      class="btn btn-primary btn-sm"
+                    >
+                      {connecting ? '...' : 'Switch'}
+                    </button>
+                  </div>
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+
+        <!-- Disconnect -->
+        <div class="wallet-menu-footer">
+          <button
+            on:click|stopPropagation={toggleWalletConnection}
+            class="wallet-disconnect-btn"
+          >
+            Disconnect Wallet
+          </button>
+        </div>
       </div>
     {/if}
   </div>
@@ -2568,11 +2580,6 @@
     overflow-y: auto;
   }
   
-  .wallet-menu-section {
-    padding: var(--s-3);
-    border-bottom: 1px solid var(--border-dim);
-  }
-  
   .wallet-menu-label {
     font-size: 9px;
     font-weight: 500;
@@ -2581,21 +2588,6 @@
     color: var(--text-5);
     margin-bottom: var(--s-1);
   }
-  
-  .wallet-menu-address {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--status-ok);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  
-  .wallet-menu-balance {
-    font-size: 11px;
-    color: var(--text-3);
-    margin-top: var(--s-1);
-  }
 
   .wallet-menu-warning {
     margin-top: var(--s-2);
@@ -2603,7 +2595,7 @@
     line-height: 1.4;
     color: var(--status-warn);
   }
-  
+
   .wallet-option {
     width: 100%;
     display: flex;
@@ -2719,60 +2711,6 @@
     background: rgba(248, 113, 113, 0.08);
   }
 
-  /* Manage Avatar Placeholder Button */
-  .wallet-menu-action {
-    padding: var(--s-2) var(--s-3);
-    border-bottom: 1px solid var(--border-dim);
-  }
-
-  .manage-avatar-btn {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    padding: var(--s-2) var(--s-3);
-    font-size: 11px;
-    background: transparent;
-    border: 1px dashed rgba(34, 211, 238, 0.28);
-    border-radius: var(--r-sm);
-    cursor: pointer;
-    transition: background var(--dur-fast), border-color var(--dur-fast);
-    text-align: left;
-  }
-
-  .manage-avatar-btn:hover {
-    background: rgba(0, 255, 255, 0.06);
-    border-color: rgba(34, 211, 238, 0.42);
-  }
-
-  .manage-avatar-title {
-    color: var(--cyan-400);
-    font-weight: 500;
-  }
-
-  .manage-avatar-subtitle {
-    color: var(--text-4);
-    font-size: 10px;
-  }
-  
-  .wallet-switch-section {
-    padding: var(--s-3);
-    border-bottom: 1px solid var(--border-dim);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-  
-  .wallet-switch-label {
-    font-size: 11px;
-    color: var(--text-3);
-  }
-  
-  .wallet-switch-name {
-    color: var(--text-1);
-  }
-  
   .wallet-switch-error {
     font-size: 11px;
     color: var(--status-err);
@@ -2800,136 +2738,6 @@
     padding: 0 var(--s-3) var(--s-2);
     font-size: 10px;
     color: var(--text-4);
-  }
-  
-  .connected-apps-section {
-    border-top: 1px solid var(--border-dim);
-  }
-  
-  .connected-apps-toggle {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    padding: var(--s-2) var(--s-3);
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-2);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    transition: background var(--dur-fast);
-  }
-  
-  .connected-apps-toggle:hover {
-    background: var(--void-hover);
-  }
-  
-  .apps-count {
-    margin-left: auto;
-    font-size: 10px;
-    padding: 1px 6px;
-    background: var(--void-up);
-    border-radius: var(--r-sm);
-    color: var(--text-3);
-  }
-  
-  .toggle-arrow {
-    font-size: 8px;
-    color: var(--text-4);
-  }
-  
-  .connected-apps-list {
-    max-height: 200px;
-    overflow-y: auto;
-    border-top: 1px solid var(--border-dim);
-  }
-  
-  .apps-loading,
-  .apps-empty {
-    padding: var(--s-3);
-    font-size: 11px;
-    color: var(--text-4);
-    text-align: center;
-  }
-  
-  .connected-app-item {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: var(--s-2) var(--s-3);
-    border-bottom: 1px solid var(--border-dim);
-  }
-  
-  .connected-app-item:last-child {
-    border-bottom: none;
-  }
-  
-  .app-info {
-    flex: 1;
-    min-width: 0;
-  }
-  
-  .app-name {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-1);
-    margin-bottom: 2px;
-  }
-  
-  .app-origin {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    color: var(--text-4);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-bottom: 4px;
-  }
-  
-  .app-permissions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-bottom: 4px;
-  }
-  
-  .app-permission-badge {
-    font-size: 8px;
-    padding: 1px 4px;
-    background: rgba(52, 211, 153, 0.15);
-    border: 1px solid rgba(52, 211, 153, 0.3);
-    border-radius: 3px;
-    color: var(--status-ok);
-  }
-  
-  .app-subscriptions {
-    display: flex;
-    gap: 4px;
-  }
-  
-  .sub-badge {
-    font-size: 8px;
-    padding: 1px 4px;
-    background: rgba(96, 165, 250, 0.15);
-    border: 1px solid rgba(96, 165, 250, 0.3);
-    border-radius: 3px;
-    color: var(--status-info);
-  }
-  
-  .app-revoke-btn {
-    padding: 4px;
-    background: transparent;
-    border: none;
-    color: var(--text-4);
-    cursor: pointer;
-    border-radius: var(--r-sm);
-    transition: all var(--dur-fast);
-  }
-  
-  .app-revoke-btn:hover {
-    background: rgba(248, 113, 113, 0.15);
-    color: var(--status-err);
   }
   
   /* Status color helpers (used in wallet anchor) */
@@ -3270,5 +3078,253 @@
     color: var(--text-4);
     text-align: center;
     letter-spacing: 0.02em;
+  }
+  .avatar-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ── Signal Dark (stealth mode) ───────────────────────────────────────
+     The wallet identity loses signal lock: the reactor powers down to a
+     dim ember and the transmission goes quiet. Built from the brand's own
+     holographic vocabulary — cyan ember, scanline drift, chroma flicker. */
+
+  /* Powered-down identity core — present, but no longer transmitting. */
+  .core-dormant {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.10), transparent 70%),
+      var(--void-deep);
+    border: 1px solid rgba(34, 211, 238, 0.28);
+    box-shadow: inset 0 0 8px rgba(34, 211, 238, 0.12), var(--glow-cyan-xs);
+    cursor: pointer;
+    overflow: hidden;
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+
+  /* The lock glyph at the core's center — secured, at rest. */
+  .core-dormant :global(svg) {
+    color: var(--cyan-300);
+    opacity: 0.75;
+    filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.5));
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Scanline sweep — the telltale signature of a held transmission. */
+  .core-dormant::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -2px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.55), transparent);
+    animation: coreScan 3.2s linear infinite;
+  }
+
+  .core-dormant:hover {
+    border-color: rgba(34, 211, 238, 0.5);
+    box-shadow: inset 0 0 10px rgba(34, 211, 238, 0.18), var(--glow-cyan-sm);
+  }
+
+  .core-dormant-sm {
+    width: 24px;
+    height: 24px;
+  }
+
+  @keyframes coreScan {
+    0%   { top: -2px; opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+
+  /* One-shot power-down / re-lock flicker when toggling the signal. */
+  .core-dormant.signal-dropping {
+    animation: signalDrop 0.6s steps(1, end);
+  }
+
+  @keyframes signalDrop {
+    0%   { opacity: 0.2; transform: translateX(-1px); filter: hue-rotate(-22deg); }
+    15%  { opacity: 0.9; transform: translateX(1px); }
+    30%  { opacity: 0.3; transform: translateX(-2px); filter: hue-rotate(16deg); }
+    45%  { opacity: 0.8; transform: translateX(0); }
+    60%  { opacity: 0.4; }
+    100% { opacity: 1; transform: none; filter: none; }
+  }
+
+  /* ── Identity Console — lock-reactor core (6E "Reactor Powerdown") ────────
+     The reactor core IS the privacy control: an unlock glyph that breathes via
+     a sonar pulse while live; tap it and the signal glitches out (chromatic
+     RGB tear, reusing the splash DNA) as the core powers down to a locked
+     ember. Built from the brand's own motion vocabulary. */
+  /* deep-void panel so the reactor glow pops (was the lighter --void-surface) */
+  .identity-console { background: var(--void-deep); }
+
+  .console-identity {
+    padding: var(--s-5) var(--s-3) var(--s-4);
+    text-align: center;
+  }
+
+  /* the reactor core — tap target + privacy state */
+  .reactor-core {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 45%, rgba(34, 211, 238, 0.22), var(--void-deep) 68%);
+    border: 1px solid rgba(34, 211, 238, 0.4);
+    box-shadow: var(--glow-cyan-md), inset 0 0 16px rgba(34, 211, 238, 0.25);
+    cursor: pointer;
+    transition: box-shadow 0.35s, border-color 0.35s, background 0.35s;
+  }
+  .reactor-core:hover { box-shadow: var(--glow-cyan-lg), inset 0 0 18px rgba(34, 211, 238, 0.3); }
+  .reactor-glyph {
+    display: flex;
+    position: relative;
+    z-index: 1;
+    color: var(--cyan-300);
+    filter: drop-shadow(0 0 7px rgba(34, 211, 238, 0.6));
+    transition: color 0.35s, filter 0.35s;
+  }
+
+  /* sonar beacon — breathes only while live (unlocked) */
+  .reactor-sonar {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(34, 211, 238, 0.5);
+    opacity: 0;
+  }
+  .reactor-core:not(.armed) .reactor-sonar { animation: reactorSonar 2.8s ease-out infinite; }
+  @keyframes reactorSonar {
+    0%   { transform: scale(1);    opacity: 0.55; }
+    100% { transform: scale(1.45); opacity: 0; }
+  }
+
+  /* armed / locked = powered-down ember (sonar stops) */
+  .reactor-core.armed {
+    background: var(--void-deep);
+    border-color: rgba(34, 211, 238, 0.28);
+    box-shadow: var(--glow-cyan-xs), inset 0 0 8px rgba(34, 211, 238, 0.12);
+  }
+  .reactor-core.armed .reactor-glyph { color: var(--cyan-400); filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.45)); }
+
+  /* one-shot flicker on the core as it locks / unlocks */
+  .reactor-core.signal-dropping { animation: reactorFlick 0.5s steps(1, end); }
+  @keyframes reactorFlick {
+    0%   { opacity: 0.3; }
+    20%  { opacity: 0.9; }
+    40%  { opacity: 0.35; }
+    60%  { opacity: 0.85; }
+    100% { opacity: 1; }
+  }
+
+  /* readout — fixed heights so live<->stealth swaps in place (NO-REFLOW law) */
+  .console-address {
+    margin: 0;
+    min-height: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--cyan-300);
+    letter-spacing: 0.02em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .console-address.masked { color: var(--cyan-500); letter-spacing: 0.18em; }
+  .console-balance {
+    margin-top: 8px;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .console-balance-value {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-1);
+    letter-spacing: 0.01em;
+  }
+  .console-unit { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em; color: var(--text-4); }
+
+  /* cyan-orb redaction — the brand's "held value" language */
+  .console-balance .orb-redaction { display: inline-flex; align-items: center; gap: 6px; }
+  .console-balance .orb {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--cyan-400); box-shadow: 0 0 6px rgba(34, 211, 238, 0.6);
+    animation: coreOrbBreath 2.6s ease-in-out infinite;
+  }
+  @keyframes coreOrbBreath { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.95; } }
+
+  /* chromatic-glitch powerdown — the 6E signature. Applied to the WHOLE identity
+     (core + readout) so the round core gets the RGB tear too, not just the text. */
+  .console-identity.signal-dropping { animation: consoleGlitch 0.5s steps(2, end) 1; }
+  @keyframes consoleGlitch {
+    /* chroma-led, motion-light: strong RGB split, only ±2px horizontal — NO
+       vertical jitter (that was the "earthquake"). The color tear does the work. */
+    0%   { transform: translateX(0);    filter: none; }
+    16%  { transform: translateX(-2px); filter: drop-shadow(5px 0 rgba(236, 72, 153, 0.8)) drop-shadow(-5px 0 rgba(34, 211, 238, 0.9)); }
+    33%  { transform: translateX(2px);  filter: drop-shadow(-5px 0 rgba(236, 72, 153, 0.8)) drop-shadow(5px 0 rgba(34, 211, 238, 0.9)); }
+    50%  { transform: translateX(-1px); filter: drop-shadow(3px 0 rgba(34, 211, 238, 0.75)) drop-shadow(-3px 0 rgba(236, 72, 153, 0.6)); }
+    70%  { transform: translateX(1px);  filter: drop-shadow(-2px 0 rgba(34, 211, 238, 0.6)); }
+    100% { transform: translateX(0);    filter: none; }
+  }
+
+  .console-div { height: 1px; margin: 0 var(--s-3); background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent); }
+
+  .ident-warning {
+    padding: 0 var(--s-3) var(--s-2);
+    margin: 0;
+  }
+
+  /* Zone 3 — switch affordance + in-row accordion */
+  .wallet-option-switch {
+    margin-left: auto;
+    color: var(--text-5);
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .wallet-option.switching .wallet-option-switch {
+    color: var(--cyan-400);
+  }
+  .wallet-switch-inline {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3) var(--s-3);
+    background: var(--void-mid);
+  }
+
+  /* Stealth status label on the wallet anchor + collapsed tooltip. */
+  .wallet-anchor-status .status-dark {
+    color: var(--cyan-500);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .rail-tooltip-value.tt-dark {
+    color: var(--cyan-400);
+    letter-spacing: 0.1em;
   }
 </style>
