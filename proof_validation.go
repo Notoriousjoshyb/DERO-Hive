@@ -125,8 +125,9 @@ func DetectSuspiciousProofPatterns(amount uint64) []string {
 			fmt.Sprintf("Large transfer amount: %d DERO", amountDero))
 	}
 
-	// Warning 4: Suspiciously round number in trillions (often fabricated)
-	if amount >= 1_000_000_000_000 && amount%1_000_000_000_000 == 0 {
+	// Warning 4: Suspiciously round number (exact multiple of 1M DERO) - often fabricated
+	roundThreshold := uint64(1_000_000 * ATOMIC_UNITS_PER_DERO) // 1M DERO
+	if amount >= roundThreshold && amount%roundThreshold == 0 {
 		amountDero := amount / ATOMIC_UNITS_PER_DERO
 		warnings = append(warnings,
 			fmt.Sprintf("Suspiciously round number (%d DERO exactly)", amountDero))
