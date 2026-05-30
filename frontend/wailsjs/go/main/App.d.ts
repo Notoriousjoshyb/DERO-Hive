@@ -59,6 +59,10 @@ export function ClearRecentWallets():Promise<Record<string, any>>;
 
 export function ClearSearchExclusions():Promise<Record<string, any>>;
 
+export function ClearStorageCategory(arg1:string):Promise<Record<string, any>>;
+
+export function ClearStorageTier(arg1:string):Promise<Record<string, any>>;
+
 export function ClipboardClearIf(arg1:string):Promise<Record<string, any>>;
 
 export function CloneTELA(arg1:string,arg2:boolean):Promise<Record<string, any>>;
@@ -355,6 +359,8 @@ export function GetSimulatorWalletInfo():Promise<Record<string, any>>;
 
 export function GetSimulatorWalletStatus():Promise<Record<string, any>>;
 
+export function GetStorageUsage():Promise<main.StorageUsage>;
+
 export function GetSyncProgress():Promise<Record<string, any>>;
 
 export function GetTELAAppsWithTags():Promise<Record<string, any>>;
@@ -510,6 +516,8 @@ export function RemoveSearchExclusion(arg1:string):Promise<Record<string, any>>;
 export function RemoveTrackedToken(arg1:string):Promise<Record<string, any>>;
 
 export function RequestInterceptor(arg1:string):Promise<Record<string, any>>;
+
+export function ResetHologram(arg1:string):Promise<Record<string, any>>;
 
 export function ResetSimulator():Promise<Record<string, any>>;
 

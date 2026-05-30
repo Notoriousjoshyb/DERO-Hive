@@ -4,7 +4,6 @@
     GetCachedApps,
     GetOfflineCacheStats,
     RemoveCachedApp,
-    ClearOfflineCache,
     SetOfflineCacheEnabled,
     CheckAppForUpdate,
     UpdateCachedApp
@@ -59,17 +58,6 @@
   async function handleRemoveApp(scid) {
     try {
       await RemoveCachedApp(scid);
-      await refreshData();
-    } catch (e) {
-      error = e.message;
-    }
-  }
-
-  async function handleClearAll() {
-    if (!confirm('Are you sure you want to clear all cached apps?')) return;
-    
-    try {
-      await ClearOfflineCache();
       await refreshData();
     } catch (e) {
       error = e.message;
@@ -180,10 +168,9 @@
         </div>
         {#if cachedApps.length > 0}
           <div class="explorer-header-right">
-            <button class="btn btn-danger-ghost btn-sm" on:click={handleClearAll}>
-              <Icons name="trash" size={12} />
-              Clear All
-            </button>
+            <span class="form-hint" style="font-size:10.5px;letter-spacing:.04em;">
+              Bulk clear in <strong style="color:var(--cyan-300);">Data &amp; Storage</strong>
+            </span>
           </div>
         {/if}
       </div>

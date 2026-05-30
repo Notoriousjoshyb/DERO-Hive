@@ -110,6 +110,78 @@ export namespace main {
 	        this.message = source["message"];
 	    }
 	}
+	export class StorageCategory {
+	    id: string;
+	    label: string;
+	    description: string;
+	    tier: string;
+	    color: string;
+	    path: string;
+	    size_bytes: number;
+	    item_label: string;
+	    last_write: number;
+	    recovery: string;
+	    clearable: boolean;
+	    blocked_by: string;
+	    in_use: boolean;
+	    managed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new StorageCategory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.description = source["description"];
+	        this.tier = source["tier"];
+	        this.color = source["color"];
+	        this.path = source["path"];
+	        this.size_bytes = source["size_bytes"];
+	        this.item_label = source["item_label"];
+	        this.last_write = source["last_write"];
+	        this.recovery = source["recovery"];
+	        this.clearable = source["clearable"];
+	        this.blocked_by = source["blocked_by"];
+	        this.in_use = source["in_use"];
+	        this.managed = source["managed"];
+	    }
+	}
+	export class StorageUsage {
+	    base_path: string;
+	    total_bytes: number;
+	    categories: StorageCategory[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StorageUsage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.base_path = source["base_path"];
+	        this.total_bytes = source["total_bytes"];
+	        this.categories = this.convertValues(source["categories"], StorageCategory);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class TELAContent {
 	    HTML: string;
 	    CSS: string[];

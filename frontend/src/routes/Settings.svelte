@@ -28,6 +28,7 @@
   import SafeBrowsingSettings from '../lib/components/SafeBrowsingSettings.svelte';
 import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo';
   import ServerManager from '../lib/components/ServerManager.svelte';
+  import StorageManager from '../lib/components/StorageManager.svelte';
   import { Settings as SettingsIcon } from 'lucide-svelte';
 
   export let initialSection = '';
@@ -35,6 +36,7 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   
   const sections = [
     { id: 'general', label: 'General', iconName: 'settings' },
+    { id: 'data-storage', label: 'Data & Storage', iconName: 'hard-drive' },
     { id: 'node', label: 'Node', iconName: 'server' },
     { id: 'simulator', label: 'Simulator', iconName: 'gamepad' },
     { id: 'servers', label: 'TELA Servers', iconName: 'globe' },
@@ -2322,15 +2324,6 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
                   <Icons name="filter" size={14} />
                   Manage
                 </button>
-                {#if searchExclusions.length > 0}
-                  <button
-                    on:click={clearAllExclusions}
-                    class="btn btn-danger-outline"
-                    title="Clear all exclusions"
-                  >
-                    <Icons name="trash-2" size={14} />
-                  </button>
-                {/if}
               </div>
             </div>
             
@@ -2763,19 +2756,15 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
             {/each}
           </div>
           
-          <!-- Revoke All Button -->
+          <!-- Bulk revoke moved to Data & Storage section -->
           {#if connectedApps.length > 1}
-                <div class="revoke-all-section">
+            <div class="revoke-all-section">
               <button
-                on:click={async () => {
-                  for (const app of connectedApps) {
-                    await RevokeAppPermissions(app.origin);
-                  }
-                  await loadConnectedApps();
-                }}
-                    class="btn btn-danger"
+                on:click={() => activeSection = 'data-storage'}
+                class="btn btn-ghost btn-sm"
+                title="Revoke all permissions from Data & Storage"
               >
-                Revoke All Apps
+                Bulk revoke in Data &amp; Storage →
               </button>
             </div>
           {/if}
@@ -2981,14 +2970,13 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
           <div class="card-content">
             <div class="section-header">
               <p class="form-hint">Recent connection attempts</p>
-            {#if connectionLog.length > 0}
               <button
-                on:click={clearLog}
-                  class="btn btn-ghost btn-sm"
+                on:click={() => activeSection = 'data-storage'}
+                class="btn btn-ghost btn-sm"
+                title="Manage logs in Data & Storage"
               >
-                Clear Log
+                Manage in Data &amp; Storage →
               </button>
-            {/if}
           </div>
           
           <div class="connection-log">
@@ -3028,8 +3016,8 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
                 <button on:click={() => copyRecentLogs(50)} class="btn btn-ghost btn-sm" title="Copy last 50 lines">
                   Copy 50
                 </button>
-                <button on:click={handleClearLogs} class="btn btn-ghost btn-sm" title="Clear all logs">
-                  Clear
+                <button on:click={() => activeSection = 'data-storage'} class="btn btn-ghost btn-sm" title="Manage logs in Data & Storage">
+                  Manage in Data &amp; Storage →
                 </button>
               </div>
             </div>
@@ -3050,6 +3038,10 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
           </div>
         </div>
       
+      {:else if activeSection === 'data-storage'}
+        <!-- Data & Storage — unified clear/reset surface -->
+        <StorageManager />
+
       {:else if activeSection === 'about'}
         <!-- About Hologram -->
         <div class="card-wrapper">

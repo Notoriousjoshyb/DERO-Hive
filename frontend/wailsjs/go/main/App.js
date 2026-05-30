@@ -114,6 +114,14 @@ export function ClearSearchExclusions() {
   return window['go']['main']['App']['ClearSearchExclusions']();
 }
 
+export function ClearStorageCategory(arg1) {
+  return window['go']['main']['App']['ClearStorageCategory'](arg1);
+}
+
+export function ClearStorageTier(arg1) {
+  return window['go']['main']['App']['ClearStorageTier'](arg1);
+}
+
 export function ClipboardClearIf(arg1) {
   return window['go']['main']['App']['ClipboardClearIf'](arg1);
 }
@@ -706,6 +714,10 @@ export function GetSimulatorWalletStatus() {
   return window['go']['main']['App']['GetSimulatorWalletStatus']();
 }
 
+export function GetStorageUsage() {
+  return window['go']['main']['App']['GetStorageUsage']();
+}
+
 export function GetSyncProgress() {
   return window['go']['main']['App']['GetSyncProgress']();
 }
@@ -1016,6 +1028,10 @@ export function RemoveTrackedToken(arg1) {
 
 export function RequestInterceptor(arg1) {
   return window['go']['main']['App']['RequestInterceptor'](arg1);
+}
+
+export function ResetHologram(arg1) {
+  return window['go']['main']['App']['ResetHologram'](arg1);
 }
 
 export function ResetSimulator() {
