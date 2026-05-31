@@ -444,25 +444,86 @@ func getLocalDevXSWDBridgeScript() string {
     }
   };
   
-  XSWDProxy.prototype._respond = function(r) {
+  // Dispatch to BOTH onmessage and every addEventListener('message') handler — the
+  // native WebSocket fires the 'message' event on all registered listeners, and dApps
+  // commonly mix the two styles.
+  XSWDProxy.prototype._dispatchMessage = function(payload) {
     var self = this;
-    if (self.onmessage) setTimeout(function() { self.onmessage({ type: 'message', data: JSON.stringify(r), target: self }); }, 0);
+    var ev = { type: 'message', data: JSON.stringify(payload), target: self };
+    setTimeout(function() {
+      if (self.onmessage) {
+        try { self.onmessage(ev); } catch(e) { log('[Error] onmessage: ' + e.message); }
+      }
+      if (self._messageHandlers) {
+        self._messageHandlers.forEach(function(h) {
+          try { h(ev); } catch(e) { log('[Error] message listener: ' + e.message); }
+        });
+      }
+    }, 0);
   };
-  
+
+  XSWDProxy.prototype._respond = function(r) {
+    this._dispatchMessage(r);
+  };
+
   XSWDProxy.prototype._notify = function(method, params) {
+    this._dispatchMessage({ jsonrpc: '2.0', method: method, params: params });
+  };
+
+  XSWDProxy.prototype.addEventListener = function(event, handler) {
     var self = this;
-    if (self.onmessage) {
-      var notification = { jsonrpc: '2.0', method: method, params: params };
-      setTimeout(function() { self.onmessage({ type: 'message', data: JSON.stringify(notification), target: self }); }, 0);
+    if (event === 'message') {
+      if (!self._messageHandlers) self._messageHandlers = [];
+      self._messageHandlers.push(handler);
+    } else if (event === 'open') {
+      if (self.readyState === 1) {
+        setTimeout(function() {
+          try { handler({ type: 'open', target: self }); } catch(e) { log('[Error] open listener: ' + e.message); }
+        }, 0);
+      } else {
+        if (!self._openHandlers) self._openHandlers = [];
+        self._openHandlers.push(handler);
+        var prevOnopen = self.onopen;
+        self.onopen = function(e) {
+          if (prevOnopen) { try { prevOnopen(e); } catch(err) { log('[Error] onopen: ' + err.message); } }
+          (self._openHandlers || []).forEach(function(h) {
+            try { h(e); } catch(err) { log('[Error] open listener: ' + err.message); }
+          });
+        };
+      }
+    } else if (event === 'close') {
+      if (!self._closeHandlers) self._closeHandlers = [];
+      self._closeHandlers.push(handler);
+    } else if (event === 'error') {
+      if (!self._errorHandlers) self._errorHandlers = [];
+      self._errorHandlers.push(handler);
+    }
+  };
+
+  XSWDProxy.prototype.removeEventListener = function(event, handler) {
+    var bucket = event === 'message' ? this._messageHandlers
+               : event === 'open'    ? this._openHandlers
+               : event === 'close'   ? this._closeHandlers
+               : event === 'error'   ? this._errorHandlers
+               : null;
+    if (bucket) {
+      var idx = bucket.indexOf(handler);
+      if (idx >= 0) bucket.splice(idx, 1);
     }
   };
   
   XSWDProxy.prototype.close = function() {
-    this.readyState = 3;
-    // Remove from proxies array to prevent memory leaks
-    var idx = proxies.indexOf(this);
+    var self = this;
+    self.readyState = 3;
+    var idx = proxies.indexOf(self);
     if (idx > -1) proxies.splice(idx, 1);
-    if (this.onclose) this.onclose({ type: 'close', code: 1000 });
+    var ev = { type: 'close', code: 1000 };
+    if (self.onclose) { try { self.onclose(ev); } catch(e) { log('[Error] onclose: ' + e.message); } }
+    if (self._closeHandlers) {
+      self._closeHandlers.forEach(function(h) {
+        try { h(ev); } catch(e) { log('[Error] close listener: ' + e.message); }
+      });
+    }
   };
   
   XSWDProxy.CONNECTING = 0;

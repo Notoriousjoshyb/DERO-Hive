@@ -647,11 +647,25 @@ func getXSWDBridgeScript() string {
     }
   };
   
+  // Dispatch to BOTH onmessage and every addEventListener('message') handler — the
+  // native WebSocket fires the 'message' event on all registered listeners, and dApps
+  // commonly mix the two styles (e.g. ws.onmessage = receive then ws.addEventListener
+  // ('message', checkHandshake) for a one-shot handshake observer).
   XSWDProxy.prototype._respond = function(r) {
     var self = this;
-    if (self.onmessage) setTimeout(function() { self.onmessage({ type: 'message', data: JSON.stringify(r), target: self }); }, 0);
+    var ev = { type: 'message', data: JSON.stringify(r), target: self };
+    setTimeout(function() {
+      if (self.onmessage) {
+        try { self.onmessage(ev); } catch(e) { log('[Error] onmessage: ' + e.message); }
+      }
+      if (self._messageHandlers) {
+        self._messageHandlers.forEach(function(h) {
+          try { h(ev); } catch(e) { log('[Error] message listener: ' + e.message); }
+        });
+      }
+    }, 0);
   };
-  
+
   XSWDProxy.prototype.addEventListener = function(event, handler) {
     var self = this;
     if (event === 'open') {
@@ -673,14 +687,7 @@ func getXSWDBridgeScript() string {
     } else if (event === 'message') {
       if (!self._messageHandlers) self._messageHandlers = [];
       self._messageHandlers.push(handler);
-      // Also set onmessage for compatibility
-      if (!self.onmessage) {
-        self.onmessage = function(e) {
-          if (self._messageHandlers) {
-            self._messageHandlers.forEach(function(h) { h(e); });
-          }
-        };
-      }
+      // _respond fans out to onmessage AND _messageHandlers, so no dispatcher shim here.
     } else if (event === 'error') {
       if (!self._errorHandlers) self._errorHandlers = [];
       self._errorHandlers.push(handler);
