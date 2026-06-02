@@ -1,5 +1,5 @@
 <script>
-  import { walletState, appState, settingsState, addressMasked, balanceMasked, toast, handleBackendError, syncNetworkMode } from '../lib/stores/appState.js';
+  import { walletState, appState, settingsState, addressMasked, balanceMasked, toast, handleBackendError, syncNetworkMode, pendingPayment, clearPendingPayment } from '../lib/stores/appState.js';
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime.js';
   import { OpenWallet, CloseWallet, GetBalance, GetWalletStatus, ListRecentWallets, GetRecentWalletsWithInfo, RemoveRecentWallet, ClearRecentWallets, ConnectXSWD, SelectWalletFile, CreateWallet, RestoreWallet, GetTransactionHistory, GetIntegratedAddress, InternalWalletCall, GetAddressBook, DeleteContact, SignMessage, VerifySignature, GetSeedPhrase, GetWalletKeys, GetSimulatorTestWallets, SyncSimulatorTestWallets, OpenSimulatorTestWallet, FundTestWallet, RefreshTestWalletBalance, SaveFileWithDialog, SyncWallet, GetWalletSyncStatus, ChangeWalletPassword, SetTransactionLabel, GetAllTransactionLabels, GetTransactionLabel, DeleteTransactionLabel, CreatePaymentRequest, DecodeIntegratedAddress, GetMiningEarningsSummary, GetWalletMiningEarnings, IsWalletOpen, GetCurrentWalletPath, SubscribeToWalletEvents, UnsubscribeFromEvents, GetRegistrationStatus, RegisterWallet, CancelRegistration } from '../../wailsjs/go/main/App.js';
   import { onMount, onDestroy } from 'svelte';
@@ -106,22 +106,39 @@
   // RECEIVE SECTION STATE
   // ============================================
   let addressType = 'standard'; // 'standard' | 'integrated'
-  let integratedAddress = '';
-  let integratedLoading = false;
+  let receiveIntegratedAddress = '';
+  let receiveIntegratedLoading = false;
   let integratedPort = '';
   let integratedComment = '';
-  
+
   // ============================================
   // REQUEST PAYMENT STATE
   // ============================================
   let requestAmount = '';
   let requestDesc = '';
   let requestComment = '';
-  
+  let requestIntegratedAddress = '';
+  let requestIntegratedLoading = false;
+  let _payReqDebounceTimer = null;
+  let _payReqInflight = false;
+  let _payReqLastGen = { amt: null, cmt: null };
+
   // ============================================
   // SEND - INTEGRATED ADDRESS DETECTION
   // ============================================
   let decodedPaymentInfo = null;
+
+  // ============================================
+  // SMART-PASTE STATE
+  // ============================================
+  let paymentParsed = null;
+  let paymentState = { state: 'pending', severity: 'info', reason: '' };
+  let paymentDecodeAttempted = false;
+  let lastParsedAddress = null;
+  let uriAckSpoofable = false;
+  let uriAckSelfPay = false;
+  let editingMalformed = false;
+  let paymentMorphFired = false;
   
   // ============================================
   // MINING EARNINGS STATE
@@ -222,15 +239,53 @@
   $: sendAmountAtomic = Math.round(parseFloat(sendAmount || '0') * 100000);
   $: isValidSendAmount = !isNaN(sendAmountAtomic) && sendAmountAtomic > 0 && sendAmountAtomic <= $walletState.balance;
   $: isValidSendAddress = sendDest.startsWith('dero1') || sendDest.startsWith('deroi1') || sendDest.startsWith('deto1') || sendDest.startsWith('detoi1');
-  $: canSend = isValidSendAmount && isValidSendAddress;
+  $: sendBlockedByUriState = paymentState && (
+    paymentState.state === 'malformed' ||
+    paymentState.state === 'corrupted' ||
+    paymentState.state === 'wrongNetwork' ||
+    (paymentState.state === 'spoofable' && !uriAckSpoofable) ||
+    (paymentState.state === 'selfPayment' && !uriAckSelfPay) ||
+    (paymentState.state === 'pending' && paymentParsed?.kind === 'integrated' && paymentParsed?.needsDecode)
+  );
+  $: canSend = isValidSendAmount && isValidSendAddress && !sendBlockedByUriState;
   
   // Reactive display address for Receive section
-  $: displayAddress = (addressType === 'integrated' && integratedAddress) ? integratedAddress : $walletState.address;
+  $: displayAddress = (addressType === 'integrated' && receiveIntegratedAddress) ? receiveIntegratedAddress : $walletState.address;
 
-  // Payment URI
-  $: paymentUri = requestAmount && parseFloat(requestAmount) > 0
-    ? `dero://${$walletState.address}?amount=${Math.round(parseFloat(requestAmount) * 100000)}${requestDesc ? '&desc=' + encodeURIComponent(requestDesc) : ''}`
-    : '';
+  // Payment URI sourced from deroi1 integrated address (amount + comment baked into payload).
+  // ?desc= is the off-chain note only — the embedded comment lives inside the deroi1 payload.
+  $: paymentUri = (() => {
+    if (requestIntegratedAddress) {
+      const note = (requestDesc && requestDesc.trim()) ? '?desc=' + encodeURIComponent(requestDesc.trim()) : '';
+      return `dero://${requestIntegratedAddress}${note}`;
+    }
+    return '';
+  })();
+
+  // Debounced auto-generator scoped to the Request section. The _payReqLastGen guard
+  // prevents post-resolution re-fires when no input has actually changed.
+  $: {
+    if (activeSection !== 'request') {
+      clearTimeout(_payReqDebounceTimer);
+    } else {
+      const amt = parseFloat(requestAmount || '0');
+      const hasInput = amt > 0 || (requestComment && requestComment.trim().length > 0);
+      const inputChanged = (_payReqLastGen.amt !== requestAmount || _payReqLastGen.cmt !== requestComment);
+      if (hasInput && !_payReqInflight && inputChanged) {
+        clearTimeout(_payReqDebounceTimer);
+        const snapshotAmt = requestAmount;
+        const snapshotCmt = requestComment;
+        _payReqDebounceTimer = setTimeout(() => {
+          if (snapshotAmt !== requestAmount || snapshotCmt !== requestComment) return;
+          _payReqLastGen = { amt: snapshotAmt, cmt: snapshotCmt };
+          createPaymentRequest();
+        }, 400);
+      } else if (!hasInput && requestIntegratedAddress && !_payReqInflight) {
+        requestIntegratedAddress = '';
+        _payReqLastGen = { amt: null, cmt: null };
+      }
+    }
+  }
   
   // Filtered history
   $: filteredHistory = transactionHistory.filter(tx => {
@@ -266,8 +321,8 @@
     loadMiningEarnings();
   }
   
-  // Detect integrated addresses when send destination changes
-  $: checkIntegratedAddress(sendDest);
+  // Smart-paste owns full Recipient pipeline: parse -> normalize sendDest -> classify -> decode.
+  $: handlePaymentInput(sendDest);
   
   // Scroll to top when section changes
   let pageContentEl;
@@ -455,6 +510,15 @@
       window.addEventListener('navigate-section', handleNavigateSection);
       // Store handler for cleanup
       window._walletNavigateHandler = handleNavigateSection;
+
+      // Subscribe to pendingPayment — deep links and Browser redirects land here.
+      window._walletPaymentUnsub = pendingPayment.subscribe(p => {
+        if (!p || !p.uri) return;
+        activeSection = 'send';
+        const stripped = p.uri.toLowerCase().startsWith('dero://') ? p.uri.slice(7) : p.uri;
+        sendDest = stripped;
+        clearPendingPayment();
+      });
     } catch (err) {
       console.error('Error checking wallet status:', err);
     }
@@ -480,6 +544,10 @@
     if (window._walletNavigateHandler) {
       window.removeEventListener('navigate-section', window._walletNavigateHandler);
       delete window._walletNavigateHandler;
+    }
+    if (window._walletPaymentUnsub) {
+      window._walletPaymentUnsub();
+      delete window._walletPaymentUnsub;
     }
   });
   
@@ -962,9 +1030,16 @@
         syncStatus = null;
         activeSection = 'dashboard';
         addressType = 'standard';
-        integratedAddress = '';
+        receiveIntegratedAddress = '';
+        requestIntegratedAddress = '';
+        _payReqLastGen = { amt: null, cmt: null };
+        _payReqInflight = false;
+        clearTimeout(_payReqDebounceTimer);
         integratedPort = '';
         integratedComment = '';
+        requestAmount = '';
+        requestDesc = '';
+        requestComment = '';
         resetSendForm();
         await refreshRecentWallets();
       }
@@ -1130,6 +1205,20 @@
     sendLoading = false;
     showFullSendAddress = false;
     showContactPicker = false;
+    clearUriPaste();
+  }
+
+  function clearUriPaste() {
+    sendDest = '';
+    paymentParsed = null;
+    paymentState = { state: 'pending', severity: 'info', reason: '' };
+    decodedPaymentInfo = null;
+    uriAckSpoofable = false;
+    uriAckSelfPay = false;
+    editingMalformed = false;
+    paymentMorphFired = false;
+    paymentDecodeAttempted = false;
+    lastParsedAddress = '';
   }
   
   async function executeSend() {
@@ -1172,14 +1261,14 @@
   // RECEIVE FUNCTIONS
   // ============================================
   async function generateIntegratedAddress() {
-    integratedLoading = true;
-    integratedAddress = '';
+    receiveIntegratedLoading = true;
+    receiveIntegratedAddress = '';
     try {
       const port = integratedPort ? parseInt(integratedPort, 10) : 0;
       const comment = integratedComment || '';
       const result = await GetIntegratedAddress(isNaN(port) ? 0 : port, comment, 0);
       if (result.success) {
-        integratedAddress = result.integratedAddress;
+        receiveIntegratedAddress = result.integratedAddress;
       } else {
         toast.error(result.error || 'Failed to generate integrated address');
       }
@@ -1187,7 +1276,7 @@
       console.error('Failed to generate integrated address:', err);
       toast.error('Failed to generate integrated address');
     } finally {
-      integratedLoading = false;
+      receiveIntegratedLoading = false;
     }
   }
   
@@ -1196,32 +1285,167 @@
   // ============================================
   async function createPaymentRequest() {
     if (!requestAmount && !requestComment) return;
+    if (_payReqInflight) return;
+    _payReqInflight = true;
+    requestIntegratedLoading = true;
+    const snapshotAmt = requestAmount;
+    const snapshotCmt = requestComment;
     try {
-      const amountAtomic = Math.round(parseFloat(requestAmount || '0') * 100000);
-      const result = await CreatePaymentRequest(amountAtomic, requestComment || '');
+      const amountAtomic = Math.round(parseFloat(snapshotAmt || '0') * 100000);
+      const result = await CreatePaymentRequest(amountAtomic, snapshotCmt || '');
+      // Discard stale responses — user moved on.
+      if (snapshotAmt !== requestAmount || snapshotCmt !== requestComment) return;
       if (result.success && result.integrated_address) {
-        // Use the integrated address for display/QR
-        integratedAddress = result.integrated_address;
+        requestIntegratedAddress = result.integrated_address;
       }
     } catch (e) {
       console.error('Failed to create payment request:', e);
+    } finally {
+      requestIntegratedLoading = false;
+      _payReqInflight = false;
     }
   }
   
   // ============================================
-  // SEND - INTEGRATED ADDRESS DETECTION
+  // SMART-PASTE PIPELINE
   // ============================================
-  async function checkIntegratedAddress(addr) {
-    if (!addr || addr.length < 100) return; // Integrated addresses are longer
-    try {
-      const result = await DecodeIntegratedAddress(addr);
-      if (result.success && result.decoded) {
-        decodedPaymentInfo = result.decoded;
-      } else {
-        decodedPaymentInfo = null;
+  // Normalize the backend decode payload (rpc.Arguments shape) into a flat object.
+  // The payload is an array of { name, value } entries: A=amount (uint64), C=comment, D=destination port.
+  function normalizeDecoded(decoded) {
+    if (!decoded) return null;
+    let amount = null, comment = null, port = null;
+    if (Array.isArray(decoded.payload)) {
+      for (const arg of decoded.payload) {
+        if (!arg || typeof arg.name !== 'string') continue;
+        if (arg.name === 'A') amount = Number(arg.value);
+        else if (arg.name === 'C') comment = String(arg.value);
+        else if (arg.name === 'D') port = Number(arg.value);
       }
-    } catch (e) {
+    }
+    const amountFormatted = (amount != null && !isNaN(amount)) ? (amount / 100000).toFixed(5) : null;
+    return { baseAddress: decoded.address || null, amount, amountFormatted, comment, port };
+  }
+
+  // Pure parser — never throws. Classifies the shape of any pasted/typed/scanned input.
+  function parsePaymentURI(input) {
+    const out = { kind: 'unknown', raw: input || '', hadScheme: false, address: null, network: null, embeddedAmount: null, embeddedComment: null, embeddedPort: null, queryAmount: null, queryDesc: null, needsDecode: false, parseError: null };
+    if (!input || typeof input !== 'string') return out;
+    const raw = input.trim();
+    out.raw = raw;
+    if (!raw) return out;
+    out.hadScheme = /^dero:\/\//i.test(raw);
+    const body = out.hadScheme ? raw.slice(7) : raw;
+    const qIdx = body.indexOf('?');
+    const addressPart = qIdx === -1 ? body : body.slice(0, qIdx);
+    const queryPart = qIdx === -1 ? '' : body.slice(qIdx + 1);
+    // Bech32-style charset: no 0/1/b/i/o (after the leading '1' separator).
+    const PREFIX_RE = /^(dero|deto)(i)?1[02-9ac-hj-np-z]+$/i;
+    if (addressPart.length < 60) { out.parseError = 'truncated'; return out; }
+    if (!PREFIX_RE.test(addressPart)) { out.parseError = 'unrecognized_address'; return out; }
+    const lower = addressPart.toLowerCase();
+    if (lower.startsWith('deroi1') || lower.startsWith('detoi1')) { out.kind = 'integrated'; out.needsDecode = true; }
+    else { out.kind = 'standard'; }
+    out.address = addressPart;
+    out.network = lower.startsWith('dero') ? 'mainnet' : 'testnet';
+    if (queryPart) {
+      try {
+        const sp = new URLSearchParams(queryPart);
+        const a = sp.get('amount');
+        if (a) { if (/^\d+$/.test(a)) out.queryAmount = Number(a); else out.parseError = out.parseError || 'bad_amount_param'; }
+        const d = sp.get('desc');
+        if (d) out.queryDesc = d;
+      } catch (_) { out.parseError = out.parseError || 'bad_query'; }
+    }
+    return out;
+  }
+
+  // Pure classifier — first match wins. ctx.decode is null until the async decode resolves.
+  function classifyPaymentURI(parsed, ctx) {
+    if (!parsed || !parsed.raw) return { state: 'pending', severity: 'info', reason: '' };
+    if (parsed.parseError === 'truncated' || parsed.parseError === 'unrecognized_address' || parsed.kind === 'unknown') {
+      return { state: 'malformed', severity: 'err', reason: 'Could not parse address' };
+    }
+    const ctxNet = ctx.currentNetwork === 'simulator' ? 'testnet' : ctx.currentNetwork;
+    if (parsed.network && parsed.network !== ctxNet) {
+      return { state: 'wrongNetwork', severity: 'warn', reason: parsed.network + ' address on ' + ctx.currentNetwork };
+    }
+    if (parsed.kind === 'integrated') {
+      if (parsed.needsDecode && !ctx.decode) return { state: 'pending', severity: 'info', reason: 'decoding…' };
+      if (ctx.decode && !ctx.decode.ok) return { state: 'corrupted', severity: 'err', reason: 'Checksum failed' };
+      if (ctx.decode && ctx.decode.ok) {
+        if (ctx.decode.baseAddress === ctx.walletAddress) return { state: 'selfPayment', severity: 'info', reason: 'Recipient is this wallet' };
+        if ((ctx.decode.amount == null || ctx.decode.amount === 0) && !parsed.queryAmount) return { state: 'halfFilled', severity: 'info', reason: 'Amount not specified' };
+        return { state: 'ok', severity: 'ok', reason: 'Tamper-proof payment URI' };
+      }
+    }
+    // Standard path.
+    if (parsed.address === ctx.walletAddress) return { state: 'selfPayment', severity: 'info', reason: 'Recipient is this wallet' };
+    if (parsed.queryAmount != null && parsed.queryAmount > 0) return { state: 'spoofable', severity: 'warn', reason: 'Amount lives in query string, not address' };
+    return { state: 'halfFilled', severity: 'info', reason: 'Type the amount below' };
+  }
+
+  // Orchestrator — runs on every sendDest change. Idempotent for raw typing; smart-paste only when input is structured.
+  async function handlePaymentInput(value) {
+    const v = value || '';
+    // Idempotence guard for raw typing: same address, no scheme, no query — bail.
+    if (v === lastParsedAddress && !/^dero:\/\//i.test(v) && v.indexOf('?') === -1) return;
+    if (!v) {
+      paymentParsed = null;
+      paymentState = { state: 'pending', severity: 'info', reason: '' };
       decodedPaymentInfo = null;
+      paymentDecodeAttempted = false;
+      paymentMorphFired = false;
+      uriAckSpoofable = false;
+      uriAckSelfPay = false;
+      editingMalformed = false;
+      lastParsedAddress = '';
+      return;
+    }
+    const parsed = parsePaymentURI(v);
+    paymentParsed = parsed;
+    // New URI surface — reset acks before classifying.
+    if (parsed.address !== lastParsedAddress) {
+      uriAckSpoofable = false;
+      uriAckSelfPay = false;
+      editingMalformed = false;
+      paymentMorphFired = false;
+      paymentDecodeAttempted = false;
+    }
+    // Raw-address typing path — let existing form-validation drive, no smart-paste UI.
+    if (parsed.kind === 'unknown' && !parsed.hadScheme && v.indexOf('?') === -1) {
+      paymentState = { state: 'pending', severity: 'info', reason: '' };
+      lastParsedAddress = v;
+      return;
+    }
+    // Strip scheme/query from the input so downstream code sees a bare address.
+    if (parsed.address && v !== parsed.address) sendDest = parsed.address;
+    // Prefill query amount only if the field is empty (don't clobber user input).
+    if (parsed.queryAmount != null && parsed.queryAmount > 0 && !sendAmount) sendAmount = (parsed.queryAmount / 100000).toString();
+    paymentState = classifyPaymentURI(parsed, { currentNetwork: $appState.network, walletAddress: $walletState.address, decode: null });
+    lastParsedAddress = parsed.address || v;
+    // Skip the backend decode for wrongNetwork — daemon would reject and the state is already correct.
+    if (parsed.kind === 'integrated' && parsed.needsDecode && !paymentDecodeAttempted && paymentState.state !== 'wrongNetwork') {
+      paymentDecodeAttempted = true;
+      const guardAddress = parsed.address;
+      try {
+        const result = await DecodeIntegratedAddress(parsed.address);
+        // Race guard — user pasted a new URI before this one resolved.
+        if (guardAddress !== lastParsedAddress) return;
+        if (result && result.success && result.decoded) {
+          const normalized = normalizeDecoded(result.decoded);
+          decodedPaymentInfo = normalized;
+          if (normalized.amount != null && normalized.amount > 0 && !sendAmount) sendAmount = (normalized.amount / 100000).toString();
+          paymentState = classifyPaymentURI(parsed, { currentNetwork: $appState.network, walletAddress: $walletState.address, decode: { ok: true, baseAddress: normalized.baseAddress, amount: normalized.amount, comment: normalized.comment, port: normalized.port } });
+          if (paymentState.state === 'ok' && !paymentMorphFired) paymentMorphFired = true;
+        } else {
+          decodedPaymentInfo = null;
+          paymentState = classifyPaymentURI(parsed, { currentNetwork: $appState.network, walletAddress: $walletState.address, decode: { ok: false, baseAddress: null, amount: null, comment: null, port: null } });
+        }
+      } catch (_) {
+        if (guardAddress !== lastParsedAddress) return;
+        decodedPaymentInfo = null;
+        paymentState = classifyPaymentURI(parsed, { currentNetwork: $appState.network, walletAddress: $walletState.address, decode: { ok: false, baseAddress: null, amount: null, comment: null, port: null } });
+      }
     }
   }
   
@@ -1954,15 +2178,21 @@
                 <div class="form-group">
                   <label class="form-label">Recipient Address</label>
                   <div class="input-with-action">
-                    <input 
-                      type="text" 
-                      class="input" 
-                      class:input-error={sendDest && !isValidSendAddress}
-                      bind:value={sendDest} 
-                      placeholder="dero1..." 
+                    <input
+                      type="text"
+                      class="input"
+                      class:input-error={(paymentState.state === 'pending' || editingMalformed) && sendDest && !isValidSendAddress}
+                      class:uri-locked={paymentState.state === 'ok' || paymentState.state === 'selfPayment'}
+                      class:uri-morphed={paymentMorphFired && paymentState.state === 'ok'}
+                      class:uri-warn={paymentState.severity === 'warn'}
+                      class:uri-err={paymentState.severity === 'err' && paymentState.state !== 'pending'}
+                      class:uri-half={paymentState.state === 'halfFilled'}
+                      readonly={(paymentParsed?.hadScheme === true || paymentParsed?.kind === 'integrated') && !editingMalformed && (paymentState.state === 'ok' || paymentState.state === 'selfPayment' || paymentState.state === 'wrongNetwork')}
+                      bind:value={sendDest}
+                      placeholder="dero1..."
                     />
-                    <button 
-                      class="btn btn-ghost btn-sm" 
+                    <button
+                      class="btn btn-ghost btn-sm"
                       on:click={() => { showContactPicker = !showContactPicker; if (contacts.length === 0) loadContacts(); }}
                       title="Select from Address Book"
                     >
@@ -1972,8 +2202,8 @@
                   {#if showContactPicker && contacts.length > 0}
                     <div class="contact-picker-dropdown">
                       {#each contacts as contact}
-                        <button 
-                          class="contact-picker-item" 
+                        <button
+                          class="contact-picker-item"
                           on:click={() => { sendDest = contact.address; showContactPicker = false; }}
                         >
                           <span class="contact-picker-label">{contact.label}</span>
@@ -1986,15 +2216,67 @@
                       <div class="contact-picker-empty">No saved contacts</div>
                     </div>
                   {/if}
-                  {#if sendDest && !isValidSendAddress}
+                  {#if (paymentState.state === 'pending' || editingMalformed) && sendDest && !isValidSendAddress}
                     <span class="form-error">Invalid DERO address</span>
                   {/if}
-                  {#if decodedPaymentInfo}
-                    <div class="decoded-payment-info">
-                      <span class="decoded-label">Payment Request Detected</span>
-                      {#if decodedPaymentInfo.amount}<span>Amount: {decodedPaymentInfo.amount}</span>{/if}
-                      {#if decodedPaymentInfo.comment}<span>Note: {decodedPaymentInfo.comment}</span>{/if}
+                  {#if paymentState.state !== 'pending'}
+                    <div class="uri-hint-row uri-hint-row--{paymentState.severity}">
+                      <span class="uri-hint-dot"></span>
+                      <span>{paymentState.reason}</span>
                     </div>
+                    <div class="uri-reveal uri-reveal--{paymentState.severity}">
+                      {#if paymentState.state === 'ok' && decodedPaymentInfo}
+                        <span class="uri-reveal-label">Embedded in address</span>
+                        {#if decodedPaymentInfo.amountFormatted}<span>Amount: <strong>{decodedPaymentInfo.amountFormatted} DERO</strong></span>{/if}
+                        {#if decodedPaymentInfo.comment}<span>Comment: <strong>{decodedPaymentInfo.comment}</strong></span>{/if}
+                        {#if paymentParsed?.queryDesc}<span>Note (off-chain): <strong>{paymentParsed.queryDesc}</strong></span>{/if}
+                      {:else if paymentState.state === 'spoofable'}
+                        <span class="uri-reveal-label">Heads up</span>
+                        <span>Amount is in the query string, not the address — verify with the sender before sending.</span>
+                        {#if paymentParsed?.queryAmount}<span>Prefilled amount: <strong>{(paymentParsed.queryAmount / 100000).toString()} DERO</strong></span>{/if}
+                        <span style="opacity:0.8; margin-top:4px;">Ask the sender for a <strong>deroi1</strong> integrated address for tamper-proof payments.</span>
+                      {:else if paymentState.state === 'wrongNetwork'}
+                        <span class="uri-reveal-label">Network mismatch</span>
+                        <span>This is a <strong>{paymentParsed?.network}</strong> address; you're connected to <strong>{$appState.network}</strong>. The transaction won't reach the recipient.</span>
+                      {:else if paymentState.state === 'malformed'}
+                        <span class="uri-reveal-label">What's wrong</span>
+                        {#if paymentParsed?.parseError === 'truncated'}<span>The address looks cut off mid-string. Recheck the source and paste the full value.</span>{:else}<span>The prefix doesn't match a DERO address. Recheck the source or paste again.</span>{/if}
+                      {:else if paymentState.state === 'corrupted'}
+                        <span class="uri-reveal-label">What's wrong</span>
+                        <span>The shape is right but the checksum doesn't verify. Likely copy-paste corruption or a damaged QR — try re-copying or rescanning.</span>
+                      {:else if paymentState.state === 'halfFilled'}
+                        <span class="uri-reveal-label">From the URI</span>
+                        {#if decodedPaymentInfo?.baseAddress}<span>Recipient: <strong>{formatAddress(decodedPaymentInfo.baseAddress)}</strong>{#if decodedPaymentInfo.comment} (with comment <strong>"{decodedPaymentInfo.comment}"</strong>){/if}</span>{:else if paymentParsed?.address}<span>Recipient: <strong>{formatAddress(paymentParsed.address)}</strong></span>{/if}
+                        <span>Amount: <strong>not specified</strong> — enter the amount below.</span>
+                      {:else if paymentState.state === 'selfPayment'}
+                        <span class="uri-reveal-label">Self-payment detected</span>
+                        <span>This is your own wallet. Self-payments still cost a network fee — confirm this is what you mean to do.</span>
+                      {/if}
+                    </div>
+                    {#if paymentState.state === 'spoofable'}
+                      <div class="uri-actions">
+                        {#if !uriAckSpoofable}<button class="btn btn-warn btn-sm" on:click={() => uriAckSpoofable = true}>Use anyway{#if paymentParsed?.queryAmount} ({(paymentParsed.queryAmount / 100000).toString()} DERO){/if}</button>{/if}
+                        <button class="btn btn-ghost btn-sm" on:click={clearUriPaste}>Clear field</button>
+                      </div>
+                    {:else if paymentState.state === 'selfPayment'}
+                      <div class="uri-actions">
+                        {#if !uriAckSelfPay}<button class="btn btn-sm" on:click={() => uriAckSelfPay = true}>Yes, self-pay</button>{/if}
+                        <button class="btn btn-ghost btn-sm" on:click={clearUriPaste}>Clear field</button>
+                      </div>
+                    {:else if paymentState.state === 'wrongNetwork'}
+                      <div class="uri-actions">
+                        <button class="btn btn-sm" on:click={clearUriPaste}>Clear field</button>
+                      </div>
+                    {:else if paymentState.state === 'corrupted'}
+                      <div class="uri-actions">
+                        <button class="btn btn-err btn-sm" on:click={clearUriPaste}>Clear field</button>
+                      </div>
+                    {:else if paymentState.state === 'malformed'}
+                      <div class="uri-actions">
+                        <button class="btn btn-err btn-sm" on:click={clearUriPaste}>Clear field</button>
+                        <button class="btn btn-ghost btn-sm" on:click={() => editingMalformed = true}>Try editing</button>
+                      </div>
+                    {/if}
                   {/if}
                 </div>
                 
@@ -2004,16 +2286,18 @@
                     <span class="form-hint">Available: {availableBalance.toFixed(5)} DERO</span>
                   </div>
                   <div class="input-with-action">
-                    <input 
-                      type="number" 
-                      class="input" 
+                    <input
+                      type="number"
+                      class="input"
                       class:input-error={sendAmount && !isValidSendAmount}
-                      bind:value={sendAmount} 
-                      placeholder="0.00000" 
-                      step="0.00001" 
+                      class:uri-locked={paymentState.state === 'ok'}
+                      readonly={paymentState.state === 'ok'}
+                      bind:value={sendAmount}
+                      placeholder="0.00000"
+                      step="0.00001"
                       min="0"
                     />
-                    <button class="btn btn-ghost btn-sm" on:click={setMaxAmount}>MAX</button>
+                    <button class="btn btn-ghost btn-sm" on:click={setMaxAmount} disabled={paymentState.state === 'ok'}>MAX</button>
                   </div>
                   {#if sendAmount && !isValidSendAmount}
                     <span class="form-error">
@@ -2140,7 +2424,7 @@
                 <button 
                   class="toggle-btn" 
                   class:active={addressType === 'standard'}
-                  on:click={() => { addressType = 'standard'; integratedAddress = ''; }}
+                  on:click={() => { addressType = 'standard'; receiveIntegratedAddress = ''; }}
                 >
                   Standard
                 </button>
@@ -2178,22 +2462,22 @@
                     />
                     <span class="form-hint">An optional note embedded in the address for the sender to see.</span>
                   </div>
-                  <button 
-                    class="btn btn-secondary" 
-                    on:click={generateIntegratedAddress} 
-                    disabled={integratedLoading}
+                  <button
+                    class="btn btn-secondary"
+                    on:click={generateIntegratedAddress}
+                    disabled={receiveIntegratedLoading}
                     style="align-self: center;"
                   >
-                    {#if integratedLoading}
+                    {#if receiveIntegratedLoading}
                       <Loader2 size={14} class="spin" />
                     {/if}
-                    {integratedAddress ? 'Regenerate Address' : 'Generate Integrated Address'}
+                    {receiveIntegratedAddress ? 'Regenerate Address' : 'Generate Integrated Address'}
                   </button>
                 </div>
               {/if}
               
               <!-- QR Code + Address (show standard always, or integrated once generated) -->
-              {#if addressType === 'standard' || integratedAddress}
+              {#if addressType === 'standard' || receiveIntegratedAddress}
                 <div class="qr-display">
                   <QRCodeComponent 
                     value={displayAddress} 
@@ -2270,8 +2554,13 @@
               </div>
               
               <div class="request-actions" style="margin-bottom: 12px;">
-                <button class="btn btn-secondary" on:click={createPaymentRequest} disabled={!requestAmount && !requestComment}>
-                  Generate Integrated Address
+                <button class="btn btn-secondary" on:click={createPaymentRequest} disabled={(!requestAmount && !requestComment) || requestIntegratedLoading || _payReqInflight}>
+                  {#if requestIntegratedLoading}
+                    <Loader2 size={14} class="spin" />
+                    Generating...
+                  {:else}
+                    {requestIntegratedAddress ? 'Regenerate' : 'Generate Integrated Address'}
+                  {/if}
                 </button>
               </div>
               
@@ -2294,16 +2583,16 @@
                     Copy URI
                   </button>
                 </div>
-              {:else if integratedAddress && !requestAmount}
+              {:else if requestIntegratedAddress && !requestAmount}
                 <!-- Integrated address generated without amount (comment only) -->
                 <div class="uri-display">
                   <label class="form-label">Integrated Address</label>
                   <div class="uri-box">
-                    <code class="uri-value">{integratedAddress}</code>
+                    <code class="uri-value">{requestIntegratedAddress}</code>
                   </div>
                 </div>
                 <div class="request-actions">
-                  <button class="btn btn-primary" on:click={() => copyToClipboard(integratedAddress, 'Address copied!')}>
+                  <button class="btn btn-primary" on:click={() => copyToClipboard(requestIntegratedAddress, 'Address copied!')}>
                     <Copy size={14} />
                     Copy Address
                   </button>
@@ -5009,9 +5298,40 @@
 
   .tx-label { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: rgba(82, 200, 219, 0.15); border: 1px solid rgba(82, 200, 219, 0.3); border-radius: 4px; font-size: 0.75rem; color: #52c8db; }
 
-  /* Decoded Payment Info (Send - Integrated Address Detection) */
-  .decoded-payment-info { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; background: rgba(82, 200, 219, 0.1); border: 1px solid rgba(82, 200, 219, 0.2); border-radius: 8px; font-size: 0.8rem; margin-top: 8px; }
-  .decoded-label { color: #52c8db; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  /* Smart-paste URI hint + reveal */
+  .uri-hint-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+  .uri-hint-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+  .uri-hint-row--ok   { color: var(--status-ok); }
+  .uri-hint-row--ok   .uri-hint-dot { background: var(--status-ok); box-shadow: 0 0 8px rgba(52, 211, 153, 0.6); }
+  .uri-hint-row--info { color: var(--cyan-300); }
+  .uri-hint-row--info .uri-hint-dot { background: var(--cyan-400); box-shadow: var(--glow-cyan-xs); }
+  .uri-hint-row--warn { color: var(--status-warn); }
+  .uri-hint-row--warn .uri-hint-dot { background: var(--status-warn); box-shadow: 0 0 8px rgba(251, 191, 36, 0.6); }
+  .uri-hint-row--err  { color: var(--status-err); }
+  .uri-hint-row--err  .uri-hint-dot { background: var(--status-err); box-shadow: 0 0 8px rgba(248, 113, 113, 0.6); animation: uriPulseErr 1s ease-in-out infinite; }
+  @keyframes uriPulseErr { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .uri-reveal { margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
+  .uri-reveal-label { font-size: 9px; letter-spacing: 2px; font-weight: 700; text-transform: uppercase; opacity: 0.85; margin-bottom: 2px; }
+  .uri-reveal--ok   { background: rgba(52, 211, 153, 0.06);  border: 1px solid rgba(52, 211, 153, 0.25);  color: var(--status-ok); }
+  .uri-reveal--info { background: rgba(34, 211, 238, 0.06);  border: 1px solid var(--border-accent);     color: var(--cyan-300); }
+  .uri-reveal--warn { background: rgba(251, 191, 36, 0.06);  border: 1px solid rgba(251, 191, 36, 0.25); color: var(--status-warn); }
+  .uri-reveal--err  { background: rgba(248, 113, 113, 0.06); border: 1px solid rgba(248, 113, 113, 0.25); color: var(--status-err); }
+  .uri-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .btn.btn-warn { background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); color: var(--status-warn); }
+  .btn.btn-warn:hover:not(:disabled) { background: rgba(251, 191, 36, 0.18); }
+  .btn.btn-err  { background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3); color: var(--status-err); }
+  .btn.btn-err:hover:not(:disabled)  { background: rgba(248, 113, 113, 0.18); }
+  .btn.btn-warn[disabled], .btn.btn-err[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .input.uri-locked { background: var(--void-pure) !important; color: var(--cyan-300) !important; border-color: var(--border-accent) !important; box-shadow: var(--glow-cyan-xs); }
+  .input.uri-warn   { background: var(--void-pure) !important; color: var(--status-warn) !important; border-color: rgba(251, 191, 36, 0.5) !important; box-shadow: 0 0 12px rgba(251, 191, 36, 0.15); }
+  .input.uri-err    { background: var(--void-pure) !important; color: var(--status-err) !important; border-color: rgba(248, 113, 113, 0.5) !important; box-shadow: 0 0 12px rgba(248, 113, 113, 0.15); }
+  .input.uri-half   { background: var(--void-pure) !important; color: var(--cyan-300) !important; border-color: var(--border-accent) !important; border-style: dashed !important; }
+  @keyframes uriMorphIn {
+    0%   { transform: scale(0.98); border-color: var(--border-default); box-shadow: none; }
+    60%  { transform: scale(1.01); border-color: var(--border-accent); box-shadow: var(--glow-cyan-md); }
+    100% { transform: scale(1);    border-color: var(--border-accent); box-shadow: var(--glow-cyan-xs); }
+  }
+  .input.uri-locked.uri-morphed { animation: uriMorphIn 600ms cubic-bezier(0.34, 1.56, 0.64, 1) 1; }
 
   /* Mining Earnings Summary */
   .mining-summary { display: flex; gap: 16px; padding: 10px 16px; background: rgba(82, 200, 219, 0.08); border: 1px solid rgba(82, 200, 219, 0.15); border-radius: 8px; margin-bottom: 12px; font-size: 0.8rem; }

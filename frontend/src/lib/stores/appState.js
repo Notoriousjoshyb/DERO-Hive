@@ -329,6 +329,19 @@ export function clearPendingNavigation() {
   pendingNavigation.set(null);
 }
 
+// Pending payment (used when a payment URI is opened from deep link, pasted into Browser, or queued for Wallet)
+export const pendingPayment = writable(null);
+
+// Set pending payment target
+export function requestPayment(uri) {
+  pendingPayment.set({ uri, timestamp: Date.now() });
+}
+
+// Clear pending payment
+export function clearPendingPayment() {
+  pendingPayment.set(null);
+}
+
 // Derived stores
 export const combinedSyncProgress = derived(
   appState,

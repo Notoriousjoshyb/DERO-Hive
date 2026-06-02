@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
   import { writable, get } from 'svelte/store';
-  import { appState, settingsState, walletState, addToHistory, addConsoleLog, pendingNavigation, clearPendingNavigation, requestWalletApproval, walletRequests, consoleLogs as consoleLogsStore, clearConsoleLogs as clearConsoleLogsStore, navigateTo, updateStatus, toast, setAppDiscoveryState } from '../lib/stores/appState.js';
+  import { appState, settingsState, walletState, addToHistory, addConsoleLog, pendingNavigation, clearPendingNavigation, requestWalletApproval, walletRequests, consoleLogs as consoleLogsStore, clearConsoleLogs as clearConsoleLogsStore, navigateTo, updateStatus, toast, setAppDiscoveryState, requestPayment } from '../lib/stores/appState.js';
   import { favorites } from '../lib/stores/favorites.js';
   import { Navigate, FetchSCID, FetchByDURL, GetAppRating, GetNameSuggestions, CallXSWD, ConnectXSWD, ApproveWalletConnection, InternalWalletCall, GetDiscoveredApps, StartGnomon, EnsureGnomonRunning, GetLocalDevServerStatus, StartLocalDevServer, ServeTELAContent, ShutdownServer, ListActiveServers, ClearConsoleLogs as ClearBackendLogs, SetGnomonAutostart, GetGnomonAutostart, GetAllTags, GetTELAAppsWithTags, GetSCIDMetadata, CheckAppFilter, GetContentFilterConfig, ManuallyAllowApp, ManuallyBlockApp, ClearAppFilterOverride, GetLiveStats, GetBalance, GetTransactionHistory, SaveBinaryFileWithDialog, SelectFileWithContent, OpenURLInBrowserIfAllowed, ClearAppCache, IsAppCachedOffline } from '../../wailsjs/go/main/App.js';
   import ReloadSplitButton from '../lib/components/browser/ReloadSplitButton.svelte';
@@ -449,7 +449,7 @@ let addressInput = '';
       versionHistoryScid = scid;
       showVersionHistory = true;
     } else {
-      toast.warn('No TELA app loaded. Navigate to a TELA app first.');
+      toast.warning('No TELA app loaded. Navigate to a TELA app first.');
     }
   }
   
@@ -1651,7 +1651,17 @@ ${logsText || '(no logs)'}
       cleanInput = cleanInput.slice(7);
       addressInput = cleanInput; // Update display to not show redundant prefix
     }
-    
+
+    // Payment URI pasted into the address bar — reroute to Wallet via the pendingPayment store.
+    if (/^(dero|deto)i?1[02-9ac-hj-np-z]{55,}/i.test(cleanInput)) {
+      toast.warning('Payment URI detected — opening in Wallet');
+      requestPayment(`dero://${cleanInput}`);
+      window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'wallet' }));
+      loading = false;
+      showWelcome = true;
+      return;
+    }
+
     addConsoleLog(`Navigating to: ${cleanInput}`);
     
     // Handle local:// URLs for local dev mode

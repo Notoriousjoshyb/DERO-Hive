@@ -12,7 +12,7 @@
   import Settings from './routes/Settings.svelte';
   // Mining tab removed - Developer Support now in Settings > Developer Support
   // Network tab removed - node controls moved to Settings > Node
-  import { appState, walletState, settingsState, updateStatus, addExternalRequest, dismissWalletRequest, toast, loadSettings, syncNetworkMode, navigateTo } from './lib/stores/appState.js';
+  import { appState, walletState, settingsState, updateStatus, addExternalRequest, dismissWalletRequest, toast, loadSettings, syncNetworkMode, navigateTo, requestPayment } from './lib/stores/appState.js';
   import { GetSetting, RespondToXSWDRequest, RespondToXSWDRequestWithPermissions, NotifyWizardComplete, ConsumeLaunchURL } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
   import { waitForWails } from './lib/utils/wails.js';
@@ -140,15 +140,22 @@
     // Load settings from backend on app startup
     await loadSettings();
 
-    // Handle launch deep links (e.g. dero://example.tela) captured by backend.
-    // We enqueue navigation and switch to Browser so the existing Browser startup flow
-    // can resolve and open the link consistently.
+    // Handle launch deep links (e.g. dero://example.tela or dero://deroi1...) captured by backend.
+    // Payment URIs route to Wallet via the pendingPayment store; app URIs route to Browser as before.
     try {
       const launchURL = await ConsumeLaunchURL();
       if (launchURL && launchURL.toLowerCase().startsWith('dero://')) {
         const cleanURL = launchURL.slice(7);
-        navigateTo(cleanURL);
-        currentTab = 'browser';
+        const lower = cleanURL.toLowerCase();
+        const isPaymentURI = lower.startsWith('deroi1') || lower.startsWith('dero1') || lower.startsWith('detoi1') || lower.startsWith('deto1');
+        if (isPaymentURI) {
+          requestPayment(launchURL);
+          currentTab = 'wallet';
+          toast.info('Payment URI received — opening Wallet');
+        } else {
+          navigateTo(cleanURL);
+          currentTab = 'browser';
+        }
       }
     } catch (e) {
       console.error('Failed to consume launch URL:', e);
