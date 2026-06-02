@@ -305,14 +305,7 @@
       }
     };
     window.addEventListener('status-click', handleStatusClick);
-    
-    // Listen for wallet menu open requests
-    const handleOpenWalletMenu = () => {
-      // Dispatch event for StatusBar to handle
-      window.dispatchEvent(new CustomEvent('statusbar-open-wallet-menu'));
-    };
-    window.addEventListener('open-wallet-menu', handleOpenWalletMenu);
-    
+
     // Listen for toast notifications from backend
     EventsOn("toast:show", (data) => {
       const type = data.type || 'info';
@@ -444,7 +437,6 @@
       window.removeEventListener('search-navigate', handleSearchNavigate);
       window.removeEventListener('keydown', handleGlobalKeydown);
       window.removeEventListener('status-click', handleStatusClick);
-      window.removeEventListener('open-wallet-menu', handleOpenWalletMenu);
     };
   });
 </script>

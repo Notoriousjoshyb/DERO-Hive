@@ -264,7 +264,7 @@ End Function`;
           class="textarea sc-code-textarea"
           rows="18"
           spellcheck="false"
-          on:input={() => { validationResult = null; }}
+          on:input={() => { validationResult = null; scDeployError = ''; scDeployResult = null; }}
         ></textarea>
         <div class="sc-meta-row">
           <span class="form-hint">{lineCount} line{lineCount !== 1 ? 's' : ''} &middot; {charCount} char{charCount !== 1 ? 's' : ''}{functionCount > 0 ? ` \u00B7 ${functionCount} function${functionCount !== 1 ? 's' : ''}` : ''}</span>

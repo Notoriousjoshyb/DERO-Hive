@@ -549,6 +549,10 @@
       window._walletPaymentUnsub();
       delete window._walletPaymentUnsub;
     }
+    if (_payReqDebounceTimer) {
+      clearTimeout(_payReqDebounceTimer);
+      _payReqDebounceTimer = null;
+    }
   });
   
   // Reactive: Load test wallets when network mode changes to simulator
@@ -5321,7 +5325,6 @@
   .btn.btn-warn:hover:not(:disabled) { background: rgba(251, 191, 36, 0.18); }
   .btn.btn-err  { background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3); color: var(--status-err); }
   .btn.btn-err:hover:not(:disabled)  { background: rgba(248, 113, 113, 0.18); }
-  .btn.btn-warn[disabled], .btn.btn-err[disabled] { opacity: 0.4; cursor: not-allowed; }
   .input.uri-locked { background: var(--void-pure) !important; color: var(--cyan-300) !important; border-color: var(--border-accent) !important; box-shadow: var(--glow-cyan-xs); }
   .input.uri-warn   { background: var(--void-pure) !important; color: var(--status-warn) !important; border-color: rgba(251, 191, 36, 0.5) !important; box-shadow: 0 0 12px rgba(251, 191, 36, 0.15); }
   .input.uri-err    { background: var(--void-pure) !important; color: var(--status-err) !important; border-color: rgba(248, 113, 113, 0.5) !important; box-shadow: 0 0 12px rgba(248, 113, 113, 0.15); }

@@ -945,16 +945,6 @@ let addressInput = '';
     window.addEventListener('search-result', handleSearchResult);
     
     // Handle direct browser navigation from Explorer (when user searches for a .tela domain)
-    const handleBrowserNavigate = (e) => {
-      const { durl } = e.detail;
-      if (durl) {
-        // Strip dero:// prefix if present (the navigate function handles it)
-        addressInput = durl.replace(/^dero:\/\//i, '');
-        setTimeout(() => navigate(), 50);
-      }
-    };
-    window.addEventListener('browser-navigate', handleBrowserNavigate);
-
     // PostMessage handler for XSWD bridge communication from iframe
     const handleXSWDMessage = async (event) => {
       try {
@@ -1363,7 +1353,6 @@ let addressInput = '';
     
     return () => {
       window.removeEventListener('search-result', handleSearchResult);
-      window.removeEventListener('browser-navigate', handleBrowserNavigate);
       window.removeEventListener('message', handleXSWDMessage);
       window.removeEventListener('keydown', handleKeydown);
     };
