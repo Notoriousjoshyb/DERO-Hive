@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Forbidden symbols
+        run: .github/scripts/check-forbidden-symbols.sh
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
