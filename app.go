@@ -1051,11 +1051,49 @@ func (a *App) GetTokenPortfolio() map[string]interface{} {
 func (a *App) CreatePaymentRequest(amount uint64, comment string) map[string]interface{} {
 	a.logToConsole(fmt.Sprintf("[PayReq] CreatePaymentRequest entry: amount=%d comment_len=%d", amount, len(comment)))
 
+	// Prefer the in-app wallet (same path the Receive view uses). The XSWD
+	// route only fires when HOLOGRAM is acting as a host for an external
+	// wallet (Engram, G45, etc.) and the integrated wallet is unavailable.
+	walletManager.RLock()
+	hasLocalWallet := walletManager.isOpen && walletManager.wallet != nil
+	walletManager.RUnlock()
+
+	if hasLocalWallet {
+		local := a.GetIntegratedAddress(0, comment, amount)
+		if ok, _ := local["success"].(bool); !ok {
+			errMsg := "Failed to generate integrated address"
+			if msg, _ := local["error"].(string); msg != "" {
+				errMsg = msg
+			}
+			a.logToConsole(fmt.Sprintf("[PayReq] ERROR: local wallet path failed: %s", errMsg))
+			return map[string]interface{}{
+				"success": false,
+				"error":   errMsg,
+			}
+		}
+		integratedAddr, _ := local["integratedAddress"].(string)
+		if integratedAddr == "" {
+			a.logToConsole("[PayReq] ERROR: local wallet returned empty integrated address")
+			return map[string]interface{}{
+				"success": false,
+				"error":   "Wallet returned no integrated address",
+			}
+		}
+		a.logToConsole(fmt.Sprintf("[PayReq] OK (local): %s...", integratedAddr[:16]))
+		return map[string]interface{}{
+			"success":            true,
+			"integrated_address": integratedAddr,
+			"amount":             amount,
+			"amount_formatted":   formatDEROAmount(amount),
+			"comment":            comment,
+		}
+	}
+
 	if !a.xswdClient.IsConnected() {
-		a.logToConsole("[PayReq] ERROR: XSWD not connected")
+		a.logToConsole("[PayReq] ERROR: no local wallet and XSWD not connected")
 		return map[string]interface{}{
 			"success": false,
-			"error":   "Wallet not connected via XSWD",
+			"error":   "No wallet available (open the integrated wallet or connect via XSWD)",
 		}
 	}
 
@@ -1101,7 +1139,7 @@ func (a *App) CreatePaymentRequest(amount uint64, comment string) map[string]int
 		}
 	}
 
-	a.logToConsole(fmt.Sprintf("[PayReq] OK: %s...", integratedAddr[:16]))
+	a.logToConsole(fmt.Sprintf("[PayReq] OK (xswd): %s...", integratedAddr[:16]))
 
 	return map[string]interface{}{
 		"success":            true,
