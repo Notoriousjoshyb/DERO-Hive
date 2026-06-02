@@ -1049,7 +1049,10 @@ func (a *App) GetTokenPortfolio() map[string]interface{} {
 }
 
 func (a *App) CreatePaymentRequest(amount uint64, comment string) map[string]interface{} {
+	a.logToConsole(fmt.Sprintf("[PayReq] CreatePaymentRequest entry: amount=%d comment_len=%d", amount, len(comment)))
+
 	if !a.xswdClient.IsConnected() {
+		a.logToConsole("[PayReq] ERROR: XSWD not connected")
 		return map[string]interface{}{
 			"success": false,
 			"error":   "Wallet not connected via XSWD",
@@ -1079,6 +1082,7 @@ func (a *App) CreatePaymentRequest(amount uint64, comment string) map[string]int
 	})
 
 	if err != nil {
+		a.logToConsole(fmt.Sprintf("[PayReq] ERROR: XSWD MakeIntegratedAddress failed: %v", err))
 		return ErrorResponse(err)
 	}
 
@@ -1088,6 +1092,16 @@ func (a *App) CreatePaymentRequest(amount uint64, comment string) map[string]int
 			integratedAddr = addr
 		}
 	}
+
+	if integratedAddr == "" {
+		a.logToConsole(fmt.Sprintf("[PayReq] ERROR: response had no integrated_address field; raw=%v", result))
+		return map[string]interface{}{
+			"success": false,
+			"error":   "Wallet returned no integrated address",
+		}
+	}
+
+	a.logToConsole(fmt.Sprintf("[PayReq] OK: %s...", integratedAddr[:16]))
 
 	return map[string]interface{}{
 		"success":            true,

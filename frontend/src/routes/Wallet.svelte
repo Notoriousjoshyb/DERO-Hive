@@ -1301,9 +1301,12 @@
       if (snapshotAmt !== requestAmount || snapshotCmt !== requestComment) return;
       if (result.success && result.integrated_address) {
         requestIntegratedAddress = result.integrated_address;
+      } else {
+        handleBackendError(result) || toast.error('Could not generate integrated address');
       }
     } catch (e) {
       console.error('Failed to create payment request:', e);
+      toast.error(e?.message || 'Could not generate integrated address');
     } finally {
       requestIntegratedLoading = false;
       _payReqInflight = false;
