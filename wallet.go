@@ -1951,18 +1951,6 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 			"result":  map[string]interface{}{"address": addr.BaseAddress().String(), "payload_rpc": addr.Arguments},
 		}
 
-	case "QueryKey", "query_key":
-		keyType, _ := params["key_type"].(string)
-		switch strings.ToLower(keyType) {
-		case "mnemonic":
-			return map[string]interface{}{
-				"success": true,
-				"result":  map[string]interface{}{"key": wallet.GetSeed()},
-			}
-		default:
-			return map[string]interface{}{"success": false, "error": "Invalid key type, must be mnemonic"}
-		}
-
 	// GetPublicKey returns the wallet's bn256 G1 public key as a 66-char compressed hex
 	// string. This is pure public data — the cryptographic counterpart to GetAddress.
 	// It is needed by any service that wants to encrypt data to this wallet using ECDH

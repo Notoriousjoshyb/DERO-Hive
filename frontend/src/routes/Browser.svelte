@@ -954,7 +954,7 @@ let addressInput = '';
       }
     };
     window.addEventListener('browser-navigate', handleBrowserNavigate);
-    
+
     // PostMessage handler for XSWD bridge communication from iframe
     const handleXSWDMessage = async (event) => {
       try {
@@ -1179,9 +1179,9 @@ let addressInput = '';
           }
             
             // Wallet methods that require authorization
-            const walletMethods = ['GetAddress', 'GetBalance', 'GetHeight', 'GetTransferbyTXID', 
+            const walletMethods = ['GetAddress', 'GetBalance', 'GetHeight', 'GetTransferbyTXID',
                                    'GetTransfers', 'GetTrackedAssets', 'MakeIntegratedAddress',
-                                   'SplitIntegratedAddress', 'QueryKey', 'SignData', 'CheckSignature',
+                                   'SplitIntegratedAddress', 'SignData', 'CheckSignature',
                                    'transfer', 'Transfer', 'transfer_split',
                                    'scinvoke', 'SC_Invoke', 'Login'];
             
@@ -1221,9 +1221,9 @@ let addressInput = '';
             } else {
               // Route through XSWD/wallet
               const signingMethods = ['transfer', 'scinvoke', 'sign', 'Transfer', 'SC_Invoke', 'transfer_split', 'SignData'];
-              const readMethods = ['GetAddress', 'GetBalance', 'GetHeight', 'GetTransferbyTXID', 
+              const readMethods = ['GetAddress', 'GetBalance', 'GetHeight', 'GetTransferbyTXID',
                                    'GetTransfers', 'GetTrackedAssets', 'MakeIntegratedAddress',
-                                   'SplitIntegratedAddress', 'QueryKey', 'CheckSignature'];
+                                   'SplitIntegratedAddress', 'CheckSignature'];
               
               const isWalletMethod = walletMethodsLower.includes(methodLower);
               const isSigningMethod = signingMethods.map(m => m.toLowerCase()).includes(methodLower);

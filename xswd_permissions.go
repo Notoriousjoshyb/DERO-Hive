@@ -372,7 +372,7 @@ func GetRequiredPermission(method string) XSWDPermission {
 		return PermissionSignTransaction
 	case "scinvoke", "SC_Invoke", "DERO.SC_Invoke":
 		return PermissionSCInvoke
-	case "QueryKey", "SignData", "DecryptPayload":
+	case "SignData", "DecryptPayload":
 		return PermissionSignTransaction
 	// Read-only daemon methods - no wallet needed
 	case "DERO.GetInfo", "GetInfo",
