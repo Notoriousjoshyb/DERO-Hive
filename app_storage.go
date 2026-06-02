@@ -550,7 +550,7 @@ func (a *App) clearSearchExclusions() (int64, error) {
 	res := a.ClearSearchExclusions()
 	if ok, _ := res["success"].(bool); !ok {
 		if msg, _ := res["error"].(string); msg != "" {
-			return 0, fmt.Errorf(msg)
+			return 0, fmt.Errorf("%s", msg)
 		}
 		return 0, fmt.Errorf("ClearSearchExclusions failed")
 	}
@@ -618,7 +618,7 @@ func (a *App) clearConsoleLogsAdapter() error {
 	res := a.ClearConsoleLogs()
 	if ok, _ := res["success"].(bool); !ok {
 		if msg, _ := res["error"].(string); msg != "" {
-			return fmt.Errorf(msg)
+			return fmt.Errorf("%s", msg)
 		}
 	}
 	return nil
@@ -628,7 +628,7 @@ func (a *App) clearConnectionLogAdapter() error {
 	res := a.ClearConnectionLog()
 	if ok, _ := res["success"].(bool); !ok {
 		if msg, _ := res["error"].(string); msg != "" {
-			return fmt.Errorf(msg)
+			return fmt.Errorf("%s", msg)
 		}
 	}
 	return nil
@@ -638,7 +638,7 @@ func (a *App) tryShutdownTELAServers() (map[string]interface{}, error) {
 	res := a.ShutdownTELAServers()
 	if ok, _ := res["success"].(bool); !ok {
 		if msg, _ := res["error"].(string); msg != "" {
-			return res, fmt.Errorf(msg)
+			return res, fmt.Errorf("%s", msg)
 		}
 	}
 	return res, nil
