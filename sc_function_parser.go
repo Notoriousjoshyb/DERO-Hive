@@ -148,7 +148,7 @@ func (a *App) ValidateSCCode(code string) map[string]interface{} {
 			continue
 		}
 
-		if name == "Initialize" {
+		if name == "Initialize" || name == "InitializePrivate" {
 			hasInitialize = true
 		}
 

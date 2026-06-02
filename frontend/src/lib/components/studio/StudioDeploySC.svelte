@@ -48,7 +48,7 @@
 
       if (result.success) {
         if (!result.hasInitialize) {
-          toast.warning('Warning: No Initialize() function found. This is required for deployment.');
+          toast.warning('Warning: No Initialize() or InitializePrivate() entrypoint found. One is required for deployment.');
         } else {
           toast.success(`Valid: ${result.count} function${result.count !== 1 ? 's' : ''} parsed`);
         }
@@ -279,7 +279,7 @@ End Function`;
               <Check size={14} />
               <span>Valid &mdash; {validationResult.count} exported function{validationResult.count !== 1 ? 's' : ''}</span>
               {#if !validationResult.hasInitialize}
-                <span class="sc-validation-warn">Missing Initialize()</span>
+                <span class="sc-validation-warn">Missing entrypoint</span>
               {/if}
             </div>
             {#if validationResult.functions && validationResult.functions.length > 0}
@@ -343,7 +343,7 @@ End Function`;
       <div class="info-panel-content">
         <p class="info-panel-title">About DVM-BASIC Smart Contracts</p>
         <ul class="info-list">
-          <li>Every SC <strong>must</strong> have an <code>Initialize()</code> function that returns <code>Uint64</code></li>
+          <li>Every SC <strong>must</strong> have an <code>Initialize()</code> or <code>InitializePrivate()</code> entrypoint that returns <code>Uint64</code></li>
           <li><code>RETURN 0</code> = success (state commits), <code>RETURN 1</code> = failure (state reverts)</li>
           <li><code>STORE(key, value)</code> / <code>LOAD(key)</code> for persistent on-chain state</li>
           <li><code>SIGNER()</code> for access control, <code>DEROVALUE()</code> to receive DERO</li>
