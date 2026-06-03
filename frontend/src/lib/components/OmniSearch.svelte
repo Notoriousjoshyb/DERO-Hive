@@ -417,8 +417,14 @@
       return 'block';
     }
     
-    // dURL: starts with dero://
+    // dero://<address> is a payment URI, not a dURL. Mirrors the prefix list
+    // used by Browser.svelte navigateTo() and App.svelte ConsumeLaunchURL.
     if (lowerTrimmed.startsWith('dero://')) {
+      const body = lowerTrimmed.slice(7);
+      if (body.startsWith('dero1') || body.startsWith('deroi1') ||
+          body.startsWith('deto1') || body.startsWith('detoi1')) {
+        return 'address';
+      }
       return 'durl';
     }
     
