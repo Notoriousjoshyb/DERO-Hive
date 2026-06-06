@@ -358,7 +358,15 @@ func (s *XSWDServer) handleRequest(conn *websocket.Conn, req JSONRPCRequest, raw
 		}
 		s.sendResponse(conn, req.ID, result, errRes)
 
-	case "GetHeight", "DERO.GetHeight":
+	// Wallet-side GetHeight only. DERO.GetHeight (daemon-side chain tip) is
+	// intentionally NOT in this case — it falls through to the default branch
+	// below, which proxies all DERO.* methods to the daemon via routeDaemonCall.
+	// Intercepting DERO.GetHeight here would (a) return the wallet's sync
+	// height instead of the daemon's chain tip (wrong data), and (b) gate a
+	// public chain read on PermissionViewBalance, contrary to the XSWD spec
+	// (walletapi/xswd/xswd.go:651-693 treats DERO.* as always-permitted
+	// post-handshake).
+	case "GetHeight":
 		if pm != nil && origin != "" && !pm.HasPermission(origin, PermissionViewBalance) {
 			errRes = &JSONRPCError{Code: -32003, Message: "Permission denied: View Balance permission not granted"}
 			s.sendResponse(conn, req.ID, nil, errRes)
