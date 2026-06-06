@@ -156,9 +156,20 @@ func TestGetRequiredPermission_AllMethods(t *testing.T) {
 		{"GetAddress", PermissionViewAddress},
 		{"DERO.GetAddress", PermissionViewAddress},
 
-		// Balance methods
+		// Balance methods.
+		// GetHeight (wallet-side) returns wallet's last-seen sync height — wallet state.
+		// DERO.GetHeight (daemon-side) returns chain-tip block height — public data,
+		// classified under PermissionReadPublicData below.
 		{"GetBalance", PermissionViewBalance},
 		{"DERO.GetBalance", PermissionViewBalance},
+		{"GetHeight", PermissionViewBalance},
+
+		// Read-only daemon methods (public chain data, no wallet needed)
+		{"DERO.GetInfo", PermissionReadPublicData},
+		{"DERO.GetHeight", PermissionReadPublicData},
+		{"DERO.GetBlock", PermissionReadPublicData},
+		{"DERO.GetTxPool", PermissionReadPublicData},
+		{"DERO.GetSC", PermissionReadPublicData},
 
 		// Transfer methods
 		{"transfer", PermissionSignTransaction},

@@ -365,7 +365,7 @@ func GetRequiredPermission(method string) XSWDPermission {
 		"GetDaemon", "DERO.GetDaemon":
 		return PermissionViewAddress
 	case "GetBalance", "DERO.GetBalance",
-		"GetHeight", "DERO.GetHeight",
+		"GetHeight",
 		"GetTransfers", "GetTransferbyTXID":
 		return PermissionViewBalance
 	case "transfer", "Transfer", "DERO.Transfer":
@@ -374,11 +374,18 @@ func GetRequiredPermission(method string) XSWDPermission {
 		return PermissionSCInvoke
 	case "SignData", "DecryptPayload":
 		return PermissionSignTransaction
-	// Read-only daemon methods - no wallet needed
+	// Read-only daemon methods - no wallet needed.
+	// DERO.GetHeight is the daemon-side chain-tip block height (public data),
+	// distinct from the wallet-side "GetHeight" above which returns the
+	// wallet's last-seen sync height (genuinely wallet state). Grouping
+	// DERO.GetHeight with PermissionViewBalance over-restricted public
+	// chain reads; the reference XSWD impl (walletapi/xswd/xswd.go:651-693)
+	// treats all DERO.* daemon proxies as always-permitted post-handshake.
 	case "DERO.GetInfo", "GetInfo",
 		"DERO.GetBlock", "GetBlock",
 		"DERO.GetBlockHeaderByHash", "GetBlockHeaderByHash",
 		"DERO.GetBlockHeaderByTopoHeight", "GetBlockHeaderByTopoHeight",
+		"DERO.GetHeight",
 		"DERO.GetTxPool", "GetTxPool",
 		"DERO.GetTransaction", "GetTransaction",
 		"DERO.GetRandomAddress", "GetRandomAddress",
