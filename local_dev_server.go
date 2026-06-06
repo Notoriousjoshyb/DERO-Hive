@@ -270,6 +270,15 @@ func localDevCORSMiddleware(next http.Handler, directory string) http.Handler {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
+		// Defeat browser caching entirely. Frontend appends ?_t= cache-busters to
+		// top-level assets it can see, but nested ES6 imports (import './helper.js'
+		// from inside main.js) are resolved by the browser without our rewriter
+		// touching them — without no-store, the browser keeps serving a stale
+		// helper.js from cache even after the file changes on disk.
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+
 		// Handle preflight requests
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
