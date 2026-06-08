@@ -15,8 +15,37 @@ permissions:
   contents: write
 
 jobs:
+  changelog-guard:
+    name: CHANGELOG entry present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require a CHANGELOG section for this version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          # Same extraction the release job uses for the notes body — guard it here
+          # so a missing section fails in seconds instead of after a full build.
+          NOTES=$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md)
+          if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            echo "::error::No '## [$VERSION]' section found in CHANGELOG.md — the release would publish with empty notes. Add the entry before tagging."
+            exit 1
+          fi
+          echo "Found CHANGELOG entry for $VERSION."
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: changelog-guard
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
