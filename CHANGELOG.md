@@ -7,6 +7,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.6] - 2026-06-08
+
+Payment URI workflow, unified storage controls, and XSWD bridge fixes.
+
+### Added
+- Wallet: smart-paste payment URI field with a 7-state input model
+- Settings: Data & Storage section — a unified clear/reset surface
+
+### Changed
+- Tightened the XSWD RPC surface and hardened CI checks
+
+### Fixed
+- XSWD: route `DERO.GetHeight` through the daemon proxy and reclassify it as read-public-data
+- XSWD bridge: dispatch message events to `addEventListener` handlers
+- Wallet: `CreatePaymentRequest` uses the local wallet path; failures are surfaced instead of swallowed
+- Payment URI: dual-path integrated-address decode + address-aware OmniSearch
+- Studio: accept `InitializePrivate` as a valid SC entrypoint
+- Dev server: hot reload actually reloads, and real errors are surfaced
+
+---
+
 ## [1.0.2] - 2026-04-20
 
 Wallet registration and expanded platform support.
