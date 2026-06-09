@@ -233,8 +233,16 @@
           </div>
           
           <div class="token-balance">
-            <span class="balance-value">{$balanceMasked ? '••••••' : formatBalance(token.balance)}</span>
-            {#if token.symbol}
+            <span class="balance-value" class:balance-unknown={token.balanceUnknown}>
+              {#if $balanceMasked}
+                ••••••
+              {:else if token.balanceUnknown}
+                <span title="Balance unavailable — daemon offline or sync pending">—</span>
+              {:else}
+                {formatBalance(token.balance)}
+              {/if}
+            </span>
+            {#if token.symbol && !token.balanceUnknown}
               <span class="balance-symbol">{token.symbol}</span>
             {/if}
           </div>
@@ -521,6 +529,11 @@
     font-weight: 600;
     font-family: var(--font-mono);
     color: var(--text-1);
+  }
+
+  .balance-value.balance-unknown {
+    color: var(--text-4);
+    cursor: help;
   }
   
   .balance-symbol {

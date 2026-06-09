@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -233,6 +234,17 @@ func (s *XSWDServer) handleRequest(conn *websocket.Conn, req JSONRPCRequest, raw
 	var result interface{}
 	var errRes *JSONRPCError
 
+	// Each request runs in its own goroutine (see the dispatch in handleMessage),
+	// so an unhandled panic here would crash the entire HOLOGRAM process. Recover,
+	// log it, and return a JSON-RPC internal error to the dApp instead. Mirrors
+	// the canonical wallet RPC handlers, which wrap each call in recover().
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[XSWD] PANIC handling %s: %v\n%s", req.Method, r, debug.Stack())
+			s.sendResponse(conn, req.ID, nil, &JSONRPCError{Code: -32603, Message: "Internal error"})
+		}
+	}()
+
 	// Log request method
 	log.Printf("[XSWD] Request: %s", req.Method)
 
@@ -350,11 +362,50 @@ func (s *XSWDServer) handleRequest(conn *websocket.Conn, req JSONRPCRequest, raw
 			return
 		}
 
-		if !walletManager.isOpen {
+		// Capture the wallet pointer under the lock and release before any
+		// daemon I/O. CloseWallet nils walletManager.wallet under Lock(); reading
+		// isOpen then dereferencing the pointer without holding the lock is a
+		// TOCTOU that can nil-deref-panic. Do NOT hold the lock across the sync
+		// (it does daemon RPC and would stall CloseWallet and other handlers).
+		walletManager.RLock()
+		w := walletManager.wallet
+		walletOpen := walletManager.isOpen && w != nil
+		walletManager.RUnlock()
+
+		if !walletOpen {
 			errRes = &JSONRPCError{Code: -32000, Message: "Wallet not open"}
 		} else {
-			m, l := walletManager.wallet.Get_Balance()
-			result = map[string]uint64{"balance": m, "locked_balance": l}
+			// Honor the optional "scid" param. A DERO token balance is an
+			// encrypted per-account leaf, fetched by syncing that SCID from the
+			// daemon then reading Get_Balance_scid — mirroring the canonical
+			// wallet RPC (walletapi/rpcserver/rpc_getbalance.go). Without an scid
+			// (or the zero hash) we return the native DERO balance.
+			var params map[string]interface{}
+			json.Unmarshal(req.Params, &params)
+			scidStr := ""
+			if raw, ok := params["scid"].(string); ok {
+				scidStr = strings.ToLower(sanitizeSCID(raw))
+			}
+
+			if scidStr != "" && scidStr != deroSCID {
+				scid := crypto.HashHexToHash(scidStr)
+				// HashHexToHash silently yields the ZERO hash on malformed input
+				// (e.g. a 0x prefix or non-hex chars), which would otherwise alias
+				// the native DERO balance under the token's name. Reject anything
+				// that doesn't round-trip to the exact lowercased hex we received.
+				if scid.String() != scidStr {
+					errRes = &JSONRPCError{Code: -32602, Message: "Invalid scid: must be 64 hexadecimal characters"}
+				} else if m, err := syncAndReadTokenBalance(w, scid); err != nil {
+					// On-demand sync fetches+decrypts this token's balance from the
+					// daemon, so the token need not have been tracked beforehand.
+					errRes = &JSONRPCError{Code: -32000, Message: fmt.Sprintf("Failed to fetch token balance: %v", err)}
+				} else {
+					result = map[string]uint64{"balance": m, "unlocked_balance": m, "locked_balance": 0}
+				}
+			} else {
+				m := readNativeBalance(w)
+				result = map[string]uint64{"balance": m, "unlocked_balance": m, "locked_balance": 0}
+			}
 		}
 		s.sendResponse(conn, req.ID, result, errRes)
 

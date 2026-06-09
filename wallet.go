@@ -43,6 +43,51 @@ var walletManager = NewWalletManager()
 // walletapi uses global connectivity; start it once per process.
 var walletConnectivityOnce sync.Once
 
+// balanceMu serializes HOLOGRAM's reads of the wallet's per-SCID balance map
+// (Get_Balance / Get_Balance_scid) and any on-demand Sync against each other.
+// The walletapi background sync_loop writes account.Balance[scid] under the
+// wallet's own lock every ~5s, but Get_Balance* read that map lock-free, so
+// concurrent HOLOGRAM readers (XSWD handlers, the portfolio render) would
+// otherwise race the loop's writes — a fatal "concurrent map read and map
+// write". Holding balanceMu around our reads/syncs makes them mutually
+// exclusive on our side; the reads are O(1) map lookups, so this never blocks
+// on I/O. Callers must hold a stable wallet pointer (captured under
+// walletManager's lock) before calling these helpers.
+var balanceMu sync.Mutex
+
+// readNativeBalance returns the cached native DERO mature balance, serialized
+// against the sync_loop via balanceMu.
+func readNativeBalance(wallet *walletapi.Wallet_Disk) uint64 {
+	balanceMu.Lock()
+	defer balanceMu.Unlock()
+	mature, _ := wallet.Get_Balance()
+	return mature
+}
+
+// readTokenBalance returns the cached mature balance for an scid, serialized
+// against the sync_loop via balanceMu. It does NOT sync — it reads whatever the
+// background loop (or a prior add-time sync) last decrypted.
+func readTokenBalance(wallet *walletapi.Wallet_Disk, scid crypto.Hash) uint64 {
+	balanceMu.Lock()
+	defer balanceMu.Unlock()
+	mature, _ := wallet.Get_Balance_scid(scid)
+	return mature
+}
+
+// syncAndReadTokenBalance fetches+decrypts an scid's balance from the daemon on
+// demand (for callers that can't rely on the token being pre-registered, e.g.
+// the XSWD bridge serving an arbitrary dApp query) then returns it, all
+// serialized against the sync_loop via balanceMu.
+func syncAndReadTokenBalance(wallet *walletapi.Wallet_Disk, scid crypto.Hash) (uint64, error) {
+	balanceMu.Lock()
+	defer balanceMu.Unlock()
+	if err := wallet.Sync_Wallet_Memory_With_Daemon_internal(scid); err != nil {
+		return 0, err
+	}
+	mature, _ := wallet.Get_Balance_scid(scid)
+	return mature, nil
+}
+
 func normalizeDaemonEndpointForWallet(endpoint string) string {
 	// walletapi.Wallet_* typically expects host:port (no scheme) here.
 	// walletapi.Connect() can handle schemes, but SetDaemonAddress is used elsewhere.
@@ -297,6 +342,16 @@ func (a *App) OpenWallet(filePath, password string) map[string]interface{} {
 			}
 		case <-time.After(10 * time.Second):
 			a.logToConsole("[WARN] Initial wallet sync timed out (10s) — will continue syncing in background")
+		}
+
+		// Register previously tracked tokens with the wallet engine so their
+		// encrypted balances are fetched and kept fresh by the ongoing sync.
+		// Without this, non-native token balances would read 0 until the user
+		// re-adds them. Errors are benign (e.g. "token already added").
+		for _, t := range loadTrackedTokens() {
+			if err := wallet.TokenAdd(crypto.HashHexToHash(strings.ToLower(t.SCID))); err != nil {
+				continue
+			}
 		}
 	}()
 
@@ -2465,54 +2520,58 @@ func (a *App) GetTrackedTokens() map[string]interface{} {
 	// If we have a local wallet open, get balances
 	walletManager.RLock()
 	localWalletOpen := walletManager.isOpen && walletManager.wallet != nil
-	var walletAddress string
-	if localWalletOpen {
-		walletAddress = walletManager.wallet.GetAddress().String()
-	}
+	wallet := walletManager.wallet
 	walletManager.RUnlock()
 
 	result := make([]map[string]interface{}, 0)
 
 	// Always include native DERO first if wallet is open
 	if localWalletOpen {
-		walletManager.RLock()
-		mature, _ := walletManager.wallet.Get_Balance()
-		walletManager.RUnlock()
-
 		result = append(result, map[string]interface{}{
 			"scid":    deroSCID,
 			"name":    "DERO",
 			"symbol":  "DERO",
-			"balance": mature,
+			"balance": readNativeBalance(wallet),
 			"native":  true,
 		})
 	}
 
-	// For each tracked token, try to get balance from Gnomon or SC query
+	// For each tracked token, read the cached encrypted balance the wallet
+	// engine already maintains. A DERO token balance is an encrypted per-account
+	// leaf in the chain balance tree — NOT a plaintext Gnomon SC variable. We do
+	// NOT sync the daemon here: OpenWallet registers every tracked token
+	// (TokenAdd), and the walletapi background sync_loop refreshes each
+	// registered SCID every ~5s, so the cached value is current. Syncing per
+	// render would add N blocking daemon round-trips to a UI path (and break the
+	// simulator's single-WebSocket constraint). Gnomon is used only to backfill
+	// missing name/symbol metadata.
 	for _, token := range tokens {
 		tokenData := map[string]interface{}{
-			"scid":    token.SCID,
-			"name":    token.Name,
-			"symbol":  token.Symbol,
-			"balance": uint64(0),
-			"native":  false,
+			"scid":           token.SCID,
+			"name":           token.Name,
+			"symbol":         token.Symbol,
+			"balance":        uint64(0),
+			"native":         false,
+			"balanceUnknown": false,
 		}
 
-		// Try to get balance from Gnomon if running
-		if a.gnomonClient != nil && a.gnomonClient.IsRunning() && walletAddress != "" {
-			// Look up balance in SC variables
+		if localWalletOpen && wallet != nil {
+			scidHash := crypto.HashHexToHash(token.SCID)
+			// Ensure the wallet tracks this SCID so the background sync_loop
+			// keeps it fresh ("already added" is benign).
+			_ = wallet.TokenAdd(scidHash)
+			tokenData["balance"] = readTokenBalance(wallet, scidHash)
+		} else {
+			// No open wallet — we genuinely can't know the balance; show "—"
+			// rather than a misleading 0.
+			tokenData["balanceUnknown"] = true
+		}
+
+		// Backfill metadata from Gnomon only (never balance).
+		if (token.Name == "" || token.Symbol == "") && a.gnomonClient != nil && a.gnomonClient.IsRunning() {
 			vars := a.gnomonClient.GetAllSCIDVariableDetails(token.SCID)
 			for _, v := range vars {
 				key := fmt.Sprintf("%v", v.Key)
-				// Token balances are typically stored as address keys
-				if key == walletAddress {
-					if balance, ok := v.Value.(uint64); ok {
-						tokenData["balance"] = balance
-					} else if balance, ok := v.Value.(float64); ok {
-						tokenData["balance"] = uint64(balance)
-					}
-				}
-				// Also try common naming patterns
 				if token.Name == "" && key == "nameHdr" {
 					tokenData["name"] = decodeHexString(fmt.Sprintf("%v", v.Value))
 				}
@@ -2541,6 +2600,10 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 			"error":   "Invalid SCID format - must be 64 hexadecimal characters",
 		}
 	}
+
+	// Normalize to lowercase hex so dedupe, storage, and HashHexToHash are
+	// consistent regardless of how the user typed the SCID.
+	scid = strings.ToLower(scid)
 
 	// Check if already tracked
 	tokens := loadTrackedTokens()
@@ -2579,6 +2642,29 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 
 	a.logToConsole(fmt.Sprintf("[Wallet] Added tracked token: %s (%s)", name, scid[:16]+"..."))
 
+	// Register the SCID with the wallet engine and pull its encrypted balance
+	// once, so the portfolio shows the real amount immediately rather than
+	// waiting for the background sync_loop's next tick. A DERO token balance
+	// lives in the encrypted per-account balance tree, fetched via the daemon —
+	// not from Gnomon SC variables. TokenAdd also enrolls the SCID in the
+	// sync_loop so it stays fresh thereafter. Failure here is non-fatal: the
+	// token is still tracked and will resolve on the next loop tick.
+	walletManager.RLock()
+	wallet := walletManager.wallet
+	walletOpen := walletManager.isOpen && wallet != nil
+	walletManager.RUnlock()
+
+	if walletOpen {
+		scidHash := crypto.HashHexToHash(scid)
+		if err := wallet.TokenAdd(scidHash); err != nil {
+			// "token already added" is benign; anything else is just logged.
+			a.logToConsole(fmt.Sprintf("[Wallet] TokenAdd(%s): %v", scid[:16]+"...", err))
+		}
+		if _, err := syncAndReadTokenBalance(wallet, scidHash); err != nil {
+			a.logToConsole(fmt.Sprintf("[Wallet] Initial balance sync for %s failed: %v", scid[:16]+"...", err))
+		}
+	}
+
 	return map[string]interface{}{
 		"success": true,
 		"token":   newToken,
@@ -2588,6 +2674,9 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 
 // RemoveTrackedToken removes a token from the tracked list
 func (a *App) RemoveTrackedToken(scid string) map[string]interface{} {
+	// loadTrackedTokens normalizes stored SCIDs to lowercase, so match on the
+	// same casing.
+	scid = strings.ToLower(scid)
 	tokens := loadTrackedTokens()
 	newTokens := make([]TrackedToken, 0)
 	found := false
@@ -2694,6 +2783,12 @@ func loadTrackedTokens() []TrackedToken {
 	var tokens []TrackedToken
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return []TrackedToken{}
+	}
+
+	// Normalize stored SCIDs to lowercase so dedupe and lookups are consistent
+	// regardless of how a legacy entry was cased when first saved.
+	for i := range tokens {
+		tokens[i].SCID = strings.ToLower(tokens[i].SCID)
 	}
 
 	return tokens
