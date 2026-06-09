@@ -271,17 +271,22 @@ func (pm *PermissionManager) RevokeAllPermissions(origin string) error {
 	return pm.deleteFromStorage(origin)
 }
 
-// HasPermission checks if an app has a specific permission
+// HasPermission checks if an app has a specific permission.
+//
+// Takes the full write lock, not RLock: this also refreshes LastAccessed, and a
+// field write under RLock races the struct-copy reads in GetApp/GetAllApps
+// (which run concurrently under RLock). The critical section is two map lookups
+// plus a timestamp assignment, and this is a per-request call (not a hot loop),
+// so serializing it is effectively free.
 func (pm *PermissionManager) HasPermission(origin string, permission XSWDPermission) bool {
-	pm.RLock()
-	defer pm.RUnlock()
+	pm.Lock()
+	defer pm.Unlock()
 
 	app, exists := pm.apps[origin]
 	if !exists {
 		return false
 	}
 
-	// Update last accessed time (best effort, don't lock for write)
 	app.LastAccessed = time.Now().Unix()
 
 	return app.Permissions[permission]
