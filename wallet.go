@@ -1574,10 +1574,39 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 		}
 
 	case "GetBalance", "DERO.GetBalance", "getbalance":
-		balance, lockedBalance := wallet.Get_Balance()
+		// Honor the optional "scid" param so a dApp can query a token balance.
+		// A DERO token balance is an encrypted per-account leaf, fetched by
+		// syncing that SCID from the daemon then reading Get_Balance_scid —
+		// mirroring the canonical wallet RPC. Without an scid (or the zero hash)
+		// return native DERO. This is the bridge path the embedded TELA app uses
+		// (the XSWD WebSocket handler has the equivalent fix).
+		scidStr := ""
+		if raw, ok := params["scid"].(string); ok {
+			scidStr = strings.ToLower(sanitizeSCID(raw))
+		}
+
+		if scidStr != "" && scidStr != deroSCID {
+			scid := crypto.HashHexToHash(scidStr)
+			// HashHexToHash silently yields the ZERO hash on malformed input,
+			// which would otherwise alias the native DERO balance. Reject
+			// anything that doesn't round-trip to the lowercased hex we received.
+			if scid.String() != scidStr {
+				return map[string]interface{}{"success": false, "error": "Invalid scid: must be 64 hexadecimal characters"}
+			}
+			mature, err := syncAndReadTokenBalance(wallet, scid)
+			if err != nil {
+				return map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to fetch token balance: %v", err)}
+			}
+			return map[string]interface{}{
+				"success": true,
+				"result":  map[string]uint64{"balance": mature, "unlocked_balance": mature, "locked_balance": 0},
+			}
+		}
+
+		mature := readNativeBalance(wallet)
 		return map[string]interface{}{
 			"success": true,
-			"result":  map[string]uint64{"balance": balance, "unlocked_balance": balance - lockedBalance, "locked_balance": lockedBalance},
+			"result":  map[string]uint64{"balance": mature, "unlocked_balance": mature, "locked_balance": 0},
 		}
 
 	case "GetHeight", "DERO.GetHeight", "getheight":
