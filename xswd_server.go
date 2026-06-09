@@ -400,11 +400,12 @@ func (s *XSWDServer) handleRequest(conn *websocket.Conn, req JSONRPCRequest, raw
 					// daemon, so the token need not have been tracked beforehand.
 					errRes = &JSONRPCError{Code: -32000, Message: fmt.Sprintf("Failed to fetch token balance: %v", err)}
 				} else {
-					result = map[string]uint64{"balance": m, "unlocked_balance": m, "locked_balance": 0}
+					// Match canonical GetBalance_Result: {balance, unlocked_balance} only.
+					result = map[string]uint64{"balance": m, "unlocked_balance": m}
 				}
 			} else {
 				m := readNativeBalance(w)
-				result = map[string]uint64{"balance": m, "unlocked_balance": m, "locked_balance": 0}
+				result = map[string]uint64{"balance": m, "unlocked_balance": m}
 			}
 		}
 		s.sendResponse(conn, req.ID, result, errRes)
@@ -707,11 +708,8 @@ func (s *XSWDServer) handleRequest(conn *websocket.Conn, req JSONRPCRequest, raw
 		}
 		s.lock.Unlock()
 
-		// Return success
-		result = map[string]interface{}{
-			"event":      eventType,
-			"subscribed": true,
-		}
+		// Canonical Subscribe returns a bare bool (xswd/methods.go), not an object.
+		result = true
 		s.sendResponse(conn, req.ID, result, nil)
 
 	case "Unsubscribe":
@@ -739,10 +737,8 @@ func (s *XSWDServer) handleRequest(conn *websocket.Conn, req JSONRPCRequest, raw
 		}
 		s.lock.Unlock()
 
-		result = map[string]interface{}{
-			"event":        eventType,
-			"unsubscribed": true,
-		}
+		// Canonical Unsubscribe returns a bare bool (xswd/methods.go).
+		result = true
 		s.sendResponse(conn, req.ID, result, nil)
 
 	case "GetDaemon", "DERO.GetDaemon":
@@ -1024,14 +1020,31 @@ func (s *XSWDServer) handleSigningRequest(conn *websocket.Conn, req JSONRPCReque
 	// Send response
 	if err, ok := resp.(error); ok {
 		s.sendResponse(conn, req.ID, nil, &JSONRPCError{Code: -32000, Message: err.Error()})
+	} else if inner, errMsg := unwrapInternalResult(resp); errMsg != "" {
+		s.sendResponse(conn, req.ID, nil, &JSONRPCError{Code: -32000, Message: errMsg})
 	} else {
-		// If result is map with error
-		if rMap, ok := resp.(map[string]interface{}); ok && rMap["error"] != nil {
-			s.sendResponse(conn, req.ID, nil, &JSONRPCError{Code: -32000, Message: fmt.Sprint(rMap["error"])})
-		} else {
-			s.sendResponse(conn, req.ID, resp, nil)
-		}
+		s.sendResponse(conn, req.ID, inner, nil)
 	}
+}
+
+// unwrapInternalResult converts an InternalWalletCall {success, result|error}
+// envelope into the bare value a dApp expects on the wire (canonical XSWD
+// returns the result struct directly, not wrapped). It returns (innerResult, "")
+// on success, or (nil, errorMessage) when the envelope carries an error. Values
+// that are not the envelope map pass through unchanged. Kept as a pure function
+// so the parity contract (no double-wrapping) is unit-testable.
+func unwrapInternalResult(resp interface{}) (interface{}, string) {
+	rMap, ok := resp.(map[string]interface{})
+	if !ok {
+		return resp, ""
+	}
+	if rMap["error"] != nil {
+		return nil, fmt.Sprint(rMap["error"])
+	}
+	if inner, hasResult := rMap["result"]; hasResult {
+		return inner, ""
+	}
+	return rMap, ""
 }
 
 func (s *XSWDServer) sendResponse(conn *websocket.Conn, id interface{}, result interface{}, err *JSONRPCError) {

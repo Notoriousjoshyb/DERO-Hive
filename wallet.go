@@ -1597,16 +1597,17 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 			if err != nil {
 				return map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to fetch token balance: %v", err)}
 			}
+			// Match canonical GetBalance_Result: {balance, unlocked_balance} only.
 			return map[string]interface{}{
 				"success": true,
-				"result":  map[string]uint64{"balance": mature, "unlocked_balance": mature, "locked_balance": 0},
+				"result":  map[string]uint64{"balance": mature, "unlocked_balance": mature},
 			}
 		}
 
 		mature := readNativeBalance(wallet)
 		return map[string]interface{}{
 			"success": true,
-			"result":  map[string]uint64{"balance": mature, "unlocked_balance": mature, "locked_balance": 0},
+			"result":  map[string]uint64{"balance": mature, "unlocked_balance": mature},
 		}
 
 	case "GetHeight", "DERO.GetHeight", "getheight":
@@ -1802,19 +1803,39 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 			}
 		}
 
-		// sc_dero_deposit / sc_token_deposit -- amount attached to the SC call.
-		// These are top-level params distinct from the transfers array.
+		// sc_dero_deposit / sc_token_deposit -- value attached to (deposited into)
+		// the SC call. A DVM contract reads this via DEROVALUE()/ASSETVALUE(),
+		// which the chain sources from the transfer's BURN value
+		// (blockchain/transaction_execute.go: incoming_value[scid] = BurnValue) --
+		// NOT Amount, which is an ordinary transfer to a destination the contract
+		// never sees. So deposits MUST use Burn, mirroring canonical ScInvoke
+		// (walletapi/rpcserver/rpc_scinvoke.go). The native-DERO deposit also needs
+		// a destination (a random ring member), since a non-zero zero-SCID transfer
+		// with an empty destination is rejected by the wallet library.
 		var scDeposit []rpc.Transfer
 		if deroDeposit, ok := params["sc_dero_deposit"].(float64); ok && deroDeposit > 0 {
-			scDeposit = append(scDeposit, rpc.Transfer{Amount: uint64(deroDeposit)})
+			dest := ""
+			if a.IsInSimulatorMode() {
+				dest = a.getSimulatorTransferDestination(wallet.GetAddress().String())
+			} else {
+				randos := wallet.Random_ring_members(crypto.ZEROHASH)
+				if len(randos) == 0 {
+					return map[string]interface{}{"success": false, "error": "Could not get ring members for SC DERO deposit. Check daemon connection and retry."}
+				}
+				dest = randos[0]
+				if dest == wallet.GetAddress().String() && len(randos) > 1 {
+					dest = randos[1]
+				}
+			}
+			scDeposit = append(scDeposit, rpc.Transfer{Destination: dest, Amount: 0, Burn: uint64(deroDeposit)})
 		}
 		if tokenDeposit, ok := params["sc_token_deposit"].(float64); ok && tokenDeposit > 0 {
 			tokenSCIDStr, _ := params["sc_token_deposit_scid"].(string)
 			var tokenSCID crypto.Hash
 			if tokenSCIDStr != "" {
-				tokenSCID = crypto.HashHexToHash(tokenSCIDStr)
+				tokenSCID = crypto.HashHexToHash(sanitizeSCID(tokenSCIDStr))
 			}
-			scDeposit = append(scDeposit, rpc.Transfer{Amount: uint64(tokenDeposit), SCID: tokenSCID})
+			scDeposit = append(scDeposit, rpc.Transfer{SCID: tokenSCID, Amount: 0, Burn: uint64(tokenDeposit)})
 		}
 
 		// Transfers attached to the SC call (burns for dev donations, etc.)
