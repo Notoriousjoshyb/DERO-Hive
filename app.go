@@ -33,17 +33,18 @@ var deroSCID = crypto.ZEROHASH.String()
 
 // App struct
 type App struct {
-	ctx          context.Context
-	xswdClient   *XSWDClient
-	daemonClient BlockchainClient
-	gnomonClient *GnomonClient
-	cache        ContentCache
-	xswdServer   *XSWDServer
-	liveStats    *LiveStatsService
-	settings     map[string]interface{}
-	history      []string
-	consoleLogs  []ConsoleLog
-	launchURL    string
+	ctx           context.Context
+	xswdClient    *XSWDClient
+	daemonClient  BlockchainClient
+	gnomonClient  *GnomonClient
+	cache         ContentCache
+	xswdServer    *XSWDServer
+	liveStats     *LiveStatsService
+	settings      map[string]interface{}
+	history       []string
+	consoleLogs   []ConsoleLog
+	consoleLogsMu sync.Mutex // guards consoleLogs (logToConsole is called concurrently)
+	launchURL     string
 
 	// EPOCH (Developer Support)
 	epochHandler     *EpochHandler

@@ -1,23 +1,32 @@
 <script>
-  import { onMount } from 'svelte';
-  import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, RemoveTrackedToken } from '../../../wailsjs/go/main/App.js';
+  import { onMount, onDestroy } from 'svelte';
+  import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, RemoveTrackedToken, ScanWalletForTokens } from '../../../wailsjs/go/main/App.js';
+  import { EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime.js';
   import { walletState, balanceMasked, toast } from '../stores/appState.js';
-  import { Coins, RefreshCw, Copy, Plus, ArrowUp, Trash2, Info } from 'lucide-svelte';
-  
+  import { Coins, RefreshCw, Copy, Plus, ArrowUp, Trash2, Info, Search } from 'lucide-svelte';
+
   import AddTokenModal from './AddTokenModal.svelte';
   import TokenSendModal from './TokenSendModal.svelte';
-  
+
   let tokens = [];
   let loading = false;
   let error = null;
   let xswdConnected = false;
   let localWalletOpen = false;
-  
+
+  // Wallet scan (auto-detect tokens via the Gnomon index)
+  let scanning = false;
+  let scanScanned = 0;
+  let scanTotal = 0;
+  let scanFound = 0;
+  let autoScanInFlight = false;
+  let autoScanTried = false; // once per component mount
+
   // Modals
   let showAddToken = false;
   let showSendToken = false;
   let selectedToken = null;
-  
+
   // Reactive to wallet state changes
   $: localWalletOpen = $walletState.isOpen;
 
@@ -25,7 +34,35 @@
   // at once when Signal Dark is armed (or hide-balance is toggled).
   
   onMount(async () => {
+    EventsOn('wallet:scanProgress', (data) => {
+      scanScanned = data?.scanned || 0;
+      scanTotal = data?.total || 0;
+      scanFound = data?.found || 0;
+    });
+    EventsOn('wallet:scanComplete', async (data) => {
+      const wasAuto = autoScanInFlight;
+      autoScanInFlight = false;
+      scanning = false;
+      const added = data?.added || 0;
+      const errors = data?.errors || 0;
+      if (added > 0) {
+        toast.success(`Found ${added} ${added === 1 ? 'token' : 'tokens'} in your wallet`);
+        await loadTokens();
+      } else if (!wasAuto) {
+        // Stay silent on an auto-scan that found nothing; only a user-initiated
+        // scan reports the empty result.
+        toast.info('No new tokens found');
+      }
+      if (errors > 0 && !wasAuto) {
+        toast.info(`${errors} ${errors === 1 ? 'contract' : 'contracts'} couldn't be checked — re-scan to retry`);
+      }
+    });
     await checkAndLoad();
+  });
+
+  onDestroy(() => {
+    EventsOff('wallet:scanProgress');
+    EventsOff('wallet:scanComplete');
   });
   
   // Reload when wallet state changes
@@ -64,6 +101,7 @@
           });
           error = null;
           loading = false;
+          maybeAutoScan();
           return;
         }
       }
@@ -125,6 +163,51 @@
     }
   }
   
+  async function handleScan() {
+    if (scanning) return;
+    scanning = true;
+    scanScanned = 0;
+    scanTotal = 0;
+    scanFound = 0;
+    try {
+      const result = await ScanWalletForTokens();
+      if (!result.success) {
+        scanning = false;
+        toast.error(result.error || 'Scan failed');
+        return;
+      }
+      // total === 0 means there was nothing new to check; backend still emits
+      // scanComplete, which flips scanning off and toasts.
+      scanTotal = result.total || 0;
+    } catch (e) {
+      scanning = false;
+      toast.error('Scan failed');
+    }
+  }
+
+  // Auto-scan once per mount when the portfolio holds nothing but native DERO —
+  // mirrors Engram's first-view rescan. Runs quietly: a no-result auto-scan
+  // shows no toast, and if Gnomon isn't running the backend just returns an
+  // error we swallow (the manual Scan button surfaces it on demand).
+  async function maybeAutoScan() {
+    if (autoScanTried || scanning || !localWalletOpen) return;
+    const onlyNative = tokens.length <= 1 && tokens.every(t => t.native);
+    if (!onlyNative) return;
+    autoScanTried = true;
+    try {
+      const result = await ScanWalletForTokens();
+      if (result.success && (result.total || 0) > 0) {
+        autoScanInFlight = true;
+        scanning = true;
+        scanScanned = 0;
+        scanTotal = result.total || 0;
+        scanFound = 0;
+      }
+    } catch (e) {
+      // silent — auto-scan is best-effort
+    }
+  }
+
   function openSendModal(token) {
     selectedToken = token;
     showSendToken = true;
@@ -160,6 +243,9 @@
     </div>
     <div class="header-actions">
       {#if localWalletOpen}
+        <button class="btn-icon" on:click={handleScan} disabled={scanning} title="Scan wallet for tokens">
+          <Search size={14} class={scanning ? 'spin' : ''} />
+        </button>
         <button class="btn-icon" on:click={() => showAddToken = true} title="Add Token">
           <Plus size={14} />
         </button>
@@ -169,7 +255,18 @@
       </button>
     </div>
   </div>
-  
+
+  {#if scanning}
+    <div class="scan-progress">
+      <div class="scan-bar">
+        <div class="scan-bar-fill" style="width: {scanTotal > 0 ? Math.round((scanScanned / scanTotal) * 100) : 0}%"></div>
+      </div>
+      <span class="scan-label">
+        Scanning {scanScanned}/{scanTotal}{scanFound > 0 ? ` · found ${scanFound}` : ''}
+      </span>
+    </div>
+  {/if}
+
   {#if !xswdConnected && !localWalletOpen}
     <!-- No wallet open -->
     <div class="portfolio-empty">
@@ -277,7 +374,7 @@
         <div class="info-content">
           <p class="info-title">Token Discovery</p>
           <p class="info-text">
-            Add tokens manually using their SCID. Connect via XSWD for automatic token discovery.
+            Use Scan to auto-detect tokens your wallet holds (requires Gnomon), or add one manually by its SCID.
           </p>
         </div>
       </div>
@@ -322,6 +419,37 @@
   .header-actions {
     display: flex;
     gap: var(--s-1);
+  }
+
+  .scan-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--border-dim);
+    background: rgba(34, 211, 238, 0.04);
+  }
+
+  .scan-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--void-deep);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .scan-bar-fill {
+    height: 100%;
+    background: var(--cyan-400);
+    border-radius: 2px;
+    transition: width 200ms ease;
+  }
+
+  .scan-label {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-3);
+    white-space: nowrap;
   }
   
   .btn-icon {

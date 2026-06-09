@@ -1090,6 +1090,10 @@ export function ScanFolder(arg1) {
   return window['go']['main']['App']['ScanFolder'](arg1);
 }
 
+export function ScanWalletForTokens() {
+  return window['go']['main']['App']['ScanWalletForTokens']();
+}
+
 export function SearchAddress(arg1) {
   return window['go']['main']['App']['SearchAddress'](arg1);
 }
