@@ -90,7 +90,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev libglib2.0-dev libwebkit2gtk-4.0-dev
+            libgtk-3-dev libglib2.0-dev libwebkit2gtk-4.1-dev
 
       - name: Install Linux UI dependencies (arm64 cross-compile)
         if: matrix.platform == 'linux-arm64'
@@ -102,7 +102,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libgtk-3-dev:arm64 libglib2.0-dev:arm64 libwebkit2gtk-4.0-dev:arm64 \
+            libgtk-3-dev:arm64 libglib2.0-dev:arm64 libwebkit2gtk-4.1-dev:arm64 \
             pkg-config
 
       - name: Install Wails CLI
@@ -137,10 +137,34 @@ jobs:
           BUILD_DATE: ${{ steps.version.outputs.build_date }}
           CC: ${{ matrix.platform == 'linux-arm64' && 'aarch64-linux-gnu-gcc' || '' }}
           CXX: ${{ matrix.platform == 'linux-arm64' && 'aarch64-linux-gnu-g++' || '' }}
+          # Linux links against webkit2gtk-4.1 (libsoup3); 4.0 is gone from all
+          # current distros. Matches the Makefile default. Must stay empty on
+          # Windows/macOS — this build step is shared across the whole matrix.
+          WAILS_TAGS: ${{ startsWith(matrix.platform, 'linux') && '-tags webkit2_41' || '' }}
           PKG_CONFIG_PATH: ${{ matrix.platform == 'linux-arm64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
         run: |
           LDFLAGS="-X main.AppVersion=${VERSION} -X main.BuildDate=${BUILD_DATE} -X main.GitCommit=${SHORT_SHA}"
-          wails build -platform ${{ matrix.wails_platform }} -ldflags "$LDFLAGS" -clean -trimpath
+          wails build -platform ${{ matrix.wails_platform }} ${WAILS_TAGS} -ldflags "$LDFLAGS" -clean -trimpath
+
+      - name: Verify Linux binary links webkit2gtk-4.1, not the dead 4.0
+        if: startsWith(matrix.platform, 'linux')
+        shell: bash
+        run: |
+          # The 4.0 binding (libsoup2) is gone from every current distro, so a
+          # binary that NEEDs libwebkit2gtk-4.0.so.* builds fine in CI but fails
+          # to start on users' machines. objdump reads the ELF dynamic section
+          # statically, so it works for the cross-compiled arm64 artifact too.
+          NEEDED=$(objdump -p build/bin/Hologram | awk '/NEEDED/ {print $2}')
+          echo "$NEEDED" | grep -E 'webkit2gtk' || true
+          if echo "$NEEDED" | grep -q 'libwebkit2gtk-4\.0'; then
+            echo "::error::Linux binary links libwebkit2gtk-4.0 (libsoup2), which is absent on modern distros. Build must use -tags webkit2_41 against libwebkit2gtk-4.1-dev."
+            exit 1
+          fi
+          if ! echo "$NEEDED" | grep -q 'libwebkit2gtk-4\.1'; then
+            echo "::error::Linux binary does not link libwebkit2gtk-4.1 at all — webkit binding missing or build misconfigured."
+            exit 1
+          fi
+          echo "OK: links libwebkit2gtk-4.1."
 
       - name: Package artifact (Linux amd64)
         if: matrix.platform == 'linux-amd64'

@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.7] - 2026-06-09
+
+Linux release binaries now run on current distros out of the box.
+
+### Fixed
+- Linux: release binaries are built against `webkit2gtk-4.1` (libsoup3) instead of the discontinued `4.0`, so they launch on Ubuntu 24.04+, Debian 13+, Fedora 40+, and Arch without a manual library symlink. CI now fails the release if a Linux binary links the old `4.0` runtime.
+
+---
+
 ## [1.0.6] - 2026-06-08
 
 Payment URI workflow, unified storage controls, and XSWD bridge fixes.
