@@ -423,7 +423,13 @@
                 <ArrowUp size={12} />
               </button>
             {/if}
-            {#if !token.native && !xswdConnected}
+            <!-- Gate on localWalletOpen, NOT xswdConnected: these actions mutate
+                 the local wallet's tracked-token list, which is exactly the data
+                 shown whenever a local wallet is open (loadTokens returns early on
+                 the local path). xswdConnected is true whenever HOLOGRAM's own
+                 XSWD *server* is running — always, on most setups — which hid
+                 these buttons permanently rather than only for remote portfolios. -->
+            {#if !token.native && localWalletOpen}
               <button
                 class="action-btn"
                 on:click={() => openRefreshModal(token)}
