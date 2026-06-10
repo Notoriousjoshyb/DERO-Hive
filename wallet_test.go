@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // ============== WalletManager Tests ==============
@@ -890,5 +892,61 @@ func TestAddTrackedToken_ConcurrentNoLostUpdates(t *testing.T) {
 		if !seen[s] {
 			t.Errorf("SCID %s missing — clobbered by a concurrent write", s)
 		}
+	}
+}
+
+// ============== Token Metadata Sanitization ==============
+
+// TestSanitizeTokenText pins the on-chain-metadata defenses: an NFA's name/symbol/
+// description headers are attacker-controlled, so a crafted token must not be able
+// to smuggle bidi-override or zero-width characters into the rendered identity, nor
+// bloat tracked_tokens.json with an unbounded value. A regression here re-opens the
+// spoofing/DoS surface, so it should fail loud.
+func TestSanitizeTokenText(t *testing.T) {
+	const (
+		rlo = "\u202e" // right-to-left override (bidi spoofing)
+		lro = "\u202d" // left-to-right override
+		zwj = "\u200d" // zero-width joiner
+		zws = "\u200b" // zero-width space
+		bom = "\ufeff" // byte-order mark / zero-width no-break space
+		wj  = "\u2060" // word joiner
+	)
+	cases := []struct {
+		name  string
+		in    string
+		limit int
+		want  string
+	}{
+		{"plain passes through", "Lotto", tokenNameLimit, "Lotto"},
+		{"empty stays empty", "", tokenNameLimit, ""},
+		{"bidi override stripped", "abc" + rlo + "def" + lro, tokenNameLimit, "abcdef"},
+		{"zero-width family stripped", "DE" + zws + "RO" + zwj + bom + wj, tokenNameLimit, "DERO"},
+		{"control chars stripped", "a\x00b\x07c\x1bd", tokenNameLimit, "abcd"},
+		{"newlines/tabs collapse to space", "line1\nline2\ttail", tokenNameLimit, "line1line2 tail"},
+		{"surrounding space trimmed", "  spaced  ", tokenNameLimit, "spaced"},
+		{"all-junk degrades to empty", rlo + zws + bom + "\x00", tokenNameLimit, ""},
+		{"length cap by rune count", strings.Repeat("x", tokenNameLimit+50), tokenNameLimit, strings.Repeat("x", tokenNameLimit)},
+		{"description gets wider cap", strings.Repeat("y", tokenDescLimit+1), tokenDescLimit, strings.Repeat("y", tokenDescLimit)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeTokenText(tc.in, tc.limit)
+			if got != tc.want {
+				t.Errorf("sanitizeTokenText(%q, %d) = %q; want %q", tc.in, tc.limit, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSanitizeTokenText_MultibyteCapBoundary guards that the length cap never splits
+// a multi-byte rune (a byte-slice cap would corrupt the trailing character).
+func TestSanitizeTokenText_MultibyteCapBoundary(t *testing.T) {
+	in := strings.Repeat("é", tokenNameLimit+10) // 2 bytes per rune
+	got := sanitizeTokenText(in, tokenNameLimit)
+	if rc := utf8.RuneCountInString(got); rc != tokenNameLimit {
+		t.Errorf("expected %d runes after cap, got %d", tokenNameLimit, rc)
+	}
+	if !utf8.ValidString(got) {
+		t.Error("cap split a multi-byte rune — result is not valid UTF-8")
 	}
 }

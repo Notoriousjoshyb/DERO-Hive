@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/deroproject/derohe/cryptography/bn256"
 	"github.com/deroproject/derohe/cryptography/crypto"
@@ -2628,21 +2630,21 @@ func (a *App) GetTrackedTokens() map[string]interface{} {
 			tokenData["balanceUnknown"] = true
 		}
 
-		// Backfill missing metadata from Gnomon (never balance). Reuse
-		// fetchTokenHeader so this render path gets the same canonical var_header_*
-		// keys, icon sanitizing, and on-demand AddSCIDToIndex as the add path —
-		// rather than the old nameHdr/symbolHdr-only read. When it resolves
-		// something that was empty, persist it back to tracked_tokens.json so the
-		// label sticks and doesn't depend on Gnomon being present on the next render.
+		// Backfill missing metadata from Gnomon (never balance) for display only.
+		// Reuse fetchTokenHeader so this render path gets the same canonical
+		// var_header_* keys and sanitizing as the add path. allowIndex is false: the
+		// render path must stay cheap and non-blocking, and it deliberately does NOT
+		// write back to disk — persistence happens only on the explicit add path
+		// (AddTrackedToken / addTrackedTokensBatch), so an attacker who controls a
+		// tracked SCID can't poison a still-empty field into permanent storage just
+		// by being rendered. A token whose metadata only resolves at render time
+		// re-resolves cheaply each render until it's re-added.
 		if token.Name == "" || token.Symbol == "" || token.Icon == "" {
-			n, s, ic, desc := a.fetchTokenHeader(token.SCID, token.Name, token.Symbol, false)
+			n, s, ic, _ := a.fetchTokenHeader(token.SCID, token.Name, token.Symbol, false)
 			tokenData["name"] = n
 			tokenData["symbol"] = s
 			if token.Icon == "" && ic != "" {
 				tokenData["icon"] = ic
-			}
-			if n != token.Name || s != token.Symbol || (token.Icon == "" && ic != "") {
-				a.persistTokenMetadata(token.SCID, n, s, ic, desc)
 			}
 		}
 
@@ -2671,52 +2673,59 @@ func sanitizeIconURL(icon string) string {
 	return ""
 }
 
-// persistTokenMetadata writes Gnomon-resolved name/symbol/icon/description back to
-// tracked_tokens.json, but only into fields that are still empty — so a value the
-// user typed manually is never clobbered. Called when a render-time backfill
-// resolves metadata that wasn't indexed at add time (e.g. an older NFA that was
-// only just pulled into the index), so "Unknown Token" heals permanently instead
-// of re-resolving on every render.
-func (a *App) persistTokenMetadata(scid, name, symbol, icon, description string) {
-	scid = strings.ToLower(scid)
-	trackedTokensMu.Lock()
-	defer trackedTokensMu.Unlock()
-	tokens := loadTrackedTokens()
-	changed := false
-	for i := range tokens {
-		if tokens[i].SCID != scid {
+// Token text headers are fully attacker-controlled and unbounded on-chain; a
+// multi-megabyte value would bloat tracked_tokens.json and every render's parse.
+// Names/symbols are short by nature; descriptions get more room.
+const (
+	tokenNameLimit = 256
+	tokenDescLimit = 1024
+)
+
+// sanitizeTokenText gates an on-chain text header (name/symbol/description) the way
+// sanitizeIconURL gates the icon: the value is attacker-controlled and the portfolio
+// renders it directly, so we distrust it. Svelte escapes HTML (no XSS), but raw
+// control, bidi-override (U+202E etc.), and zero-width characters still let a crafted
+// NFA spoof a well-known token's visible identity or hide characters — so we strip
+// them, collapse whitespace, and length-cap to limit runes. Returns "" for an
+// all-junk value, which degrades to the existing "Unknown Token"/⬡ fallbacks.
+func sanitizeTokenText(s string, limit int) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == utf8.RuneError:
 			continue
+		case r == '\t' || r == ' ':
+			b.WriteRune(' ') // normalize whitespace to a plain space
+		case unicode.IsControl(r):
+			continue // strips \n \r and other C0/C1 controls
+		case unicode.Is(unicode.Bidi_Control, r) || unicode.Is(unicode.Join_Control, r):
+			continue // RLO/LRO/PDF and ZWJ/ZWNJ — bidi/zero-width spoofing
+		case (r >= '\u200b' && r <= '\u200f') || r == '\u2060' || r == '\ufeff':
+			continue // ZW space, LRM/RLM, word joiner, BOM — zero-width spoofing
+		default:
+			b.WriteRune(r)
 		}
-		if tokens[i].Name == "" && name != "" {
-			tokens[i].Name = name
-			changed = true
-		}
-		if tokens[i].Symbol == "" && symbol != "" {
-			tokens[i].Symbol = symbol
-			changed = true
-		}
-		if tokens[i].Icon == "" && icon != "" {
-			tokens[i].Icon = icon
-			changed = true
-		}
-		if tokens[i].Description == "" && description != "" {
-			tokens[i].Description = description
-			changed = true
-		}
-		break
 	}
-	if changed {
-		saveTrackedTokens(tokens)
+	out := strings.TrimSpace(b.String())
+	if utf8.RuneCountInString(out) > limit {
+		// Cap on a rune boundary, not a byte boundary, so we never split a rune.
+		out = string([]rune(out)[:limit])
 	}
+	return out
 }
 
 // fetchTokenHeader pulls an NFA's display metadata from Gnomon's indexed SC
-// variables. It reads the canonical Artificer V2 keys (var_header_*) first and
-// falls back to the legacy V1 keys (*Hdr) — matching Engram's getContractHeader
-// precedence — so a contract that publishes only the canonical keys still
-// resolves a name/icon/description instead of rendering as "Unknown Token".
-// Any passed-in name/symbol (e.g. a manual add) wins over the on-chain value.
-// The returned icon is already passed through sanitizeIconURL (data:image only).
+// variables. It reads the canonical Artificer V2 keys (var_header_name/_symbol/
+// _icon/_description) first and falls back to the legacy V1 keys (nameHdr/
+// symbolHdr/iconURLHdr/descrHdr) — matching Engram's getContractHeader precedence
+// — so a contract that publishes only the canonical keys still resolves instead of
+// rendering as "Unknown Token". Any passed-in name/symbol (e.g. a manual add) wins
+// over the on-chain value. Returned text is passed through sanitizeTokenText
+// (length-capped, control/bidi/zero-width stripped) and the icon through
+// sanitizeIconURL (data:image only), since every header value is attacker-controlled.
 //
 // allowIndex controls the on-demand AddSCIDToIndex fallback for an unindexed SCID:
 // pass true on the one-time add path (worth a network round-trip to resolve an
@@ -2740,8 +2749,14 @@ func (a *App) fetchTokenHeader(scid, name, symbol string, allowIndex bool) (stri
 	// NFAs), so it has no variables to read and the token would render "Unknown
 	// Token". Pull just this SCID into the index on demand, then re-read — mirroring
 	// Engram's getContractHeader, which does the same AddSCIDToIndex-then-read.
+	//
+	// varstoreonly=true is load-bearing: the indexer early-returns for a SCID already
+	// in its validated set, which skips the variable-store refresh. An older NFA can
+	// be validated yet have no stored vars (deployed pre-fastsync), so without
+	// varstoreonly the re-read below still comes back empty. true forces the var
+	// refresh past that early return — matching the value Engram passes.
 	if len(vars) == 0 && allowIndex {
-		if err := a.gnomonClient.AddSCIDToIndex(scid, false, false); err != nil {
+		if err := a.gnomonClient.AddSCIDToIndex(scid, true, false); err != nil {
 			a.logToConsole(fmt.Sprintf("[Wallet] On-demand index of %s... failed: %v", scid[:16], err))
 		} else {
 			vars = a.gnomonClient.GetAllSCIDVariableDetails(scid)
@@ -2753,15 +2768,19 @@ func (a *App) fetchTokenHeader(scid, name, symbol string, allowIndex bool) (stri
 		switch key {
 		case "var_header_name":
 			if !nameLocked {
-				name = decodeHexString(val)
+				name = sanitizeTokenText(decodeHexString(val), tokenNameLimit)
 			}
 		case "nameHdr":
 			if !nameLocked && name == "" {
-				name = decodeHexString(val)
+				name = sanitizeTokenText(decodeHexString(val), tokenNameLimit)
+			}
+		case "var_header_symbol":
+			if !symbolLocked {
+				symbol = sanitizeTokenText(decodeHexString(val), tokenNameLimit)
 			}
 		case "symbolHdr":
 			if !symbolLocked && symbol == "" {
-				symbol = decodeHexString(val)
+				symbol = sanitizeTokenText(decodeHexString(val), tokenNameLimit)
 			}
 		case "var_header_icon":
 			icon = sanitizeIconURL(decodeHexString(val))
@@ -2770,10 +2789,10 @@ func (a *App) fetchTokenHeader(scid, name, symbol string, allowIndex bool) (stri
 				icon = sanitizeIconURL(decodeHexString(val))
 			}
 		case "var_header_description":
-			description = decodeHexString(val)
+			description = sanitizeTokenText(decodeHexString(val), tokenDescLimit)
 		case "descrHdr":
 			if description == "" {
-				description = decodeHexString(val)
+				description = sanitizeTokenText(decodeHexString(val), tokenDescLimit)
 			}
 		}
 	}
