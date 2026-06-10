@@ -82,6 +82,12 @@ type App struct {
 
 	// EPOCH address monitor lifecycle
 	epochMonitorStop chan struct{}
+
+	// Token scan re-entrancy guard. Toggled with atomic CAS so a double-click or
+	// the manual Scan racing the first-view auto-scan can't spawn two concurrent
+	// worker-pool sweeps (which would double the daemon load and interleave two
+	// progress streams). 0 = idle, 1 = a scan is running.
+	scanInFlight int32
 }
 
 // NewApp creates a new App application struct
