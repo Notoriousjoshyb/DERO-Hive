@@ -101,6 +101,10 @@
   let walletAvatarUrl = null;
   let loadingAvatar = false;
   let currentAvatarSize = null;
+  // The address the currently-shown avatar belongs to. Tracked so a wallet SWITCH
+  // (address changes while a stale avatar is still loaded at the same size) forces a
+  // reload instead of leaving the previous identity's avatar on screen.
+  let previousAvatarAddress = null;
 
   // Signal Dark (stealth mode) — the wallet identity loses signal lock.
   // Armed from the wild-card panel ("GO DARK"); masks address, balance, tokens and the
@@ -125,7 +129,18 @@
   // Load avatar when wallet connects or address changes
   $: if (walletDisplayAddress && walletIsConnected) {
     const avatarSize = collapsed ? 24 : 40;
-    // Only reload if size changed or avatar not loaded
+    // A wallet switch changes the address while walletAvatarUrl is still the PREVIOUS
+    // wallet's avatar at the same size — the size/loaded guard below would then skip the
+    // reload and leave the wrong identity's avatar on screen (a cross-wallet leak in a
+    // privacy tool). Detect the address change explicitly and drop the stale avatar so the
+    // reload fires for the new identity.
+    if (walletDisplayAddress !== previousAvatarAddress) {
+      if (previousAvatarAddress) clearAvatarCache(previousAvatarAddress);
+      previousAvatarAddress = walletDisplayAddress;
+      walletAvatarUrl = null;
+      currentAvatarSize = null;
+    }
+    // Only reload if size changed or avatar not loaded (now also true right after a switch).
     if (currentAvatarSize !== avatarSize || !walletAvatarUrl) {
       loadWalletAvatar(walletDisplayAddress, avatarSize);
     }
@@ -137,6 +152,8 @@
       }
       walletAvatarUrl = null;
       currentAvatarSize = null;
+      // Forget the shown identity so a reconnect (even of the same wallet) reloads cleanly.
+      previousAvatarAddress = null;
     }
   }
   
