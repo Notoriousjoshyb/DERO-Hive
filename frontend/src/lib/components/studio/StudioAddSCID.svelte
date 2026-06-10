@@ -79,6 +79,19 @@
         </div>
       </div>
       
+      {#if (result.vars_count || 0) === 0}
+        <div class="alert alert-warning" style="margin-bottom: var(--s-3);">
+          <AlertTriangle size={16} />
+          <span>
+            {#if result.gnomonSyncing}
+              0 variables stored — Gnomon is still syncing ({Math.floor(result.syncProgress || 0)}%). Retry when it catches up.
+            {:else}
+              0 variables stored — Gnomon may still be syncing, or the contract holds no state. Retry once sync completes.
+            {/if}
+          </span>
+        </div>
+      {/if}
+
       <div class="clone-result-details">
         <div class="clone-detail-row">
           <span class="clone-detail-label">SCID</span>

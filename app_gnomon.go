@@ -401,6 +401,20 @@ func (a *App) AddSCIDToIndex(scid string) map[string]interface{} {
 		"vars_count": varCount,
 	}
 
+	// A 0-var result with Gnomon still behind the chain tip usually means the
+	// fetch ran against a stale height, not that the contract is empty — the
+	// indexer reports success either way, so surface the distinction for the UI.
+	if varCount == 0 {
+		if status := a.gnomonClient.GetStatus(); status != nil {
+			indexed, _ := status["indexed_height"].(int64)
+			chain, _ := status["chain_height"].(int64)
+			if chain > 0 && indexed < chain-5 {
+				result["gnomonSyncing"] = true
+				result["syncProgress"] = status["progress"]
+			}
+		}
+	}
+
 	// Parse TELA metadata if available
 	data := map[string]any{"scid": scid}
 	app, isIndex, isDOC, _ := allocateData(vars, data)

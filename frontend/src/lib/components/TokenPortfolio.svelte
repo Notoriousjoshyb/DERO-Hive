@@ -9,13 +9,15 @@
 
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, RemoveTrackedToken, ScanWalletForTokens } from '../../../wailsjs/go/main/App.js';
+  import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, ScanWalletForTokens } from '../../../wailsjs/go/main/App.js';
   import { EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime.js';
   import { walletState, balanceMasked, toast, appState } from '../stores/appState.js';
   import { Coins, RefreshCw, Copy, Plus, ArrowUp, Trash2, Info, Search } from 'lucide-svelte';
 
   import AddTokenModal from './AddTokenModal.svelte';
   import TokenSendModal from './TokenSendModal.svelte';
+  import RemoveTokenModal from './RemoveTokenModal.svelte';
+  import RefreshTokenModal from './RefreshTokenModal.svelte';
 
   let tokens = [];
   let loading = false;
@@ -33,6 +35,8 @@
   // Modals
   let showAddToken = false;
   let showSendToken = false;
+  let showRemoveToken = false;
+  let showRefreshToken = false;
   let selectedToken = null;
 
   // Reactive to wallet state changes
@@ -190,18 +194,14 @@
     }
   }
   
-  async function handleRemoveToken(scid) {
-    try {
-      const result = await RemoveTrackedToken(scid);
-      if (result.success) {
-        toast.success('Token removed');
-        await loadTokens();
-      } else {
-        toast.error(result.error || 'Failed to remove token');
-      }
-    } catch (e) {
-      toast.error('Failed to remove token');
-    }
+  function openRemoveModal(token) {
+    selectedToken = token;
+    showRemoveToken = true;
+  }
+
+  function openRefreshModal(token) {
+    selectedToken = token;
+    showRefreshToken = true;
   }
   
   async function handleScan() {
@@ -415,18 +415,25 @@
           
           <div class="token-actions">
             {#if token.balance > 0}
-              <button 
-                class="action-btn" 
-                on:click={() => openSendModal(token)} 
+              <button
+                class="action-btn"
+                on:click={() => openSendModal(token)}
                 title="Send {token.symbol || 'Token'}"
               >
                 <ArrowUp size={12} />
               </button>
             {/if}
             {#if !token.native && !xswdConnected}
-              <button 
-                class="action-btn action-btn-danger" 
-                on:click={() => handleRemoveToken(token.scid)} 
+              <button
+                class="action-btn"
+                on:click={() => openRefreshModal(token)}
+                title="Refresh metadata"
+              >
+                <RefreshCw size={12} />
+              </button>
+              <button
+                class="action-btn action-btn-danger"
+                on:click={() => openRemoveModal(token)}
                 title="Remove"
               >
                 <Trash2 size={12} />
@@ -454,6 +461,8 @@
 <!-- Modals -->
 <AddTokenModal bind:show={showAddToken} on:added={loadTokens} />
 <TokenSendModal bind:show={showSendToken} token={selectedToken} on:sent={loadTokens} />
+<RemoveTokenModal bind:show={showRemoveToken} token={selectedToken} on:removed={loadTokens} />
+<RefreshTokenModal bind:show={showRefreshToken} token={selectedToken} on:refreshed={loadTokens} />
 
 <style>
   .token-portfolio {

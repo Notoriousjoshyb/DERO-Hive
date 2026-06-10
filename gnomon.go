@@ -579,9 +579,21 @@ func (g *GnomonClient) AddSCIDToIndex(scid string, varstoreonly, skipfsrecheck b
 		return fmt.Errorf("invalid scid: expected 64 hex chars")
 	}
 
-	// Prepare the map with a single SCID to add
+	// Pre-fill the existing owner row: the indexer unconditionally stages
+	// StoreOwner(scid, fsi.Owner) on this path, so an empty FastSyncImport would
+	// blank a previously-stored owner on every re-index (varstoreonly bypasses
+	// the already-validated early-return). Passing the current value through
+	// makes re-indexing owner-preserving; a first-time index writes "" as before.
+	owner := ""
+	switch g.Indexer.DBType {
+	case "gravdb":
+		owner = g.Indexer.GravDBBackend.GetOwner(scid)
+	case "boltdb":
+		owner = g.Indexer.BBSBackend.GetOwner(scid)
+	}
+
 	scidsToAdd := make(map[string]*structures.FastSyncImport)
-	scidsToAdd[scid] = &structures.FastSyncImport{}
+	scidsToAdd[scid] = &structures.FastSyncImport{Owner: owner}
 
 	return g.Indexer.AddSCIDToIndex(scidsToAdd, skipfsrecheck, varstoreonly)
 }

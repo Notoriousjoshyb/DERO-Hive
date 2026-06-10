@@ -25,7 +25,10 @@
   $: tokenSymbol = token?.symbol || '';
   $: availableBalance = token?.balance || 0;
   $: availableFormatted = formatBalance(availableBalance);
-  $: amountAtomic = Math.floor(parseFloat(amount || '0') * 100000);
+  // Math.round, not floor: IEEE754 makes e.g. 1.13 * 100000 = 112999.99999999999,
+  // and flooring that silently sends one atomic unit less than the user typed.
+  // Input is clamped to 5 decimals below, so round can't overshoot the typed value.
+  $: amountAtomic = Math.round(parseFloat(amount || '0') * 100000);
   $: isValidAmount = !isNaN(amountAtomic) && amountAtomic > 0 && amountAtomic <= availableBalance;
   $: isValidAddress = destination.startsWith('dero1') || destination.startsWith('deto1');
   $: canProceed = isValidAmount && isValidAddress;
@@ -146,14 +149,21 @@
               <span class="form-hint">Available: {availableFormatted} {tokenSymbol || 'tokens'}</span>
             </div>
             <div class="input-with-action">
-              <input 
-                type="number" 
-                class="input" 
+              <input
+                type="number"
+                class="input"
                 class:input-error={amount && !isValidAmount}
-                bind:value={amount} 
+                bind:value={amount}
                 placeholder="0.00000"
                 step="0.00001"
                 min="0"
+                on:input={(e) => {
+                  const v = String(e.target.value);
+                  if (/\.\d{6,}/.test(v)) {
+                    const [whole, frac] = v.split('.');
+                    amount = parseFloat(`${whole}.${frac.slice(0, 5)}`);
+                  }
+                }}
               />
               <button class="btn btn-ghost btn-sm" on:click={setMaxAmount}>MAX</button>
             </div>

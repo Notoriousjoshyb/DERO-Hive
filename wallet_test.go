@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/deroproject/derohe/globals"
 )
 
 // ============== WalletManager Tests ==============
@@ -948,5 +950,118 @@ func TestSanitizeTokenText_MultibyteCapBoundary(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Error("cap split a multi-byte rune — result is not valid UTF-8")
+	}
+}
+
+// TestRefreshTokenMetadata_NeverBlanksExisting pins the merge rule: an empty
+// fresh value (Gnomon off, or the chain has no header) must never blank a
+// stored name/symbol — even in overwriteNames mode, which only lets non-empty
+// chain values replace existing ones. A regression here would let a metadata
+// refresh silently wipe a user's token labels.
+func TestRefreshTokenMetadata_NeverBlanksExisting(t *testing.T) {
+	dir := t.TempDir()
+	prev := testDataDirOverride
+	testDataDirOverride = dir
+	defer func() { testDataDirOverride = prev }()
+
+	app := &App{settings: make(map[string]interface{}), consoleLogs: make([]ConsoleLog, 0)}
+	scid := fmt.Sprintf("%064x", 0xbeef)
+
+	saveTrackedTokens([]TrackedToken{{SCID: scid, Name: "MyToken", Symbol: "MTK"}})
+
+	// gnomonClient is nil → fetchTokenHeader returns the lock inputs unchanged.
+	// overwriteNames=true passes empty locks, so fresh comes back all-empty —
+	// the exact case that must not blank stored values.
+	result := app.RefreshTokenMetadata(scid, true, true)
+	if result["success"] != true {
+		t.Fatalf("expected success, got %v", result["error"])
+	}
+	if result["changed"] != false {
+		t.Error("all-empty fresh values must report changed=false")
+	}
+
+	got := loadTrackedTokens()
+	if len(got) != 1 || got[0].Name != "MyToken" || got[0].Symbol != "MTK" {
+		t.Errorf("stored metadata was modified: %+v", got)
+	}
+}
+
+// TestRefreshTokenMetadata_PreviewWritesNothing pins apply=false as a pure
+// read: even if values would change, nothing reaches disk.
+func TestRefreshTokenMetadata_PreviewWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	prev := testDataDirOverride
+	testDataDirOverride = dir
+	defer func() { testDataDirOverride = prev }()
+
+	app := &App{settings: make(map[string]interface{}), consoleLogs: make([]ConsoleLog, 0)}
+	scid := fmt.Sprintf("%064x", 0xcafe)
+	saveTrackedTokens([]TrackedToken{{SCID: scid, Name: "", Symbol: ""}})
+
+	result := app.RefreshTokenMetadata(scid, false, false)
+	if result["success"] != true {
+		t.Fatalf("expected success, got %v", result["error"])
+	}
+	if _, hasUpdated := result["updated"]; hasUpdated {
+		t.Error("preview must not include an updated field (nothing persisted)")
+	}
+
+	if got := loadTrackedTokens(); got[0].Name != "" {
+		t.Errorf("preview persisted data: %+v", got)
+	}
+}
+
+// TestRefreshTokenMetadata_UnknownSCID pins the not-tracked error path.
+func TestRefreshTokenMetadata_UnknownSCID(t *testing.T) {
+	dir := t.TempDir()
+	prev := testDataDirOverride
+	testDataDirOverride = dir
+	defer func() { testDataDirOverride = prev }()
+
+	app := &App{settings: make(map[string]interface{}), consoleLogs: make([]ConsoleLog, 0)}
+	result := app.RefreshTokenMetadata(fmt.Sprintf("%064x", 0xdead), true, false)
+	if result["success"] != false {
+		t.Error("refresh of an untracked SCID must fail")
+	}
+}
+
+// TestNetworkDerivation_IgnoresStaleSimulatorFlag pins the fix for the
+// simulator→mainnet wallet bug: every simulator start path sets the derohe
+// package-global --simulator flag, but it was only cleared on app launch, so a
+// wallet opened after switching back to mainnet was flagged testnet — deto1
+// address, "unregistered" on mainnet, sync wedged. Wallet network derivation
+// must follow nodeManager.networkMode and ignore the stale global entirely.
+func TestNetworkDerivation_IgnoresStaleSimulatorFlag(t *testing.T) {
+	dir := t.TempDir()
+	prev := testDataDirOverride
+	testDataDirOverride = dir
+	defer func() { testDataDirOverride = prev }()
+
+	// Simulate the leak: a simulator session set the global and nothing reset it.
+	prevFlag := globals.Arguments["--simulator"]
+	globals.Arguments["--simulator"] = true
+	defer func() { globals.Arguments["--simulator"] = prevFlag }()
+
+	prevMode := nodeManager.networkMode
+	nodeManager.networkMode = NetworkMainnet
+	defer func() { nodeManager.networkMode = prevMode }()
+
+	// addToRecentWalletsWithInfo stamps the session network using the same
+	// derivation OpenWallet uses — it must say mainnet despite the stale flag.
+	addToRecentWalletsWithInfo(filepath.Join(dir, "guard.db"), "dero1qyguardaddressxxxxxxxxxxxxxxxxxxxxxxxx")
+	data := loadRecentWalletsData()
+	if len(data) == 0 {
+		t.Fatal("expected a recent-wallets entry")
+	}
+	if data[0].Network != "mainnet" {
+		t.Errorf("network derivation followed the stale --simulator global: got %q, want mainnet", data[0].Network)
+	}
+
+	// And the inverse: simulator mode must still be honored.
+	nodeManager.networkMode = NetworkSimulator
+	addToRecentWalletsWithInfo(filepath.Join(dir, "guard2.db"), "deto1qyguardaddressxxxxxxxxxxxxxxxxxxxxxxxx")
+	data = loadRecentWalletsData()
+	if data[0].Network != "simulator" {
+		t.Errorf("simulator mode not honored: got %q, want simulator", data[0].Network)
 	}
 }

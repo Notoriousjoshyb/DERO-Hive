@@ -37,7 +37,13 @@
     try {
       const result = await AddTrackedToken(scid, name, symbol);
       if (result.success) {
-        toast.success('Token added to portfolio!');
+        if (result.metadataResolved) {
+          toast.success('Token added to portfolio!');
+        } else if (result.gnomonRunning === false) {
+          toast.warning('Token added — metadata pending. Start Gnomon to resolve its name.', 7000);
+        } else {
+          toast.warning('Token added — no name found on-chain yet. Use Studio → Add SCID if it stays unknown.', 7000);
+        }
         dispatch('added', result.token);
         close();
       } else {

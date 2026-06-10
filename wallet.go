@@ -2872,7 +2872,132 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 		"success": true,
 		"token":   newToken,
 		"message": "Token added to portfolio",
+		// Lets the frontend distinguish "named and ready" from "added blind":
+		// metadata resolution silently no-ops when Gnomon is off, and the token
+		// then renders as "Unknown Token" with no hint as to why.
+		"metadataResolved": name != "",
+		"gnomonRunning":    a.gnomonClient != nil && a.gnomonClient.IsRunning(),
 	}
+}
+
+// RefreshTokenMetadata re-resolves a tracked token's on-chain metadata and,
+// only when apply is true, persists it to tracked_tokens.json. This is the
+// user-triggered escape hatch for a token added while Gnomon was off (or before
+// its SCID was indexed): the render path deliberately never writes resolved
+// metadata to disk, so without this the entry heals on screen but stays empty
+// in storage. apply=false is a pure preview — fetch fresh values (indexing the
+// SCID on demand if needed), report what would change, write nothing.
+//
+// overwriteNames=false keeps the existing Name/Symbol authoritative (fill-empty
+// only, same lock rule as fetchTokenHeader); true lets the chain values replace
+// them — the explicit opt-in for "I typed the wrong name". In both modes an
+// empty fresh value never blanks an existing one.
+func (a *App) RefreshTokenMetadata(scid string, apply bool, overwriteNames bool) map[string]interface{} {
+	scid = strings.ToLower(scid)
+	if len(scid) != 64 {
+		return map[string]interface{}{
+			"success": false,
+			"error":   "Invalid SCID format - must be 64 hexadecimal characters",
+		}
+	}
+
+	trackedTokensMu.Lock()
+	tokens := loadTrackedTokens()
+	var current *TrackedToken
+	for i := range tokens {
+		if tokens[i].SCID == scid {
+			t := tokens[i]
+			current = &t
+			break
+		}
+	}
+	trackedTokensMu.Unlock()
+
+	if current == nil {
+		return map[string]interface{}{
+			"success": false,
+			"error":   "Token not found in tracked list",
+		}
+	}
+
+	// Resolve outside the lock — this may do an on-demand AddSCIDToIndex
+	// (network round-trip). The wrapper preserves the Gnomon owner row, so
+	// re-indexing here is safe for already-indexed SCIDs.
+	lockName, lockSymbol := current.Name, current.Symbol
+	if overwriteNames {
+		lockName, lockSymbol = "", ""
+	}
+	freshName, freshSymbol, freshIcon, freshDesc := a.fetchTokenHeader(scid, lockName, lockSymbol, true)
+
+	merged := *current
+	if freshName != "" {
+		merged.Name = freshName
+	}
+	if freshSymbol != "" {
+		merged.Symbol = freshSymbol
+	}
+	if freshIcon != "" {
+		merged.Icon = freshIcon
+	}
+	if freshDesc != "" {
+		merged.Description = freshDesc
+	}
+	changed := merged.Name != current.Name || merged.Symbol != current.Symbol ||
+		merged.Icon != current.Icon || merged.Description != current.Description
+
+	result := map[string]interface{}{
+		"success": true,
+		"scid":    scid,
+		"current": map[string]string{
+			"name": current.Name, "symbol": current.Symbol,
+			"icon": current.Icon, "description": current.Description,
+		},
+		"fresh": map[string]string{
+			"name": merged.Name, "symbol": merged.Symbol,
+			"icon": merged.Icon, "description": merged.Description,
+		},
+		"changed":       changed,
+		"gnomonRunning": a.gnomonClient != nil && a.gnomonClient.IsRunning(),
+	}
+
+	if !apply || !changed {
+		return result
+	}
+
+	// Commit: re-read under the lock so a concurrent add/remove isn't clobbered
+	// by our earlier snapshot.
+	trackedTokensMu.Lock()
+	tokens = loadTrackedTokens()
+	updated := false
+	for i := range tokens {
+		if tokens[i].SCID != scid {
+			continue
+		}
+		if freshName != "" {
+			tokens[i].Name = freshName
+		}
+		if freshSymbol != "" {
+			tokens[i].Symbol = freshSymbol
+		}
+		if freshIcon != "" {
+			tokens[i].Icon = freshIcon
+		}
+		if freshDesc != "" {
+			tokens[i].Description = freshDesc
+		}
+		updated = true
+		break
+	}
+	if updated {
+		saveTrackedTokens(tokens)
+	}
+	trackedTokensMu.Unlock()
+
+	if updated {
+		a.logToConsole(fmt.Sprintf("[Wallet] Refreshed token metadata: %s (%s)", merged.Name, scid[:16]+"..."))
+	}
+	result["updated"] = updated
+	return result
 }
 
 // addTrackedTokensBatch adds many discovered SCIDs in one pass and returns how

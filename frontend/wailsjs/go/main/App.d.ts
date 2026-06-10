@@ -497,6 +497,8 @@ export function RefreshLocalDevServer():Promise<Record<string, any>>;
 
 export function RefreshTestWalletBalance(arg1:number):Promise<Record<string, any>>;
 
+export function RefreshTokenMetadata(arg1:string,arg2:boolean,arg3:boolean):Promise<Record<string, any>>;
+
 export function RefreshWatchedSCs():Promise<Record<string, any>>;
 
 export function RegisterWallet():Promise<Record<string, any>>;

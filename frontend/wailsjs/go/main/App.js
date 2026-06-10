@@ -990,6 +990,10 @@ export function RefreshTestWalletBalance(arg1) {
   return window['go']['main']['App']['RefreshTestWalletBalance'](arg1);
 }
 
+export function RefreshTokenMetadata(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RefreshTokenMetadata'](arg1, arg2, arg3);
+}
+
 export function RefreshWatchedSCs() {
   return window['go']['main']['App']['RefreshWatchedSCs']();
 }
