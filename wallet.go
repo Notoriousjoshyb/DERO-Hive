@@ -3192,13 +3192,16 @@ func (a *App) TransferToken(scid, destination string, amount uint64, password st
 
 	a.logToConsole(fmt.Sprintf("[Transfer] Transferring %d units of token %s to %s", amount, scid[:16]+"...", destination[:16]+"..."))
 
-	// Build transfer with asset (token)
-	// For DERO tokens, transfers include the SCID as the asset
+	// Build transfer with asset (token). For a plain wallet-to-wallet token send,
+	// the recipient is credited from Amount on the named SCID — Burn must be 0.
+	// Burn is value attached to a smart-contract call (the SC then credits it);
+	// with no SC on the other end, Amount:0/Burn:amount would debit the sender and
+	// credit no one, destroying the tokens. Engram's transferAsset uses Amount too.
 	transfers := []rpc.Transfer{
 		{
 			Destination: destination,
-			Amount:      0,      // DERO amount (0 for pure token transfer)
-			Burn:        amount, // Token amount to transfer
+			Amount:      amount, // token amount the recipient receives (on this SCID)
+			Burn:        0,
 			SCID:        crypto.HashHexToHash(scid),
 		},
 	}
