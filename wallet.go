@@ -2628,17 +2628,21 @@ func (a *App) GetTrackedTokens() map[string]interface{} {
 			tokenData["balanceUnknown"] = true
 		}
 
-		// Backfill metadata from Gnomon only (never balance).
-		if (token.Name == "" || token.Symbol == "") && a.gnomonClient != nil && a.gnomonClient.IsRunning() {
-			vars := a.gnomonClient.GetAllSCIDVariableDetails(token.SCID)
-			for _, v := range vars {
-				key := fmt.Sprintf("%v", v.Key)
-				if token.Name == "" && key == "nameHdr" {
-					tokenData["name"] = decodeHexString(fmt.Sprintf("%v", v.Value))
-				}
-				if token.Symbol == "" && key == "symbolHdr" {
-					tokenData["symbol"] = decodeHexString(fmt.Sprintf("%v", v.Value))
-				}
+		// Backfill missing metadata from Gnomon (never balance). Reuse
+		// fetchTokenHeader so this render path gets the same canonical var_header_*
+		// keys, icon sanitizing, and on-demand AddSCIDToIndex as the add path —
+		// rather than the old nameHdr/symbolHdr-only read. When it resolves
+		// something that was empty, persist it back to tracked_tokens.json so the
+		// label sticks and doesn't depend on Gnomon being present on the next render.
+		if token.Name == "" || token.Symbol == "" || token.Icon == "" {
+			n, s, ic, desc := a.fetchTokenHeader(token.SCID, token.Name, token.Symbol, false)
+			tokenData["name"] = n
+			tokenData["symbol"] = s
+			if token.Icon == "" && ic != "" {
+				tokenData["icon"] = ic
+			}
+			if n != token.Name || s != token.Symbol || (token.Icon == "" && ic != "") {
+				a.persistTokenMetadata(token.SCID, n, s, ic, desc)
 			}
 		}
 
@@ -2667,6 +2671,45 @@ func sanitizeIconURL(icon string) string {
 	return ""
 }
 
+// persistTokenMetadata writes Gnomon-resolved name/symbol/icon/description back to
+// tracked_tokens.json, but only into fields that are still empty — so a value the
+// user typed manually is never clobbered. Called when a render-time backfill
+// resolves metadata that wasn't indexed at add time (e.g. an older NFA that was
+// only just pulled into the index), so "Unknown Token" heals permanently instead
+// of re-resolving on every render.
+func (a *App) persistTokenMetadata(scid, name, symbol, icon, description string) {
+	scid = strings.ToLower(scid)
+	trackedTokensMu.Lock()
+	defer trackedTokensMu.Unlock()
+	tokens := loadTrackedTokens()
+	changed := false
+	for i := range tokens {
+		if tokens[i].SCID != scid {
+			continue
+		}
+		if tokens[i].Name == "" && name != "" {
+			tokens[i].Name = name
+			changed = true
+		}
+		if tokens[i].Symbol == "" && symbol != "" {
+			tokens[i].Symbol = symbol
+			changed = true
+		}
+		if tokens[i].Icon == "" && icon != "" {
+			tokens[i].Icon = icon
+			changed = true
+		}
+		if tokens[i].Description == "" && description != "" {
+			tokens[i].Description = description
+			changed = true
+		}
+		break
+	}
+	if changed {
+		saveTrackedTokens(tokens)
+	}
+}
+
 // fetchTokenHeader pulls an NFA's display metadata from Gnomon's indexed SC
 // variables. It reads the canonical Artificer V2 keys (var_header_*) first and
 // falls back to the legacy V1 keys (*Hdr) — matching Engram's getContractHeader
@@ -2674,7 +2717,12 @@ func sanitizeIconURL(icon string) string {
 // resolves a name/icon/description instead of rendering as "Unknown Token".
 // Any passed-in name/symbol (e.g. a manual add) wins over the on-chain value.
 // The returned icon is already passed through sanitizeIconURL (data:image only).
-func (a *App) fetchTokenHeader(scid, name, symbol string) (string, string, string, string) {
+//
+// allowIndex controls the on-demand AddSCIDToIndex fallback for an unindexed SCID:
+// pass true on the one-time add path (worth a network round-trip to resolve an
+// older NFA), false on the per-render read path (must stay cheap and non-blocking —
+// the add-time index, plus a one-shot render-time retry that persists, cover it).
+func (a *App) fetchTokenHeader(scid, name, symbol string, allowIndex bool) (string, string, string, string) {
 	var icon, description string
 	if a.gnomonClient == nil || !a.gnomonClient.IsRunning() {
 		return name, symbol, icon, description
@@ -2687,6 +2735,18 @@ func (a *App) fetchTokenHeader(scid, name, symbol string) (string, string, strin
 	nameLocked := name != ""
 	symbolLocked := symbol != ""
 	vars := a.gnomonClient.GetAllSCIDVariableDetails(scid)
+	// If the SCID isn't in the local index, Gnomon's fastsync never saw it (e.g. a
+	// contract deployed before this node's fastsync start height — common for older
+	// NFAs), so it has no variables to read and the token would render "Unknown
+	// Token". Pull just this SCID into the index on demand, then re-read — mirroring
+	// Engram's getContractHeader, which does the same AddSCIDToIndex-then-read.
+	if len(vars) == 0 && allowIndex {
+		if err := a.gnomonClient.AddSCIDToIndex(scid, false, false); err != nil {
+			a.logToConsole(fmt.Sprintf("[Wallet] On-demand index of %s... failed: %v", scid[:16], err))
+		} else {
+			vars = a.gnomonClient.GetAllSCIDVariableDetails(scid)
+		}
+	}
 	for _, v := range vars {
 		key := fmt.Sprintf("%v", v.Key)
 		val := fmt.Sprintf("%v", v.Value)
@@ -2737,7 +2797,7 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 	// Fetch token metadata from Gnomon up front (no shared state, may do I/O) so
 	// the tracked-list critical section below stays short. Mirrors Engram's
 	// Artificer NFA header fetch: name/symbol plus icon/description when present.
-	name, symbol, icon, description := a.fetchTokenHeader(scid, name, symbol)
+	name, symbol, icon, description := a.fetchTokenHeader(scid, name, symbol, true)
 
 	newToken := TrackedToken{
 		SCID:        scid,
@@ -2822,7 +2882,7 @@ func (a *App) addTrackedTokensBatch(scids []string) int {
 		if len(scid) != 64 {
 			continue
 		}
-		name, symbol, icon, description := a.fetchTokenHeader(scid, "", "")
+		name, symbol, icon, description := a.fetchTokenHeader(scid, "", "", true)
 		candidates = append(candidates, pending{token: TrackedToken{
 			SCID:        scid,
 			Name:        name,
