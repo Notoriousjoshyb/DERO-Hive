@@ -147,14 +147,14 @@ func (a *App) resolveIconSCID(iconValue string) string {
 			docType = docTypeHex // Maybe it's not hex-encoded
 		}
 	}
-	
+
 	a.logToConsole(fmt.Sprintf("[ICON] SCID %s docType: %s", iconValue[:16], docType))
 
 	// Only process SVG/STATIC types (be more lenient)
 	isImageType := strings.Contains(strings.ToUpper(docType), "STATIC") ||
 		strings.Contains(strings.ToLower(docType), "svg") ||
 		strings.Contains(strings.ToLower(docType), "image")
-	
+
 	if docType != "" && !isImageType {
 		a.logToConsole(fmt.Sprintf("[ICON] SCID %s is not an image type: %s", iconValue[:16], docType))
 		return ""
@@ -372,10 +372,14 @@ func (a *App) AddSCIDToIndex(scid string) map[string]interface{} {
 		}
 	}
 
-	// Call GnomonClient method with default parameters:
-	// varstoreonly=false (fetch full code+vars for better classification)
-	// skipfsrecheck=false (re-validate even if previously seen)
-	err := a.gnomonClient.AddSCIDToIndex(scid, false, false)
+	// varstoreonly=true is load-bearing: the indexer only stores a SCID's variables
+	// if its code matches the search filter OR varstoreonly is set. This button's
+	// whole purpose is indexing contracts the TELA filter didn't catch (NFAs, older
+	// deploys), and those fail the filter re-check too — with varstoreonly=false the
+	// add "succeeds" but stores zero variables. true bypasses the filter and stores
+	// vars directly, matching Engram's getContractHeader and the wallet add path.
+	// skipfsrecheck=false still fetches code+vars via RPC for validation.
+	err := a.gnomonClient.AddSCIDToIndex(scid, true, false)
 	if err != nil {
 		a.logToConsole(fmt.Sprintf("[GNOMON] AddSCIDToIndex failed: %v", err))
 		return map[string]interface{}{
@@ -858,11 +862,11 @@ func (a *App) GetAppDetails(scid string) map[string]interface{} {
 		// V1 headers (ART-NFA standard) - fallback if V2 not set
 		case "nameHdr":
 			if details["name"] == nil {
-			details["name"] = decodeHexString(value)
+				details["name"] = decodeHexString(value)
 			}
 		case "descrHdr":
 			if details["description"] == nil {
-			details["description"] = decodeHexString(value)
+				details["description"] = decodeHexString(value)
 			}
 		case "iconURLHdr":
 			if details["icon"] == nil {
@@ -1223,10 +1227,9 @@ func (a *App) GetGnomonWSStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"running":  a.gnomonWSServer.IsRunning(),
-		"address":  a.gnomonWSServer.GetAddress(),
-		"port":     a.gnomonWSServer.GetPort(),
-		"clients":  a.gnomonWSServer.GetClientCount(),
+		"running": a.gnomonWSServer.IsRunning(),
+		"address": a.gnomonWSServer.GetAddress(),
+		"port":    a.gnomonWSServer.GetPort(),
+		"clients": a.gnomonWSServer.GetClientCount(),
 	}
 }
-
