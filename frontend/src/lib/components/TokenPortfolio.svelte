@@ -1,36 +1,114 @@
+<script context="module">
+  // Wallets we've already fired the quiet first-view auto-scan for this session.
+  // Module-scoped (not component-instance) so navigating away from the portfolio
+  // and back doesn't re-trigger a full Gnomon sweep — the guard is keyed to wallet
+  // identity, not component lifetime. Cleared on app restart, which is fine: a
+  // fresh session re-checking once per wallet is the intended behavior.
+  const autoScannedWallets = new Set();
+</script>
+
 <script>
-  import { onMount } from 'svelte';
-  import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, RemoveTrackedToken } from '../../../wailsjs/go/main/App.js';
-  import { walletState, balanceMasked, toast } from '../stores/appState.js';
-  import { Coins, RefreshCw, Copy, Plus, ArrowUp, Trash2, Info } from 'lucide-svelte';
-  
+  import { onMount, onDestroy } from 'svelte';
+  import { GetTokenPortfolio, GetXSWDStatus, GetTrackedTokens, RemoveTrackedToken, ScanWalletForTokens } from '../../../wailsjs/go/main/App.js';
+  import { EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime.js';
+  import { walletState, balanceMasked, toast, appState } from '../stores/appState.js';
+  import { Coins, RefreshCw, Copy, Plus, ArrowUp, Trash2, Info, Search } from 'lucide-svelte';
+
   import AddTokenModal from './AddTokenModal.svelte';
   import TokenSendModal from './TokenSendModal.svelte';
-  
+
   let tokens = [];
   let loading = false;
   let error = null;
   let xswdConnected = false;
   let localWalletOpen = false;
-  
+
+  // Wallet scan (auto-detect tokens via the Gnomon index)
+  let scanning = false;
+  let scanScanned = 0;
+  let scanTotal = 0;
+  let scanFound = 0;
+  let autoScanInFlight = false;
+
   // Modals
   let showAddToken = false;
   let showSendToken = false;
   let selectedToken = null;
-  
+
   // Reactive to wallet state changes
   $: localWalletOpen = $walletState.isOpen;
+
+  // Scanning needs a running Gnomon index for its candidate set; reflect that in
+  // the button and empty-state so a user with Gnomon off sees a persistent reason
+  // rather than a Scan button that flashes a toast and looks clickable.
+  $: gnomonRunning = $appState.gnomonRunning;
 
   // Token balances follow the shared mask, so the whole portfolio goes quiet
   // at once when Signal Dark is armed (or hide-balance is toggled).
   
   onMount(async () => {
+    EventsOn('wallet:scanProgress', (data) => {
+      scanScanned = data?.scanned || 0;
+      scanTotal = data?.total || 0;
+      scanFound = data?.found || 0;
+    });
+    EventsOn('wallet:scanComplete', async (data) => {
+      const wasAuto = autoScanInFlight;
+      autoScanInFlight = false;
+      scanning = false;
+      const added = data?.added || 0;
+      const errors = data?.errors || 0;
+      const partial = data?.partial === true;
+      const coverage = Math.floor(data?.coverage ?? 100);
+      // A partial Gnomon index means the scan only checked the SCIDs indexed so
+      // far, so an empty result is NOT authoritative — the user could hold tokens
+      // Gnomon hasn't reached yet. Always surface this (even on a quiet auto-scan)
+      // so a partial scan is never mistaken for "you hold nothing."
+      const partialNote = partial
+        ? ` Gnomon is ${coverage}% synced — re-scan once it finishes for complete results.`
+        : '';
+      // Errors mean some contracts couldn't be checked, i.e. partial coverage of a
+      // different kind. Surface it even on an auto-scan — the first-run auto-scan is
+      // exactly when transient balance-read errors are most likely, so that's the
+      // worst place to hide the caveat.
+      const errorNote = errors > 0
+        ? ` ${errors} ${errors === 1 ? 'contract' : 'contracts'} couldn't be checked — re-scan to retry.`
+        : '';
+      if (added > 0) {
+        toast.success(`Found ${added} ${added === 1 ? 'token' : 'tokens'} in your wallet.${partialNote}${errorNote}`);
+        await loadTokens();
+      } else if (partial || errors > 0) {
+        // Empty + incomplete coverage is the dangerous false-negative — say so even
+        // on an auto-scan so it's never mistaken for "you hold nothing."
+        toast.info(`No new tokens found yet —${partialNote}${errorNote}`);
+      } else if (!wasAuto) {
+        // Fully-synced, error-free empty result: only a user-initiated scan reports it.
+        toast.info('No new tokens found');
+      }
+    });
     await checkAndLoad();
+  });
+
+  onDestroy(() => {
+    EventsOff('wallet:scanProgress');
+    EventsOff('wallet:scanComplete');
   });
   
   // Reload when wallet state changes
   $: if (localWalletOpen) {
     checkAndLoad();
+  }
+
+  // Watchdog: if the wallet closes mid-scan, the backend's scanComplete may never
+  // reach us (its emit is guarded on a live app context). Reset the scan state so
+  // the progress bar can't pin forever and bleed a stale "Scanning N/M" into the
+  // next session.
+  $: if (!localWalletOpen && scanning) {
+    scanning = false;
+    autoScanInFlight = false;
+    scanScanned = 0;
+    scanTotal = 0;
+    scanFound = 0;
   }
   
   async function checkAndLoad() {
@@ -64,6 +142,7 @@
           });
           error = null;
           loading = false;
+          maybeAutoScan();
           return;
         }
       }
@@ -125,6 +204,53 @@
     }
   }
   
+  async function handleScan() {
+    if (scanning) return;
+    scanning = true;
+    scanScanned = 0;
+    scanTotal = 0;
+    scanFound = 0;
+    try {
+      const result = await ScanWalletForTokens();
+      if (!result.success) {
+        scanning = false;
+        toast.error(result.error || 'Scan failed');
+        return;
+      }
+      // total === 0 means there was nothing new to check; backend still emits
+      // scanComplete, which flips scanning off and toasts.
+      scanTotal = result.total || 0;
+    } catch (e) {
+      scanning = false;
+      toast.error('Scan failed');
+    }
+  }
+
+  // Auto-scan once per mount when the portfolio holds nothing but native DERO —
+  // mirrors Engram's first-view rescan. Runs quietly: a no-result auto-scan
+  // shows no toast, and if Gnomon isn't running the backend just returns an
+  // error we swallow (the manual Scan button surfaces it on demand).
+  async function maybeAutoScan() {
+    if (scanning || !localWalletOpen) return;
+    const addr = $walletState.address;
+    if (!addr || autoScannedWallets.has(addr)) return;
+    const onlyNative = tokens.length <= 1 && tokens.every(t => t.native);
+    if (!onlyNative) return;
+    autoScannedWallets.add(addr);
+    try {
+      const result = await ScanWalletForTokens();
+      if (result.success && (result.total || 0) > 0) {
+        autoScanInFlight = true;
+        scanning = true;
+        scanScanned = 0;
+        scanTotal = result.total || 0;
+        scanFound = 0;
+      }
+    } catch (e) {
+      // silent — auto-scan is best-effort
+    }
+  }
+
   function openSendModal(token) {
     selectedToken = token;
     showSendToken = true;
@@ -150,6 +276,24 @@
     navigator.clipboard.writeText(text);
     toast.success('Copied!');
   }
+
+  // Icon rendering is privacy-gated. A token's icon comes from an attacker-
+  // controllable on-chain header, and a remote <img src> would fire an outbound
+  // request on render that leaks the user's IP/timing. The backend already drops
+  // remote icons at ingestion (sanitizeIconURL), but tokens persisted before that
+  // guard — or fetched over the XSWD remote path — could still carry one, so we
+  // re-gate here: only inline data:image icons ever load. Anything else (and any
+  // icon that fails to load) falls back to the ⬡ glyph.
+  let failedIcons = new Set();
+
+  function handleIconError(iconUrl) {
+    failedIcons.add(iconUrl);
+    failedIcons = failedIcons; // trigger Svelte reactivity
+  }
+
+  function shouldShowIcon(iconUrl) {
+    return iconUrl && /^data:image\//i.test(iconUrl) && !failedIcons.has(iconUrl);
+  }
 </script>
 
 <div class="token-portfolio">
@@ -160,6 +304,14 @@
     </div>
     <div class="header-actions">
       {#if localWalletOpen}
+        <button
+          class="btn-icon"
+          on:click={handleScan}
+          disabled={scanning || !gnomonRunning}
+          title={gnomonRunning ? 'Scan wallet for tokens' : 'Start Gnomon in Settings to scan for tokens'}
+        >
+          <Search size={14} class={scanning ? 'spin' : ''} />
+        </button>
         <button class="btn-icon" on:click={() => showAddToken = true} title="Add Token">
           <Plus size={14} />
         </button>
@@ -169,7 +321,18 @@
       </button>
     </div>
   </div>
-  
+
+  {#if scanning}
+    <div class="scan-progress">
+      <div class="scan-bar">
+        <div class="scan-bar-fill" style="width: {scanTotal > 0 ? Math.round((scanScanned / scanTotal) * 100) : 0}%"></div>
+      </div>
+      <span class="scan-label">
+        Scanning {scanScanned}/{scanTotal}{scanFound > 0 ? ` · found ${scanFound}` : ''}
+      </span>
+    </div>
+  {/if}
+
   {#if !xswdConnected && !localWalletOpen}
     <!-- No wallet open -->
     <div class="portfolio-empty">
@@ -193,6 +356,9 @@
     <div class="portfolio-empty">
       <Coins size={24} strokeWidth={1} />
       <p>No tokens found</p>
+      {#if localWalletOpen && !gnomonRunning}
+        <p class="empty-hint">Start Gnomon in Settings to auto-detect tokens your wallet holds.</p>
+      {/if}
       {#if localWalletOpen}
         <button class="btn btn-primary btn-sm" on:click={() => showAddToken = true}>
           <Plus size={14} />
@@ -206,8 +372,8 @@
       {#each tokens as token}
         <div class="token-row" class:native={token.native}>
           <div class="token-icon">
-            {#if token.icon}
-              <img src={token.icon} alt={token.name || 'Token'} />
+            {#if shouldShowIcon(token.icon)}
+              <img src={token.icon} alt={token.name || 'Token'} on:error={() => handleIconError(token.icon)} />
             {:else if token.native}
               <span class="dero-icon">◆</span>
             {:else}
@@ -277,7 +443,7 @@
         <div class="info-content">
           <p class="info-title">Token Discovery</p>
           <p class="info-text">
-            Add tokens manually using their SCID. Connect via XSWD for automatic token discovery.
+            Use Scan to auto-detect tokens your wallet holds (requires Gnomon), or add one manually by its SCID.
           </p>
         </div>
       </div>
@@ -323,6 +489,37 @@
     display: flex;
     gap: var(--s-1);
   }
+
+  .scan-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--border-dim);
+    background: rgba(34, 211, 238, 0.04);
+  }
+
+  .scan-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--void-deep);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .scan-bar-fill {
+    height: 100%;
+    background: var(--cyan-400);
+    border-radius: 2px;
+    transition: width 200ms ease;
+  }
+
+  .scan-label {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-3);
+    white-space: nowrap;
+  }
   
   .btn-icon {
     display: flex;
@@ -363,7 +560,15 @@
     align-items: center;
     gap: var(--s-3);
   }
-  
+
+  .empty-hint {
+    margin: 0;
+    max-width: 260px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-3);
+  }
+
   .portfolio-loading {
     display: flex;
     flex-direction: column;

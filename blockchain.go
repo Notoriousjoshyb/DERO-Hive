@@ -1173,7 +1173,7 @@ func (a *App) processEmbeddedShardsINDEX(indexData map[string]interface{}, conte
 			} else if fnHex, ok := docStringKeys["nameHdr"].(string); ok {
 				docFileName = decodeHexString(fnHex)
 			}
-				if strings.HasSuffix(docFileName, ".gz") {
+			if strings.HasSuffix(docFileName, ".gz") {
 				compression = ".gz"
 			}
 		}
@@ -1491,12 +1491,13 @@ func (a *App) logToConsole(message string) {
 		Level:     level,
 		Message:   message,
 	}
+	a.consoleLogsMu.Lock()
 	a.consoleLogs = append(a.consoleLogs, logEntry)
-
 	// Limit console history
 	if len(a.consoleLogs) > 1000 {
 		a.consoleLogs = a.consoleLogs[len(a.consoleLogs)-1000:]
 	}
+	a.consoleLogsMu.Unlock()
 
 	// Emit real-time event for terminal display
 	if a.ctx != nil {
@@ -1511,12 +1512,19 @@ func (a *App) logToConsole(message string) {
 
 // GetConsoleLogs returns recent console logs
 func (a *App) GetConsoleLogs() []ConsoleLog {
-	return a.consoleLogs
+	a.consoleLogsMu.Lock()
+	defer a.consoleLogsMu.Unlock()
+	// Return a copy so the caller can't observe a concurrent append/trim.
+	out := make([]ConsoleLog, len(a.consoleLogs))
+	copy(out, a.consoleLogs)
+	return out
 }
 
 // ClearConsoleLogs clears the console history
 func (a *App) ClearConsoleLogs() map[string]interface{} {
+	a.consoleLogsMu.Lock()
 	a.consoleLogs = make([]ConsoleLog, 0)
+	a.consoleLogsMu.Unlock()
 	return map[string]interface{}{
 		"success": true,
 		"message": "Console cleared",

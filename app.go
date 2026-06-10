@@ -33,17 +33,18 @@ var deroSCID = crypto.ZEROHASH.String()
 
 // App struct
 type App struct {
-	ctx          context.Context
-	xswdClient   *XSWDClient
-	daemonClient BlockchainClient
-	gnomonClient *GnomonClient
-	cache        ContentCache
-	xswdServer   *XSWDServer
-	liveStats    *LiveStatsService
-	settings     map[string]interface{}
-	history      []string
-	consoleLogs  []ConsoleLog
-	launchURL    string
+	ctx           context.Context
+	xswdClient    *XSWDClient
+	daemonClient  BlockchainClient
+	gnomonClient  *GnomonClient
+	cache         ContentCache
+	xswdServer    *XSWDServer
+	liveStats     *LiveStatsService
+	settings      map[string]interface{}
+	history       []string
+	consoleLogs   []ConsoleLog
+	consoleLogsMu sync.Mutex // guards consoleLogs (logToConsole is called concurrently)
+	launchURL     string
 
 	// EPOCH (Developer Support)
 	epochHandler     *EpochHandler
@@ -81,6 +82,12 @@ type App struct {
 
 	// EPOCH address monitor lifecycle
 	epochMonitorStop chan struct{}
+
+	// Token scan re-entrancy guard. Toggled with atomic CAS so a double-click or
+	// the manual Scan racing the first-view auto-scan can't spawn two concurrent
+	// worker-pool sweeps (which would double the daemon load and interleave two
+	// progress streams). 0 = idle, 1 = a scan is running.
+	scanInFlight int32
 }
 
 // NewApp creates a new App application struct

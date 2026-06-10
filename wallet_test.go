@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -453,7 +454,7 @@ func TestInternalWalletCall_SCInvoke_MissingSCID(t *testing.T) {
 	// Note: Without a real wallet, we can't test parameter validation in isolation
 	// because the code checks wallet.isOpen && wallet != nil first.
 	// This test verifies the error path when wallet state is inconsistent.
-	
+
 	walletManager.Lock()
 	originalIsOpen := walletManager.isOpen
 	originalWallet := walletManager.wallet
@@ -491,7 +492,7 @@ func TestInternalWalletCall_UnsupportedMethod(t *testing.T) {
 	// Note: Without a real wallet, we can't test the unsupported method path
 	// because the code checks wallet state first.
 	// This test verifies behavior when wallet object is nil.
-	
+
 	walletManager.Lock()
 	originalIsOpen := walletManager.isOpen
 	originalWallet := walletManager.wallet
@@ -739,9 +740,9 @@ func TestMiningRewardType_Classification(t *testing.T) {
 		amount       uint64
 		expectedType string
 	}{
-		{200000, "block"},    // Exactly 2 DERO
-		{300000, "block"},    // 3 DERO
-		{1000000, "block"},   // 10 DERO
+		{200000, "block"},     // Exactly 2 DERO
+		{300000, "block"},     // 3 DERO
+		{1000000, "block"},    // 10 DERO
 		{199999, "miniblock"}, // Just under 2 DERO
 		{100000, "miniblock"}, // 1 DERO
 		{50000, "miniblock"},  // 0.5 DERO
@@ -835,5 +836,59 @@ func BenchmarkListRecentWallets(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		app.ListRecentWallets()
+	}
+}
+
+// ============== Tracked-token concurrency ==============
+
+// TestAddTrackedToken_ConcurrentNoLostUpdates verifies that trackedTokensMu
+// serializes the load-modify-save of tracked_tokens.json: concurrent adds of
+// distinct SCIDs must all persist, with none clobbered by a racing whole-file
+// rewrite. Run under -race, it also flags any data race on the shared file.
+func TestAddTrackedToken_ConcurrentNoLostUpdates(t *testing.T) {
+	dir := t.TempDir()
+	prev := testDataDirOverride
+	testDataDirOverride = dir
+	defer func() { testDataDirOverride = prev }()
+
+	// No wallet open: AddTrackedToken still runs the persistence path and skips
+	// the wallet-registration block.
+	walletManager.Lock()
+	walletManager.isOpen = false
+	walletManager.wallet = nil
+	walletManager.Unlock()
+
+	app := &App{settings: make(map[string]interface{}), consoleLogs: make([]ConsoleLog, 0)}
+
+	const n = 50
+	scids := make([]string, n)
+	for i := range scids {
+		// distinct, valid 64-hex SCIDs
+		scids[i] = fmt.Sprintf("%064x", i+1)
+	}
+
+	var wg sync.WaitGroup
+	for _, s := range scids {
+		wg.Add(1)
+		go func(scid string) {
+			defer wg.Done()
+			app.AddTrackedToken(scid, "T", "T")
+		}(s)
+	}
+	wg.Wait()
+
+	got := loadTrackedTokens()
+	if len(got) != n {
+		t.Fatalf("expected %d tracked tokens after concurrent adds, got %d (lost-update race?)", n, len(got))
+	}
+
+	seen := make(map[string]bool, n)
+	for _, tok := range got {
+		seen[tok.SCID] = true
+	}
+	for _, s := range scids {
+		if !seen[s] {
+			t.Errorf("SCID %s missing — clobbered by a concurrent write", s)
+		}
 	}
 }

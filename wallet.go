@@ -11,6 +11,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/deroproject/derohe/cryptography/bn256"
@@ -54,6 +55,13 @@ var walletConnectivityOnce sync.Once
 // on I/O. Callers must hold a stable wallet pointer (captured under
 // walletManager's lock) before calling these helpers.
 var balanceMu sync.Mutex
+
+// trackedTokensMu serializes the read-modify-write of tracked_tokens.json so a
+// manual AddTrackedToken/RemoveTrackedToken can't interleave with the scan's
+// add loop (or another add) and clobber the whole-file rewrite — a lost-update
+// race, since load() and save() are not individually atomic. Held across the
+// load…modify…save span by every mutating path.
+var trackedTokensMu sync.Mutex
 
 // readNativeBalance returns the cached native DERO mature balance, serialized
 // against the sync_loop via balanceMu.
@@ -2556,10 +2564,12 @@ func (a *App) GetCurrentWalletPath() string {
 
 // TrackedToken represents a user-tracked token
 type TrackedToken struct {
-	SCID    string `json:"scid"`
-	Name    string `json:"name"`
-	Symbol  string `json:"symbol"`
-	AddedAt int64  `json:"addedAt"`
+	SCID        string `json:"scid"`
+	Name        string `json:"name"`
+	Symbol      string `json:"symbol"`
+	Icon        string `json:"icon,omitempty"`
+	Description string `json:"description,omitempty"`
+	AddedAt     int64  `json:"addedAt"`
 }
 
 // GetTrackedTokens returns the list of user-tracked tokens with balances
@@ -2600,6 +2610,7 @@ func (a *App) GetTrackedTokens() map[string]interface{} {
 			"scid":           token.SCID,
 			"name":           token.Name,
 			"symbol":         token.Symbol,
+			"icon":           token.Icon,
 			"balance":        uint64(0),
 			"native":         false,
 			"balanceUnknown": false,
@@ -2641,6 +2652,74 @@ func (a *App) GetTrackedTokens() map[string]interface{} {
 	}
 }
 
+// sanitizeIconURL gates the on-chain icon header before it can be persisted or
+// rendered. The icon URL is fully attacker-controlled (anyone can deploy an NFA
+// with a crafted iconURLHdr) and the portfolio renders it as <img src=…>, so a
+// remote URL would fire a silent outbound GET on render — leaking the user's IP
+// and online-timing the instant a dust airdrop auto-lands. For a privacy wallet
+// that defeats the whole point. We allow ONLY inline data:image/ icons (no
+// network fetch — this is also how HOLOGRAM's own base64 icons are encoded) and
+// drop every remote scheme; a dropped icon degrades to the ⬡ glyph in the UI.
+func sanitizeIconURL(icon string) string {
+	if strings.HasPrefix(strings.ToLower(icon), "data:image/") {
+		return icon
+	}
+	return ""
+}
+
+// fetchTokenHeader pulls an NFA's display metadata from Gnomon's indexed SC
+// variables. It reads the canonical Artificer V2 keys (var_header_*) first and
+// falls back to the legacy V1 keys (*Hdr) — matching Engram's getContractHeader
+// precedence — so a contract that publishes only the canonical keys still
+// resolves a name/icon/description instead of rendering as "Unknown Token".
+// Any passed-in name/symbol (e.g. a manual add) wins over the on-chain value.
+// The returned icon is already passed through sanitizeIconURL (data:image only).
+func (a *App) fetchTokenHeader(scid, name, symbol string) (string, string, string, string) {
+	var icon, description string
+	if a.gnomonClient == nil || !a.gnomonClient.IsRunning() {
+		return name, symbol, icon, description
+	}
+	// A caller-supplied name/symbol is authoritative and never overwritten.
+	// Otherwise the canonical V2 key (var_header_*) wins over the legacy V1 key
+	// (*Hdr) regardless of Gnomon's iteration order: canonical keys assign
+	// unconditionally, legacy keys only fill a still-empty field. This mirrors
+	// Engram's getContractHeader precedence.
+	nameLocked := name != ""
+	symbolLocked := symbol != ""
+	vars := a.gnomonClient.GetAllSCIDVariableDetails(scid)
+	for _, v := range vars {
+		key := fmt.Sprintf("%v", v.Key)
+		val := fmt.Sprintf("%v", v.Value)
+		switch key {
+		case "var_header_name":
+			if !nameLocked {
+				name = decodeHexString(val)
+			}
+		case "nameHdr":
+			if !nameLocked && name == "" {
+				name = decodeHexString(val)
+			}
+		case "symbolHdr":
+			if !symbolLocked && symbol == "" {
+				symbol = decodeHexString(val)
+			}
+		case "var_header_icon":
+			icon = sanitizeIconURL(decodeHexString(val))
+		case "iconURLHdr", "fileURL":
+			if icon == "" {
+				icon = sanitizeIconURL(decodeHexString(val))
+			}
+		case "var_header_description":
+			description = decodeHexString(val)
+		case "descrHdr":
+			if description == "" {
+				description = decodeHexString(val)
+			}
+		}
+	}
+	return name, symbol, icon, description
+}
+
 // AddTrackedToken adds a token SCID to the tracked list
 func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} {
 	// Validate SCID format (64 hex chars)
@@ -2655,40 +2734,37 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 	// consistent regardless of how the user typed the SCID.
 	scid = strings.ToLower(scid)
 
-	// Check if already tracked
+	// Fetch token metadata from Gnomon up front (no shared state, may do I/O) so
+	// the tracked-list critical section below stays short. Mirrors Engram's
+	// Artificer NFA header fetch: name/symbol plus icon/description when present.
+	name, symbol, icon, description := a.fetchTokenHeader(scid, name, symbol)
+
+	newToken := TrackedToken{
+		SCID:        scid,
+		Name:        name,
+		Symbol:      symbol,
+		Icon:        icon,
+		Description: description,
+		AddedAt:     time.Now().Unix(),
+	}
+
+	// Serialize the dedup-check…append…save so concurrent adds (e.g. the scan's
+	// add loop running while the user manually adds one) can't clobber each
+	// other's whole-file rewrite.
+	trackedTokensMu.Lock()
 	tokens := loadTrackedTokens()
 	for _, t := range tokens {
 		if t.SCID == scid {
+			trackedTokensMu.Unlock()
 			return map[string]interface{}{
 				"success": false,
 				"error":   "Token already tracked",
 			}
 		}
 	}
-
-	// Try to fetch token metadata from Gnomon
-	if a.gnomonClient != nil && a.gnomonClient.IsRunning() {
-		vars := a.gnomonClient.GetAllSCIDVariableDetails(scid)
-		for _, v := range vars {
-			key := fmt.Sprintf("%v", v.Key)
-			if name == "" && key == "nameHdr" {
-				name = decodeHexString(fmt.Sprintf("%v", v.Value))
-			}
-			if symbol == "" && key == "symbolHdr" {
-				symbol = decodeHexString(fmt.Sprintf("%v", v.Value))
-			}
-		}
-	}
-
-	// Add to tracked list
-	newToken := TrackedToken{
-		SCID:    scid,
-		Name:    name,
-		Symbol:  symbol,
-		AddedAt: time.Now().Unix(),
-	}
 	tokens = append(tokens, newToken)
 	saveTrackedTokens(tokens)
+	trackedTokensMu.Unlock()
 
 	a.logToConsole(fmt.Sprintf("[Wallet] Added tracked token: %s (%s)", name, scid[:16]+"..."))
 
@@ -2722,11 +2798,340 @@ func (a *App) AddTrackedToken(scid, name, symbol string) map[string]interface{} 
 	}
 }
 
+// addTrackedTokensBatch adds many discovered SCIDs in one pass and returns how
+// many were newly tracked. It exists because the scan's auto-add-all-non-zero
+// policy can yield a large hit list, and calling AddTrackedToken per hit does an
+// O(n) full-file load+rewrite of tracked_tokens.json under the lock for every
+// single token — O(n^2) disk churn with the lock held the whole time. Here the
+// tracked-list read-modify-write happens ONCE under trackedTokensMu; the
+// per-token Gnomon metadata fetch and wallet-engine registration (both I/O,
+// neither touches the tracked list) run OUTSIDE the lock. Single-add callers
+// keep using AddTrackedToken.
+func (a *App) addTrackedTokensBatch(scids []string) int {
+	if len(scids) == 0 {
+		return 0
+	}
+
+	// Pre-resolve metadata for each SCID without holding the tracked-list lock.
+	type pending struct {
+		token TrackedToken
+	}
+	candidates := make([]pending, 0, len(scids))
+	for _, scid := range scids {
+		scid = strings.ToLower(scid)
+		if len(scid) != 64 {
+			continue
+		}
+		name, symbol, icon, description := a.fetchTokenHeader(scid, "", "")
+		candidates = append(candidates, pending{token: TrackedToken{
+			SCID:        scid,
+			Name:        name,
+			Symbol:      symbol,
+			Icon:        icon,
+			Description: description,
+			AddedAt:     time.Now().Unix(),
+		}})
+	}
+
+	// Single critical section: load once, append all genuinely-new tokens, save
+	// once. Collect the SCIDs we actually added so the wallet-engine registration
+	// below only runs for new entries.
+	trackedTokensMu.Lock()
+	tokens := loadTrackedTokens()
+	existing := make(map[string]struct{}, len(tokens))
+	for _, t := range tokens {
+		existing[t.SCID] = struct{}{}
+	}
+	addedHashes := make([]crypto.Hash, 0, len(candidates))
+	addedNames := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if _, dup := existing[c.token.SCID]; dup {
+			continue
+		}
+		existing[c.token.SCID] = struct{}{} // guard against duplicate SCIDs within the batch
+		tokens = append(tokens, c.token)
+		addedHashes = append(addedHashes, crypto.HashHexToHash(c.token.SCID))
+		addedNames = append(addedNames, c.token.Name)
+	}
+	if len(addedHashes) > 0 {
+		saveTrackedTokens(tokens)
+	}
+	trackedTokensMu.Unlock()
+
+	if len(addedHashes) == 0 {
+		return 0
+	}
+
+	// Register the new SCIDs with the wallet engine and pull their balances once,
+	// outside the tracked-list lock. Failures are non-fatal — the token is tracked
+	// and the background sync_loop will resolve it on the next tick.
+	walletManager.RLock()
+	wallet := walletManager.wallet
+	walletOpen := walletManager.isOpen && wallet != nil
+	walletManager.RUnlock()
+
+	for i, scidHash := range addedHashes {
+		a.logToConsole(fmt.Sprintf("[Wallet] Added tracked token: %s (%s)", addedNames[i], scidHash.String()[:16]+"..."))
+		if !walletOpen {
+			continue
+		}
+		if err := wallet.TokenAdd(scidHash); err != nil {
+			a.logToConsole(fmt.Sprintf("[Wallet] TokenAdd(%s): %v", scidHash.String()[:16]+"...", err))
+		}
+		if _, err := syncAndReadTokenBalance(wallet, scidHash); err != nil {
+			a.logToConsole(fmt.Sprintf("[Wallet] Initial balance sync for %s failed: %v", scidHash.String()[:16]+"...", err))
+		}
+	}
+
+	return len(addedHashes)
+}
+
+// scanWorkers bounds the concurrency of the token-discovery sweep. Each worker
+// does an independent daemon read; a single daemon serves them, so this trades
+// off daemon load against wall-clock. Engram uses 50; we stay conservative.
+const scanWorkers = 16
+
+// scanBalanceTimeout caps a single per-SCID balance read so a hung daemon call
+// can't stall a worker (and thus the whole scan) indefinitely.
+const scanBalanceTimeout = 15 * time.Second
+
+// ScanWalletForTokens auto-discovers tokens the open wallet holds and adds the
+// non-zero ones to the tracked list, mirroring (and outpacing) Engram's scan.
+//
+// DERO has no chain-side "list my assets" — encrypted balances are keyed by
+// (address, SCID), so discovery is always "resolve a candidate SCID set, then
+// check my balance in each." We use Gnomon's full index as that candidate set,
+// exactly as Engram does. Tokens already tracked are skipped up front.
+//
+// Parallelism without a lock — the subtle part. GetDecryptedBalanceAtTopoHeight
+// with topoheight == -1 WRITES shared wallet state (account.TopoHeight, the
+// encrypted-balance cache, package-global event trackers — daemon_communication.go
+// lines 455-477), so concurrent -1 calls race; that write path is exactly what
+// balanceMu guards. But every one of those writes is gated on topoheight == -1.
+// By pinning a single real topoheight (fetched once below) and passing it to
+// every worker, we skip the entire mutating block: the call reduces to an RPC +
+// decrypt-with-immutable-key + return, which is genuinely read-only and safe to
+// fan out across a worker pool with no balanceMu. Pinning also gives a consistent
+// chain snapshot across the whole sweep. Results stream via "wallet:scanProgress"
+// / "wallet:scanComplete"; the method returns once the candidate set is known.
+func (a *App) ScanWalletForTokens() map[string]interface{} {
+	// Re-entrancy guard: only one scan at a time. If we can't flip 0->1 a scan is
+	// already running. Ownership of the flag transfers to the worker goroutine
+	// once it launches (released in its defer); every early-return path below
+	// hands it back via scanLaunched=false.
+	if !atomic.CompareAndSwapInt32(&a.scanInFlight, 0, 1) {
+		return map[string]interface{}{"success": false, "error": "A token scan is already in progress."}
+	}
+	scanLaunched := false
+	defer func() {
+		if !scanLaunched {
+			atomic.StoreInt32(&a.scanInFlight, 0)
+		}
+	}()
+
+	walletManager.RLock()
+	wallet := walletManager.wallet
+	walletOpen := walletManager.isOpen && wallet != nil
+	walletManager.RUnlock()
+
+	if !walletOpen {
+		return map[string]interface{}{"success": false, "error": "Open a wallet before scanning for tokens."}
+	}
+
+	if a.gnomonClient == nil || !a.gnomonClient.IsRunning() {
+		return map[string]interface{}{"success": false, "error": "Gnomon is not running. Start it in Settings to scan for tokens."}
+	}
+
+	address := wallet.GetAddress().String()
+
+	// Pin the daemon topoheight so every worker reads at one consistent snapshot
+	// AND skips the topoheight==-1 shared-state writes (the reason we can run
+	// lock-free). A non-positive height means the daemon isn't ready to serve a
+	// fixed-height read.
+	pinnedTopo := wallet.Get_Daemon_TopoHeight()
+	if pinnedTopo <= 0 {
+		return map[string]interface{}{"success": false, "error": "Daemon not synced yet — try again once the node is caught up."}
+	}
+
+	// Detect partial index coverage. Gnomon only knows about SCIDs up to its last
+	// indexed height; if it's still catching up, GetAllOwnersAndSCIDs returns a
+	// truncated candidate set and the scan can silently miss tokens the wallet
+	// actually holds — a false-negative on the user's own funds. We can't fix the
+	// gap mid-scan, but we MUST let the user distinguish "scanned everything, found
+	// nothing" from "scanned a partial index." The coverage flag rides the
+	// scanComplete event so the frontend can caveat the result.
+	coveragePct := 100.0
+	partialCoverage := false
+	if status := a.gnomonClient.GetStatus(); status != nil {
+		indexedH, _ := status["indexed_height"].(int64)
+		chainH, _ := status["chain_height"].(int64)
+		// Allow a small lag tolerance: a few blocks behind the tip is normal and
+		// not worth alarming the user over.
+		if chainH > 0 {
+			coveragePct = (float64(indexedH) / float64(chainH)) * 100.0
+			if chainH-indexedH > 5 {
+				partialCoverage = true
+			}
+		}
+	}
+
+	// Build the candidate set from every SCID Gnomon has indexed, minus the ones
+	// we already track (no point re-checking known tokens).
+	indexed := a.gnomonClient.GetAllOwnersAndSCIDs()
+	tracked := make(map[string]struct{})
+	for _, t := range loadTrackedTokens() {
+		tracked[t.SCID] = struct{}{}
+	}
+
+	candidates := make([]string, 0, len(indexed))
+	for scid := range indexed {
+		scid = strings.ToLower(scid)
+		if scid == deroSCID {
+			continue // native DERO is always shown, never a "token" to add
+		}
+		if _, known := tracked[scid]; known {
+			continue
+		}
+		candidates = append(candidates, scid)
+	}
+
+	total := len(candidates)
+	a.logToConsole(fmt.Sprintf("[Wallet] Token scan started: %d candidate SCIDs (%d indexed, %d already tracked)", total, len(indexed), len(tracked)))
+
+	if total == 0 {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "wallet:scanComplete", map[string]interface{}{
+				"found": 0, "added": 0, "scanned": 0, "errors": 0,
+				"partial": partialCoverage, "coverage": coveragePct,
+			})
+		}
+		return map[string]interface{}{"success": true, "message": "No new contracts to scan.", "total": 0}
+	}
+
+	scanLaunched = true // the goroutine now owns the re-entrancy flag (released in its defer)
+	go func() {
+		startUnix := time.Now().Unix()
+
+		var (
+			mu       sync.Mutex
+			hits     = make([]string, 0)
+			scanned  int
+			errCount int
+			added    int
+		)
+
+		// Always emit scanComplete, no matter how this goroutine exits — a panic in
+		// AddTrackedToken or an app teardown mid-scan must still flip the frontend's
+		// `scanning` flag off so the progress bar can't pin forever. Guard on a.ctx
+		// (cancelled on shutdown) like every other emit in this file.
+		defer func() {
+			// Release the re-entrancy guard last, so the next scan can't start until
+			// this one's scanComplete has been emitted.
+			defer atomic.StoreInt32(&a.scanInFlight, 0)
+			if r := recover(); r != nil {
+				a.logToConsole(fmt.Sprintf("[Wallet] Token scan goroutine recovered from panic: %v", r))
+			}
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "wallet:scanComplete", map[string]interface{}{
+					"found":      len(hits),
+					"added":      added,
+					"scanned":    total,
+					"errors":     errCount,
+					"partial":    partialCoverage,
+					"coverage":   coveragePct,
+					"durationMs": (time.Now().Unix() - startUnix) * 1000,
+				})
+			}
+		}()
+
+		work := make(chan string)
+		var wg sync.WaitGroup
+
+		for w := 0; w < scanWorkers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for scid := range work {
+					bal, err := readScanBalance(wallet, crypto.HashHexToHash(scid), address, pinnedTopo)
+
+					mu.Lock()
+					scanned++
+					if err != nil {
+						errCount++
+					} else if bal > 0 {
+						hits = append(hits, scid)
+					}
+					// Throttle progress to ~every 25 checks (and the final one) so a
+					// large index doesn't flood the event bus. Snapshot the values
+					// under the lock, emit AFTER releasing it (EventsEmit may block).
+					emit := scanned%25 == 0 || scanned == total
+					sScanned, sFound := scanned, len(hits)
+					mu.Unlock()
+
+					if emit && a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "wallet:scanProgress", map[string]interface{}{
+							"scanned": sScanned,
+							"total":   total,
+							"found":   sFound,
+						})
+					}
+				}
+			}()
+		}
+
+		for _, scid := range candidates {
+			work <- scid
+		}
+		close(work)
+		wg.Wait()
+
+		// Add all hits in one batched pass after the sweep — a single
+		// load-modify-save of tracked_tokens.json under the lock, with per-token
+		// Gnomon metadata backfill and wallet-engine registration done outside it.
+		added = a.addTrackedTokensBatch(hits)
+
+		if errCount > 0 {
+			a.logToConsole(fmt.Sprintf("[Wallet] Token scan: %d SCIDs errored during balance check (transient daemon issue?) — re-scan to retry", errCount))
+		}
+		a.logToConsole(fmt.Sprintf("[Wallet] Token scan complete: %d held, %d added, %d errored (%d scanned)", len(hits), added, errCount, total))
+		// scanComplete is emitted by the deferred handler above.
+	}()
+
+	return map[string]interface{}{"success": true, "message": "Scan started", "total": total}
+}
+
+// readScanBalance reads a single SCID's decrypted balance straight from the
+// daemon at a PINNED topoheight (never -1), with a timeout so a hung call can't
+// pin a worker. The pinned height skips GetDecryptedBalanceAtTopoHeight's
+// topoheight==-1 shared-state writes, so this touches no shared wallet state and
+// is safe to call concurrently without balanceMu (see ScanWalletForTokens). On
+// timeout the inner goroutine is orphaned but harmless: the channel is buffered,
+// the send never blocks, and with a pinned height the late call mutates nothing.
+func readScanBalance(wallet *walletapi.Wallet_Disk, scid crypto.Hash, address string, topo int64) (uint64, error) {
+	type res struct {
+		bal uint64
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		bal, _, err := wallet.GetDecryptedBalanceAtTopoHeight(scid, topo, address)
+		ch <- res{bal, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.bal, r.err
+	case <-time.After(scanBalanceTimeout):
+		return 0, fmt.Errorf("balance read timed out for %s", scid.String()[:16])
+	}
+}
+
 // RemoveTrackedToken removes a token from the tracked list
 func (a *App) RemoveTrackedToken(scid string) map[string]interface{} {
 	// loadTrackedTokens normalizes stored SCIDs to lowercase, so match on the
 	// same casing.
 	scid = strings.ToLower(scid)
+
+	trackedTokensMu.Lock()
 	tokens := loadTrackedTokens()
 	newTokens := make([]TrackedToken, 0)
 	found := false
@@ -2740,6 +3145,7 @@ func (a *App) RemoveTrackedToken(scid string) map[string]interface{} {
 	}
 
 	if !found {
+		trackedTokensMu.Unlock()
 		return map[string]interface{}{
 			"success": false,
 			"error":   "Token not found in tracked list",
@@ -2747,6 +3153,7 @@ func (a *App) RemoveTrackedToken(scid string) map[string]interface{} {
 	}
 
 	saveTrackedTokens(newTokens)
+	trackedTokensMu.Unlock()
 
 	return map[string]interface{}{
 		"success": true,
