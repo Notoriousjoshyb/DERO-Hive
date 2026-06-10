@@ -533,6 +533,15 @@ func (sm *SimulatorManager) StopSimulatorMode() map[string]interface{} {
 
 	sm.isInitialized = false
 
+	// Reset the derohe package-global simulator flag. Every simulator start
+	// path (and the TELA-in-simulator paths) sets it true, but nothing cleared
+	// it until app relaunch — so anything deriving network from it after this
+	// stop kept behaving as testnet (a mainnet wallet opened post-switch came
+	// up deto1/unregistered). HOLOGRAM's wallet paths now read nodeManager
+	// instead, but the global must still track reality for the derohe/TELA
+	// internals that consult it.
+	globals.Arguments["--simulator"] = false
+
 	sm.app.logToConsole("[OK] Simulator Mode stopped")
 
 	return map[string]interface{}{

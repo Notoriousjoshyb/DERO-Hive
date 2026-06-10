@@ -18,7 +18,6 @@ import (
 
 	"github.com/deroproject/derohe/cryptography/bn256"
 	"github.com/deroproject/derohe/cryptography/crypto"
-	"github.com/deroproject/derohe/globals"
 	"github.com/deroproject/derohe/rpc"
 	"github.com/deroproject/derohe/walletapi"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -193,12 +192,14 @@ func (a *App) OpenWallet(filePath, password string) map[string]interface{} {
 		filePath = filepath.Join(getDatashardsDir(), "wallets", name+".db")
 	}
 
-	// Determine current network mode - check multiple ways for robustness
+	// Network comes from nodeManager — the same source the sidebar and
+	// IsInSimulatorMode read. Do NOT consult globals.Arguments["--simulator"]:
+	// every simulator start path sets that package-global true but it's only
+	// cleared on app launch, so after a simulator→mainnet switch it goes stale
+	// and would open a mainnet wallet flagged testnet (deto1 address,
+	// "unregistered", sync wedged against the dead simulator).
 	currentNetwork := "mainnet"
-	simArg := globals.Arguments["--simulator"]
-
-	// Check if simulator (can be bool or interface{})
-	if simArg == true || simArg == "true" || fmt.Sprintf("%v", simArg) == "true" {
+	if a.IsInSimulatorMode() {
 		currentNetwork = "simulator"
 	}
 
@@ -1314,13 +1315,10 @@ func (a *App) RestoreWallet(filePath, password, seed string) map[string]interfac
 	}
 
 	// Set network before GetAddress() so the address prefix is correct
-	// (dero1 for mainnet, deto1 for testnet/simulator)
-	isMainnet := true
-	simArg := globals.Arguments["--simulator"]
-	if simArg == true || simArg == "true" || fmt.Sprintf("%v", simArg) == "true" {
-		isMainnet = false
-	}
-	wallet.SetNetwork(isMainnet)
+	// (dero1 for mainnet, deto1 for testnet/simulator). Derived from
+	// nodeManager, not the globals --simulator flag, which goes stale after a
+	// simulator→mainnet switch (see OpenWallet).
+	wallet.SetNetwork(!a.IsInSimulatorMode())
 
 	address := wallet.GetAddress().String()
 	wallet.Close_Encrypted_Wallet()
@@ -2374,11 +2372,11 @@ func addToRecentWalletsWithInfo(path, address string) {
 	// Load existing data
 	existing := loadRecentWalletsData()
 
-	// Determine current network mode - check multiple ways for robustness
+	// Stamp the network from nodeManager, not the globals --simulator flag —
+	// the flag goes stale after a simulator→mainnet switch and would record a
+	// mainnet session as "simulator", poisoning the last-used-network warnings.
 	network := "mainnet"
-	simArg := globals.Arguments["--simulator"]
-
-	if simArg == true || simArg == "true" || fmt.Sprintf("%v", simArg) == "true" {
+	if nodeManager.networkMode == NetworkSimulator {
 		network = "simulator"
 	}
 
