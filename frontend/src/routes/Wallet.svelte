@@ -3381,12 +3381,21 @@
         <nav class="page-sidebar-nav">
           {#if recentWalletsInfo.length > 0}
             {#each recentWalletsInfo as wallet}
-              <button
+              <div
                 class="page-sidebar-item"
                 class:active={walletPath === wallet.path && !selectedTestWallet}
+                role="button"
+                tabindex="0"
                 on:click={() => {
                   walletPath = wallet.path;
                   selectedTestWallet = null; // Clear test wallet selection when selecting a regular wallet
+                }}
+                on:keydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    walletPath = wallet.path;
+                    selectedTestWallet = null;
+                  }
                 }}
                 title={wallet.path}
               >
@@ -3394,14 +3403,14 @@
                   <Wallet size={14} strokeWidth={1.5} />
                 </span>
                 <span class="page-sidebar-item-label">{wallet.filename}</span>
-                <button 
+                <button
                   class="sidebar-wallet-remove"
                   on:click={(e) => handleRemoveRecentWallet(wallet.path, e)}
                   title="Remove"
                 >
                   ×
                 </button>
-              </button>
+              </div>
             {/each}
             <button class="sidebar-clear-btn" on:click={requestClearRecentWallets}>
               <Trash2 size={12} />

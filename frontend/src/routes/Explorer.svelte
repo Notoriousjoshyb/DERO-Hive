@@ -2175,21 +2175,24 @@
                       {#if payload.members?.length > 0}
                         <div class="cmd-ring-members">
                           {#each payload.members as addr, i}
-                            <button 
+                            <div
                               class="cmd-ring-member"
+                              role="button"
+                              tabindex="0"
                               on:click={() => { searchQuery = addr; search(true); }}
+                              on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); searchQuery = addr; search(true); } }}
                               title="Search this address"
                             >
                               <span class="cmd-ring-index">#{i + 1}</span>
                               <span class="cmd-ring-addr">{formatHash(addr)}</span>
-                              <button 
+                              <button
                                 class="cmd-copy-btn-mini"
                                 on:click|stopPropagation={() => navigator.clipboard.writeText(addr)}
                                 title="Copy address"
                               >
                                 <Copy size={10} strokeWidth={1.5} />
                               </button>
-                            </button>
+                            </div>
                           {/each}
                         </div>
                       {:else}

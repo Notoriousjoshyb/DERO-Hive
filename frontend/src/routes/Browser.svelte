@@ -3571,16 +3571,19 @@ ${logsText || '(no logs)'}
             </div>
             <div class="browser-favorites-grid">
               {#each (showAllFavorites ? $favorites : $favorites.slice(0, 6)) as fav}
-                <button
+                <div
+                  role="button"
+                  tabindex="0"
                   on:click={() => navigateToFavorite(fav)}
+                  on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToFavorite(fav); } }}
                   class="browser-favorite-card"
                 >
                   <div class="browser-favorite-icon">
                     {#if shouldShowIcon(fav.icon)}
-                      <img 
-                        src={fav.icon} 
-                        alt="" 
-                        class="browser-favorite-icon-img" 
+                      <img
+                        src={fav.icon}
+                        alt=""
+                        class="browser-favorite-icon-img"
                         on:error={() => handleIconError(fav.icon)}
                       />
                     {:else}
@@ -3595,7 +3598,7 @@ ${logsText || '(no logs)'}
                   >
                     ×
                   </button>
-                </button>
+                </div>
               {/each}
             </div>
           </div>
@@ -3748,11 +3751,14 @@ ${logsText || '(no logs)'}
           {:else}
             <div class="browser-apps-grid">
               {#each filteredApps as app}
-                <button 
-                  class="browser-app-card" 
+                <div
+                  class="browser-app-card"
                   class:warned={warnedApps.has(app.scid)}
                   class:blocked={blockedApps.has(app.scid)}
+                  role="button"
+                  tabindex="0"
                   on:click={() => navigateToApp(app)}
+                  on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToApp(app); } }}
                 >
                   <!-- Warning/Blocked overlay -->
                   {#if warnedApps.has(app.scid)}
@@ -3835,7 +3841,7 @@ ${logsText || '(no logs)'}
                       </button>
                     </div>
                   </div>
-                </button>
+                </div>
               {/each}
             </div>
             
