@@ -398,6 +398,45 @@
             </div>
           </div>
           
+          <!-- Row actions sit between the token info and the balance, matching the
+               approved row-actions mockup: ghost squares that fade in on row
+               hover, glyph+border tint on button hover (no solid fill).
+               Gate on localWalletOpen, NOT xswdConnected: these actions mutate
+               the local wallet's tracked-token list, which is exactly the data
+               shown whenever a local wallet is open (loadTokens returns early on
+               the local path). xswdConnected is true whenever HOLOGRAM's own
+               XSWD *server* is running — always, on most setups — which hid
+               these buttons permanently rather than only for remote portfolios. -->
+          <div class="row-actions">
+            {#if !token.native && localWalletOpen}
+              <button
+                class="row-action"
+                on:click={() => openRefreshModal(token)}
+                title="Refresh metadata"
+              >
+                <RefreshCw size={13} strokeWidth={2} />
+              </button>
+            {/if}
+            {#if token.balance > 0}
+              <button
+                class="row-action"
+                on:click={() => openSendModal(token)}
+                title="Send {token.symbol || 'Token'}"
+              >
+                <ArrowUp size={13} strokeWidth={2} />
+              </button>
+            {/if}
+            {#if !token.native && localWalletOpen}
+              <button
+                class="row-action row-action-danger"
+                on:click={() => openRemoveModal(token)}
+                title="Remove"
+              >
+                <Trash2 size={13} strokeWidth={2} />
+              </button>
+            {/if}
+          </div>
+
           <div class="token-balance">
             <span class="balance-value" class:balance-unknown={token.balanceUnknown}>
               {#if $balanceMasked}
@@ -410,40 +449,6 @@
             </span>
             {#if token.symbol && !token.balanceUnknown}
               <span class="balance-symbol">{token.symbol}</span>
-            {/if}
-          </div>
-          
-          <div class="token-actions">
-            {#if token.balance > 0}
-              <button
-                class="action-btn"
-                on:click={() => openSendModal(token)}
-                title="Send {token.symbol || 'Token'}"
-              >
-                <ArrowUp size={12} />
-              </button>
-            {/if}
-            <!-- Gate on localWalletOpen, NOT xswdConnected: these actions mutate
-                 the local wallet's tracked-token list, which is exactly the data
-                 shown whenever a local wallet is open (loadTokens returns early on
-                 the local path). xswdConnected is true whenever HOLOGRAM's own
-                 XSWD *server* is running — always, on most setups — which hid
-                 these buttons permanently rather than only for remote portfolios. -->
-            {#if !token.native && localWalletOpen}
-              <button
-                class="action-btn"
-                on:click={() => openRefreshModal(token)}
-                title="Refresh metadata"
-              >
-                <RefreshCw size={12} />
-              </button>
-              <button
-                class="action-btn action-btn-danger"
-                on:click={() => openRemoveModal(token)}
-                title="Remove"
-              >
-                <Trash2 size={12} />
-              </button>
             {/if}
           </div>
         </div>
@@ -654,10 +659,6 @@
     background: var(--void-up);
   }
   
-  .token-row:hover .action-btn {
-    opacity: 1;
-  }
-  
   .token-row.native {
     background: linear-gradient(135deg, rgba(34, 211, 238, 0.05), transparent);
   }
@@ -763,37 +764,50 @@
     margin-top: 2px;
   }
   
-  .token-actions {
+  .row-actions {
     display: flex;
-    gap: var(--s-1);
+    gap: var(--s-2);
     flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 150ms ease;
   }
-  
-  .action-btn {
+
+  .token-row:hover .row-actions {
+    opacity: 1;
+  }
+
+  .row-action {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    background: var(--void-deep);
-    border: 1px solid var(--border-subtle);
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--r-sm);
     color: var(--text-3);
     cursor: pointer;
-    opacity: 0;
-    transition: all 150ms ease;
+    transition: color 150ms ease, border-color 150ms ease;
   }
-  
-  .action-btn:hover {
-    background: var(--cyan-400);
-    border-color: var(--cyan-400);
-    color: var(--void-base);
+
+  /* Pin the icon geometry explicitly: lucide SVGs inside the old action
+     buttons rendered zero-visible on some setups, so don't rely on inherited
+     sizing — force the glyph's box and stroke source. */
+  .row-action :global(svg) {
+    width: 13px;
+    height: 13px;
+    stroke: currentColor;
+    flex-shrink: 0;
   }
-  
-  .action-btn-danger:hover {
-    background: var(--status-err);
-    border-color: var(--status-err);
-    color: white;
+
+  .row-action:hover {
+    color: var(--cyan-400);
+    border-color: rgba(34, 211, 238, 0.4);
+  }
+
+  .row-action-danger:hover {
+    color: var(--status-err);
+    border-color: rgba(248, 113, 113, 0.4);
   }
   
   /* Spin Animation */
