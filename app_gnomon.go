@@ -10,9 +10,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Gnomon Functions
@@ -238,6 +241,14 @@ func (a *App) StartGnomon() map[string]interface{} {
 
 	a.logToConsole(fmt.Sprintf("[Gnomon] Connecting to daemon: %s (network: %s)", endpoint, network))
 
+	// One-time index migration: if the search-filter set changed since this DB was
+	// built (e.g. a build that widened discovery to include tokens/NFAs), the new
+	// filter would only apply to blocks indexed going forward — Gnomon never
+	// re-examines already-indexed history. Clean the existing DB so the upcoming
+	// Start re-fastsyncs the full SC snapshot under the new filter. Skipped on a
+	// fresh DB (nothing indexed yet) and when the version already matches.
+	a.migrateGnomonFilterVersionIfNeeded(network)
+
 	err := a.gnomonClient.Start(endpoint, network)
 	if err != nil {
 		a.logToConsole(fmt.Sprintf("[ERR] Gnomon start failed: %v", err))
@@ -247,12 +258,58 @@ func (a *App) StartGnomon() map[string]interface{} {
 	a.logToConsole("[OK] Gnomon indexer started successfully")
 	a.settings["gnomon_enabled"] = true
 
+	// Record the filter version now that the index is (re)building under it, so the
+	// migration above fires at most once per filter change.
+	writeFilterVersion(network)
+
 	// Start a connection monitor goroutine to provide feedback
 	go a.monitorGnomonConnection(endpoint)
 
 	return map[string]interface{}{
 		"success": true,
 		"message": "Gnomon indexer started",
+	}
+}
+
+// migrateGnomonFilterVersionIfNeeded performs the one-time index reset when the
+// active search-filter set differs from the one a network's existing index was
+// built with. It cleans the DB so the next Start re-fastsyncs under the new
+// filter; the new version is written by StartGnomon after a successful start.
+// No-op on a fresh DB (no stored version) or when the version already matches.
+func (a *App) migrateGnomonFilterVersionIfNeeded(network string) {
+	stored := readStoredFilterVersion(network)
+	if stored == "" {
+		// Fresh DB, or a pre-versioning index. For a pre-versioning index we DO
+		// want to migrate (its filter predates token discovery), but only if it
+		// actually holds data — otherwise there's nothing to re-index.
+		dir, err := gnomonDBDir(network)
+		if err != nil {
+			return
+		}
+		if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+			return // truly fresh — nothing to migrate
+		}
+	} else if stored == currentFilterVersion() {
+		return // already on the current filter — nothing to do
+	}
+
+	a.logToConsole("[Gnomon] Token discovery filter changed — re-indexing once so held tokens/NFAs are detected...")
+	// Surface a one-time progress signal so the UI can show "Updating token index…"
+	// rather than appearing to hang during the re-fastsync.
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "gnomon:reindexing", map[string]interface{}{
+			"reason":  "filter-version-change",
+			"network": network,
+		})
+	}
+
+	if a.gnomonClient.IsRunning() {
+		a.StopGnomon()
+	}
+	if err := a.gnomonClient.CleanDB(network); err != nil {
+		// Non-fatal: if the clean fails the index just keeps its old coverage; the
+		// next start still proceeds. Log so it's visible.
+		a.logToConsole(fmt.Sprintf("[Gnomon] Filter-change re-index: clean failed (%v) — continuing with existing index", err))
 	}
 }
 

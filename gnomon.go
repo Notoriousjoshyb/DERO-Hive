@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,11 +38,27 @@ type GnomonClient struct {
 
 const maxParallelBlocks = 10
 
-// TELA search filter - matches contracts with owner initialization
+// TELA search filter - matches the canonical TELA-INDEX-1/TELA-DOC-1 init() snippet
+// verbatim, so TELA app discovery only indexes those contracts.
 const gnomonSearchFilter = `Function init() Uint64
 10 IF EXISTS("owner") == 0 THEN GOTO 30
 20 RETURN 1
 30 STORE("owner", address())`
+
+// tokenSearchFilter is the broader entry that lets the token auto-scan discover
+// held tokens/NFAs. Gnomon OR-matches every filter substring (strings.Contains),
+// so adding "Function Initialize" indexes the standard token + Artificer NFA
+// (ART-NFA-MS1) families, whose initializer is "Function InitializePrivate()" —
+// the strict TELA snippet above never matches them. This is the same substring
+// Engram filters on. Curated TELA consumers re-filter at query time (isIndex), so
+// the wider index does not pollute app discovery.
+const tokenSearchFilter = `Function Initialize`
+
+// gnomonFilters is the active filter set passed to the indexer. Changing this set
+// requires a one-time resync (see migrateGnomonFilterVersionIfNeeded) because
+// Gnomon never re-examines already-indexed blocks against a new filter — only a
+// fresh fastsync applies it to the full SC snapshot.
+var gnomonFilters = []string{gnomonSearchFilter, tokenSearchFilter}
 
 // NewGnomonClient creates a new Gnomon client
 func NewGnomonClient(dbType string) *GnomonClient {
@@ -172,8 +190,9 @@ func (g *GnomonClient) Start(endpoint string, network string) error {
 	// Known exclusions (if any)
 	exclusions := []string{gnomonSCID}
 
-	// Search filter for TELA apps
-	filter := []string{gnomonSearchFilter}
+	// Search filter set: the strict TELA snippet (app discovery) plus the broader
+	// token/NFA entry (auto-scan discovery). See gnomonFilters.
+	filter := gnomonFilters
 
 	// Fastsync configuration
 	// For simulator mode, disable fastsync to ensure we index from block 0
@@ -1051,6 +1070,59 @@ func (g *GnomonClient) CleanDB(network string) error {
 	}
 
 	return nil
+}
+
+// gnomonDBDir returns the on-disk Gnomon DB directory for a network, matching the
+// paths used by Start/CleanDB.
+func gnomonDBDir(network string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	baseDir := filepath.Join(homeDir, ".dero", "hologram", "datashards")
+	switch strings.ToLower(network) {
+	case "mainnet":
+		return filepath.Join(baseDir, "gnomon_mainnet"), nil
+	case "simulator":
+		return filepath.Join(baseDir, "gnomon_simulator"), nil
+	default:
+		return filepath.Join(baseDir, "gnomon"), nil
+	}
+}
+
+// currentFilterVersion is a stable fingerprint of the active filter set. If the
+// filter set changes in a future build, this hash changes, which is what triggers
+// the one-time resync so the new filter applies to already-indexed history.
+func currentFilterVersion() string {
+	sum := sha256.Sum256([]byte(strings.Join(gnomonFilters, "\x00")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// readStoredFilterVersion returns the filter version recorded for a network's
+// existing index, or "" if none (fresh DB or pre-versioning build).
+func readStoredFilterVersion(network string) string {
+	dir, err := gnomonDBDir(network)
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "filter_version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// writeFilterVersion records the active filter version next to a network's index
+// so a later start can detect a filter change. Best-effort; failure is non-fatal.
+func writeFilterVersion(network string) {
+	dir, err := gnomonDBDir(network)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "filter_version"), []byte(currentFilterVersion()), 0600)
 }
 
 // GetMyDOCs returns all DOCs owned by the specified wallet address

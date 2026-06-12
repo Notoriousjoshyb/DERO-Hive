@@ -1,8 +1,62 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
+
+// ============================================================================
+// Search-filter / token-discovery tests
+// ============================================================================
+
+// TestTokenFilterMatchesArtificerNFA locks in the reason the token auto-scan can
+// discover held NFAs: the Artificer ART-NFA-MS1 initializer contains the broad
+// tokenSearchFilter substring but NOT the strict TELA snippet. If a future edit
+// narrows tokenSearchFilter past this, NFAs silently stop auto-detecting.
+func TestTokenFilterMatchesArtificerNFA(t *testing.T) {
+	// Representative ART-NFA-MS1 header (as seen on-chain for Desperado/Gun NFAs).
+	artificerInit := "Function InitializePrivate() Uint64\n10 IF EXISTS(\"owner\") == 0 THEN GOTO 20 ELSE GOTO 999\n20 STORE(\"owner\", SIGNER())"
+
+	if !strings.Contains(artificerInit, tokenSearchFilter) {
+		t.Errorf("tokenSearchFilter %q must match the Artificer NFA initializer — NFAs would not auto-detect", tokenSearchFilter)
+	}
+	if strings.Contains(artificerInit, gnomonSearchFilter) {
+		t.Error("strict gnomonSearchFilter must NOT match the Artificer NFA initializer (it's why the wider filter was needed)")
+	}
+}
+
+// TestGnomonFiltersContainsBoth ensures the active filter set keeps both the
+// strict TELA filter (app discovery) and the broad token filter (auto-scan).
+func TestGnomonFiltersContainsBoth(t *testing.T) {
+	var hasStrict, hasToken bool
+	for _, f := range gnomonFilters {
+		if f == gnomonSearchFilter {
+			hasStrict = true
+		}
+		if f == tokenSearchFilter {
+			hasToken = true
+		}
+	}
+	if !hasStrict {
+		t.Error("gnomonFilters must include gnomonSearchFilter for TELA app discovery")
+	}
+	if !hasToken {
+		t.Error("gnomonFilters must include tokenSearchFilter for token/NFA auto-detect")
+	}
+}
+
+// TestFilterVersionStable verifies the version is non-empty and deterministic for
+// a given filter set (so the migration fires on change, not spuriously).
+func TestFilterVersionStable(t *testing.T) {
+	v1 := currentFilterVersion()
+	v2 := currentFilterVersion()
+	if v1 == "" {
+		t.Error("currentFilterVersion must be non-empty")
+	}
+	if v1 != v2 {
+		t.Errorf("currentFilterVersion must be deterministic: %q != %q", v1, v2)
+	}
+}
 
 // ============================================================================
 // GnomonClient Constructor Tests

@@ -210,6 +210,8 @@
           gnomonIndexedHeight: status.gnomon.indexed_height,
           gnomonChainHeight: status.gnomon.chain_height,
           gnomonProgress: status.gnomon.progress,
+          // Clear the one-time re-index flag once the index has caught up.
+          gnomonReindexing: state.gnomonReindexing && status.gnomon.running && (status.gnomon.progress || 0) < 100,
         }));
       }
       if (status.wallet) {
@@ -305,6 +307,14 @@
       }
     };
     window.addEventListener('status-click', handleStatusClick);
+
+    // One-time re-index after a token-discovery filter change: flag it so the UI
+    // shows "Updating token index…" instead of appearing to hang. Cleared in the
+    // status:update gnomon block once the index catches up.
+    EventsOn("gnomon:reindexing", () => {
+      appState.update(state => ({ ...state, gnomonReindexing: true }));
+      toast.info('Updating token index to detect more tokens — this runs once.');
+    });
 
     // Listen for toast notifications from backend
     EventsOn("toast:show", (data) => {

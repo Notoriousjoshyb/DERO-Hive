@@ -207,6 +207,7 @@ export const appState = writable({
   gnomonIndexedHeight: 0,
   gnomonChainHeight: 0,
   gnomonAppsLoaded: false, // True when GetDiscoveredApps() has completed at least once
+  gnomonReindexing: false, // True during the one-time filter-change re-index (token discovery update)
   telaSession: null,
   browserSession: null,
   appDiscoveryCache: {
