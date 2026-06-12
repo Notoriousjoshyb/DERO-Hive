@@ -27,6 +27,7 @@ const settingsKeyMap = {
   'hide_address': 'hideAddress',
   'avatar_hidden': 'avatarHidden',
   'privacy_mode': 'privacyMode',
+  'signal_dark': 'signalDark',
 };
 
 // Reverse map for saving (frontend → backend)
@@ -252,15 +253,18 @@ export const settingsState = writable({
   hideBalance: false,
   hideAddress: false,
   avatarHidden: false,
-  privacyMode: false,
+  privacyMode: false, // network seal (Privacy Mode) — mirrors the backend filter state
+  signalDark: false,  // display masking (Signal Dark) — independent of the network seal
 });
 
 // Effective privacy masks — single source of truth for "is this masked right now".
-// Signal Dark (privacyMode) is the one privacy model: when armed it masks every
+// Signal Dark (signalDark) is the display-privacy model: when armed it masks every
 // sensitive field at once. (The legacy per-field hideBalance/hideAddress toggles
-// were retired in favor of this single control.) Components read these for *display*.
-export const addressMasked = derived(settingsState, $s => $s.privacyMode);
-export const balanceMasked = derived(settingsState, $s => $s.privacyMode);
+// were retired in favor of this single control.) It is deliberately independent of
+// privacyMode, the NETWORK seal toggled in Settings — masking what's on screen and
+// sealing egress are different decisions. Components read these for *display*.
+export const addressMasked = derived(settingsState, $s => $s.signalDark);
+export const balanceMasked = derived(settingsState, $s => $s.signalDark);
 
 // Load settings from backend and sync to frontend store
 export async function loadSettings() {

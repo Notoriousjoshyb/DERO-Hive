@@ -108,23 +108,23 @@
 
   // Signal Dark (stealth mode) — the wallet identity loses signal lock.
   // Armed from the wild-card panel ("GO DARK"); masks address, balance, tokens and the
-  // identity core in one synchronized beat. Reuses the existing privacyMode setting, so
-  // persistence (app_settings.go / appState.js) is unchanged.
+  // identity core in one synchronized beat. Backed by its own signal_dark setting —
+  // deliberately independent of privacy_mode, the NETWORK seal toggled in Settings.
   let signalDropping = false; // drives the one-shot power-down/up flicker on the core
 
   async function toggleSignalDark(event) {
     event?.stopPropagation();
-    const goingDark = !$settingsState.privacyMode;
+    const goingDark = !$settingsState.signalDark;
     signalDropping = true;
-    await saveSetting('privacyMode', goingDark);
+    await saveSetting('signalDark', goingDark);
     toast.info(goingDark ? 'Signal dark — identity masked' : 'Signal restored');
     setTimeout(() => { signalDropping = false; }, 620);
   }
 
-  $: isPrivacyActive = $settingsState.privacyMode;
-  $: isAddressHidden = isPrivacyActive || $settingsState.hideAddress;
-  $: isBalanceHidden = isPrivacyActive || $settingsState.hideBalance;
-  $: isAvatarHidden = isPrivacyActive || $settingsState.avatarHidden;
+  $: isSignalDark = $settingsState.signalDark;
+  $: isAddressHidden = isSignalDark || $settingsState.hideAddress;
+  $: isBalanceHidden = isSignalDark || $settingsState.hideBalance;
+  $: isAvatarHidden = isSignalDark || $settingsState.avatarHidden;
   
   // Load avatar when wallet connects or address changes
   $: if (walletDisplayAddress && walletIsConnected) {
@@ -1168,8 +1168,8 @@
             <span class="rail-tooltip-value tt-ok">
               {isAddressHidden ? '••••••••' : formatAddressForDisplay(walletDisplayAddress)}
             </span>
-            <span class="rail-tooltip-value" class:tt-dim={!isPrivacyActive} class:tt-dark={isPrivacyActive}>
-              {isPrivacyActive ? 'SIGNAL DARK' : 'Wallet Ready'}
+            <span class="rail-tooltip-value" class:tt-dim={!isSignalDark} class:tt-dark={isSignalDark}>
+              {isSignalDark ? 'SIGNAL DARK' : 'Wallet Ready'}
             </span>
             {#if connectedApps.length > 0}
               <span class="rail-tooltip-value tt-dim">{connectedApps.length} {connectedApps.length === 1 ? 'app' : 'apps'}</span>
@@ -1223,7 +1223,7 @@
             {/if}
           </span>
           <span class="wallet-anchor-status">
-            {#if isPrivacyActive}
+            {#if isSignalDark}
               <span class="status-dark">SIGNAL DARK</span>
             {:else if $appState.pendingXSWDRequests?.length > 0}
               <span class="status-warn">{$appState.pendingXSWDRequests.length === 1 ? 'App requesting access' : `${$appState.pendingXSWDRequests.length} apps requesting access`}</span>
@@ -1253,20 +1253,20 @@
     
     <!-- Wallet Menu - Rendered in Sidebar -->
     {#if showWalletMenu && !collapsed}
-      <div class="wallet-menu identity-console" class:stealth={isPrivacyActive} on:click|stopPropagation>
+      <div class="wallet-menu identity-console" class:stealth={isSignalDark} on:click|stopPropagation>
         <!-- Identity console — the lock-reactor core IS the privacy control -->
         <div class="console-identity" class:signal-dropping={signalDropping}>
           <button
             class="reactor-core"
-            class:armed={isPrivacyActive}
+            class:armed={isSignalDark}
             class:signal-dropping={signalDropping}
             on:click|stopPropagation={toggleSignalDark}
-            title={isPrivacyActive ? 'Stealth on — tap to go live' : 'Tap to go dark'}
-            aria-label={isPrivacyActive ? 'Privacy mode on — tap to disable' : 'Tap to enable privacy mode'}
+            title={isSignalDark ? 'Stealth on — tap to go live' : 'Tap to go dark'}
+            aria-label={isSignalDark ? 'Privacy mode on — tap to disable' : 'Tap to enable privacy mode'}
           >
             <span class="reactor-sonar" aria-hidden="true"></span>
             <span class="reactor-glyph">
-              {#if isPrivacyActive}
+              {#if isSignalDark}
                 <Lock size={26} strokeWidth={1.75} />
               {:else}
                 <Unlock size={26} strokeWidth={1.75} />

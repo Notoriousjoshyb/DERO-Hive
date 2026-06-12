@@ -32,6 +32,7 @@ var persistedSettingKeys = []string{
 	"hide_address",
 	"avatar_hidden",
 	"privacy_mode",
+	"signal_dark",
 }
 
 // Settings Functions

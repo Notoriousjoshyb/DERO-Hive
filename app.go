@@ -112,7 +112,8 @@ func NewApp() *App {
 			"hide_balance":       false,
 			"hide_address":       false,
 			"avatar_hidden":      false,
-			"privacy_mode":       false,
+			"privacy_mode":       false, // network seal (Privacy Mode)
+			"signal_dark":        false, // display masking (Signal Dark) — independent of the seal
 		},
 		history:     make([]string, 0),
 		consoleLogs: make([]ConsoleLog, 0),
