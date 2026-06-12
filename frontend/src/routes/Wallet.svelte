@@ -8,7 +8,7 @@
     Wallet, Plus, RotateCcw, AlertTriangle, Check, FolderOpen, Pickaxe,
     LayoutDashboard, QrCode, History, Coins, Users, FileSignature, RefreshCw,
     Loader2, Download, Search, ChevronRight, ExternalLink, Edit, Trash2, Send, Shield,
-    Key, Eye, X
+    Key, Eye, X, MapPin
   } from 'lucide-svelte';
   
   import TokenPortfolio from '../lib/components/TokenPortfolio.svelte';
@@ -2769,6 +2769,15 @@
                         </span>
                       </div>
 
+                      <!-- Ring Size (attribution context for the incoming sender row;
+                           outgoing entries don't carry ring data) -->
+                      {#if tx.incoming && tx.ringsize > 0}
+                        <div class="tx-detail-row">
+                          <span class="tx-detail-label">Ring Size</span>
+                          <span class="tx-detail-value">{tx.ringsize}</span>
+                        </div>
+                      {/if}
+
                       <!-- Amount -->
                       <div class="tx-detail-row">
                         <span class="tx-detail-label">Amount</span>
@@ -2809,10 +2818,25 @@
                         </div>
                       {/if}
 
-                      <!-- Sender (for incoming) -->
+                      <!-- Sender (for incoming) — full-span row with attribution chip.
+                           Attribution is structurally pinned only at ring 2; larger rings
+                           carry a sender-reported claim (1 of N−1 other ring members). -->
                       {#if tx.incoming && tx.sender}
-                        <div class="tx-detail-row">
-                          <span class="tx-detail-label">Sender</span>
+                        <div class="tx-detail-row tx-detail-sender-row">
+                          <div class="tx-detail-label-row">
+                            <span class="tx-detail-label">Sender</span>
+                            {#if tx.ringsize > 0}
+                              {#if tx.sender_verified}
+                                <span class="att-chip att-chip-pinned" title="Ring 2 — attribution is structural: the only other ring member is the sender">
+                                  <MapPin size={10} /> Pinned · Ring {tx.ringsize}
+                                </span>
+                              {:else}
+                                <span class="att-chip att-chip-claimed" title="Self-reported by the sender. Any of the {tx.ringsize - 1} other ring members could have sent this.">
+                                  Claimed · 1 of {tx.ringsize - 1}
+                                </span>
+                              {/if}
+                            {/if}
+                          </div>
                           <div class="tx-detail-value-row">
                             <code class="tx-detail-value tx-detail-address">{tx.sender}</code>
                             <button class="btn-icon-sm" on:click={() => copyToClipboard(tx.sender, 'Sender address copied!')} title="Copy address">
@@ -5526,7 +5550,7 @@
   }
   .tx-detail-value-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: var(--s-2);
   }
   .tx-detail-value-row .btn-icon-sm {
@@ -5545,6 +5569,41 @@
     font-size: 11px;
     line-height: 1.4;
   }
+  /* Sender attribution: the sender row spans the panel so the address holds one
+     line at the shipped 1000px column (wraps via break-all below, never clips). */
+  .tx-detail-sender-row { grid-column: 1 / -1; }
+  .tx-detail-label-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+  /* Attestation chip — badge-family DNA (r-sm, 600, 0.05em). Claimed is the quiet
+     NORMAL state, never a warning; pinned is distinct but calm (no glow). */
+  .att-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-1);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: var(--r-sm);
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  .att-chip-pinned {
+    color: var(--cyan-400);
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid rgba(34, 211, 238, 0.25);
+  }
+  .att-chip-claimed {
+    color: var(--text-4);
+    background: var(--void-up);
+    border: 1px solid var(--border-subtle);
+  }
+  .att-chip :global(svg) { flex: none; }
   .tx-detail-direction {
     font-weight: 500;
   }

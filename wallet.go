@@ -1042,9 +1042,13 @@ func (a *App) GetTransactionHistory(limit int) map[string]interface{} {
 			"coinbase":    e.Coinbase,
 			"destination": e.Destination,
 			"sender":      e.Sender,
-			"proof":       e.Proof,
-			"status":      e.Status,
-			"time":        e.Time.Unix(),
+			// Attribution trust: sender is structurally pinned only at ring size 2;
+			// for larger rings it is sender-reported (see rpc.Entry in derohe fork).
+			"sender_verified": e.SenderVerified,
+			"ringsize":        e.RingSize,
+			"proof":           e.Proof,
+			"status":          e.Status,
+			"time":            e.Time.Unix(),
 		}
 
 		// Extract payload comment if available
