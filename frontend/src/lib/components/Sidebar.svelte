@@ -122,6 +122,9 @@
   }
 
   $: isSignalDark = $settingsState.signalDark;
+  // Network seal (Privacy Mode) — surfaced on the anchor status line when nothing
+  // more urgent is showing. Signal Dark outranks it; warnings outrank both.
+  $: isPrivacySealed = $settingsState.privacyMode;
   $: isAddressHidden = isSignalDark || $settingsState.hideAddress;
   $: isBalanceHidden = isSignalDark || $settingsState.hideBalance;
   $: isAvatarHidden = isSignalDark || $settingsState.avatarHidden;
@@ -1168,14 +1171,16 @@
             <span class="rail-tooltip-value tt-ok">
               {isAddressHidden ? '••••••••' : formatAddressForDisplay(walletDisplayAddress)}
             </span>
-            <span class="rail-tooltip-value" class:tt-dim={!isSignalDark} class:tt-dark={isSignalDark}>
-              {isSignalDark ? 'SIGNAL DARK' : 'Wallet Ready'}
+            <span class="rail-tooltip-value" class:tt-dim={!isSignalDark && !isPrivacySealed} class:tt-dark={isSignalDark} class:tt-seal={!isSignalDark && isPrivacySealed}>
+              {isSignalDark ? 'SIGNAL DARK' : isPrivacySealed ? 'PRIVACY MODE' : 'Wallet Ready'}
             </span>
             {#if connectedApps.length > 0}
               <span class="rail-tooltip-value tt-dim">{connectedApps.length} {connectedApps.length === 1 ? 'app' : 'apps'}</span>
             {/if}
           {:else if walletMode === 'engram'}
             <span class="rail-tooltip-value tt-ok">Engram Connected</span>
+          {:else if isPrivacySealed}
+            <span class="rail-tooltip-value tt-seal">PRIVACY MODE</span>
           {:else if xswdReadyNoWallet}
             <span class="rail-tooltip-value tt-cyan">XSWD Active</span>
           {:else}
@@ -1232,6 +1237,8 @@
                 <span class="status-warn">Network mismatch ({walletAddressNetwork === 'simulator' ? 'deto' : 'dero'})</span>
               {:else if effectiveNetwork === 'simulator'}
                 <span class="status-sim">Simulator Wallet</span>
+              {:else if isPrivacySealed}
+                <span class="status-seal">PRIVACY MODE</span>
               {:else}
                 <span class="status-ok">Wallet Ready</span>
               {/if}
@@ -1241,6 +1248,8 @@
               {/if}
             {:else if walletMode === 'engram'}
               <span class="status-ok">Engram Connected</span>
+            {:else if isPrivacySealed}
+              <span class="status-seal">PRIVACY MODE</span>
             {:else if xswdReadyNoWallet}
               <span class="status-xswd">XSWD Active</span>
             {:else}
@@ -3342,6 +3351,20 @@
 
   .rail-tooltip-value.tt-dark {
     color: var(--cyan-400);
+    letter-spacing: 0.1em;
+  }
+
+  /* Network-seal (Privacy Mode) status label — same treatment as SIGNAL DARK, armed-green. */
+  .wallet-anchor-status .status-seal {
+    color: var(--status-ok);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .rail-tooltip-value.tt-seal {
+    color: var(--status-ok);
     letter-spacing: 0.1em;
   }
 </style>

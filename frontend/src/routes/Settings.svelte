@@ -697,6 +697,9 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
       const result = await SetPrivacyMode(!privacyModeEnabled);
       if (result.success) {
         privacyModeEnabled = result.enabled;
+        // Sync the store so the sidebar anchor reflects the seal immediately
+        // (loadSettings only maps privacy_mode on startup).
+        settingsState.update(s => ({ ...s, privacyMode: result.enabled }));
       }
     } catch (e) {
       console.error('Failed to toggle privacy mode:', e);
