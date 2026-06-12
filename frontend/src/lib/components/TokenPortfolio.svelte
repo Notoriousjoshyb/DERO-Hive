@@ -114,6 +114,16 @@
     scanTotal = 0;
     scanFound = 0;
   }
+
+  // Re-attempt the first-view auto-scan once Gnomon's index becomes ready. If the
+  // wallet was opened during a re-index (e.g. right after a filter-change update),
+  // the earlier maybeAutoScan bailed without consuming its one-shot guard; this
+  // fires it for real the moment the index catches up.
+  $: if (localWalletOpen && $appState.gnomonRunning && !$appState.gnomonReindexing
+        && $appState.gnomonChainHeight > 0
+        && $appState.gnomonChainHeight - ($appState.gnomonIndexedHeight || 0) <= 5) {
+    maybeAutoScan();
+  }
   
   async function checkAndLoad() {
     try {
@@ -236,6 +246,16 @@
     if (!addr || autoScannedWallets.has(addr)) return;
     const onlyNative = tokens.length <= 1 && tokens.every(t => t.native);
     if (!onlyNative) return;
+    // Don't auto-scan against a half-built index. Right after a filter-change
+    // re-index (or any cold start), Gnomon's candidate set isn't complete yet, so
+    // a scan would find nothing and falsely conclude the wallet holds no tokens.
+    // Wait until the index is caught up — a reactive trigger re-runs this once
+    // gnomon sync completes. Crucially, do NOT consume the one-shot guard until we
+    // actually run against a ready index.
+    if (!$appState.gnomonRunning || $appState.gnomonReindexing) return;
+    const idx = $appState.gnomonIndexedHeight || 0;
+    const chain = $appState.gnomonChainHeight || 0;
+    if (chain > 0 && chain - idx > 5) return; // index still building
     autoScannedWallets.add(addr);
     try {
       const result = await ScanWalletForTokens();
