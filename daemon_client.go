@@ -29,24 +29,22 @@ type DaemonClient struct {
 	requestID uint64
 }
 
-// NewDaemonClient creates a new daemon RPC client
+// NewDaemonClient creates a new daemon RPC client.
+// The HTTP client is gated by Privacy Mode at the dialer (privacy_transport.go).
 func NewDaemonClient(endpoint string) *DaemonClient {
 	return &DaemonClient{
-		endpoint: endpoint,
-		client: &http.Client{
-			Timeout: 30 * time.Second, // Reasonable timeout for blockchain queries
-		},
+		endpoint:  endpoint,
+		client:    newPrivacyHTTPClient(30 * time.Second), // Reasonable timeout for blockchain queries
 		requestID: 0,
 	}
 }
 
-// NewDaemonClientWithTimeout creates a daemon client with a custom timeout
+// NewDaemonClientWithTimeout creates a daemon client with a custom timeout.
+// The HTTP client is gated by Privacy Mode at the dialer (privacy_transport.go).
 func NewDaemonClientWithTimeout(endpoint string, timeout time.Duration) *DaemonClient {
 	return &DaemonClient{
-		endpoint: endpoint,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		endpoint:  endpoint,
+		client:    newPrivacyHTTPClient(timeout),
 		requestID: 0,
 	}
 }

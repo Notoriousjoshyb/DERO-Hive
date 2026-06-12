@@ -190,6 +190,13 @@ func (a *App) setupNetworkForDeployment(wallet *walletapi.Wallet_Disk, isSimulat
 			endpoint = strings.TrimPrefix(endpoint, "https://")
 		}
 
+		// Privacy Mode: refuse a non-allowlisted remote daemon before walletapi opens
+		// its own socket. The dialer gate would block it anyway; checking here first
+		// surfaces the one-click allow-this-host opt-in instead of a bare dial error.
+		if !a.checkDaemonEndpointPolicy(endpoint) {
+			return "", fmt.Errorf("daemon endpoint blocked by Privacy Mode: %s", endpoint)
+		}
+
 		// Non-simulator: Connect walletapi normally
 		if err := walletapi.Connect(endpoint); err != nil {
 			a.logToConsole(fmt.Sprintf("[WARN] walletapi.Connect failed: %v", err))

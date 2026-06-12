@@ -15,7 +15,6 @@ const settingsKeyMap = {
   'daemon_endpoint': 'daemonEndpoint',
   'network': 'network',
   'integrated_wallet': 'integratedWallet',
-  'cypherpunk_mode': 'cypherpunkMode',
   'last_wallet_path': 'lastWalletPath',
   // FirstRunWizard settings
   'use_embedded_node': 'useEmbeddedNode',
@@ -248,7 +247,6 @@ export const settingsState = writable({
   gnomonEnabled: false,
   network: 'mainnet',
   daemonEndpoint: 'http://127.0.0.1:10102',
-  cypherpunkMode: false,
   integratedWallet: true,
   lastWalletPath: '', // Store the last used wallet path for quick connection
   hideBalance: false,

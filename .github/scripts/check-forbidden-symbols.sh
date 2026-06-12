@@ -22,6 +22,10 @@ fi
 EXCLUDE_PATHSPECS=(
   ":(exclude)${LIST}"
   ":(exclude)${SELF}"
+  # Compiled artifacts contain symbol strings but aren't source; never committed,
+  # but excluded defensively so a stray force-add can't trip the guard.
+  ":(exclude)bin/**"
+  ":(exclude)build/**"
 )
 
 violations=0
@@ -34,8 +38,15 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
   line="${line//$'\r'/}"
   [ -z "$line" ] && continue
 
-  # Optional scope: symbol::pathspec
-  if [[ "$line" == *"::"* ]]; then
+  # Optional scope:
+  #   symbol@@<raw git pathspec>   — passed verbatim (preserves a leading ':', so
+  #                                  ':(exclude)foo.go' forbids everywhere except foo.go)
+  #   symbol::<glob>               — include-only glob (leading ':' would be stripped)
+  if [[ "$line" == *"@@"* ]]; then
+    symbol="${line%%@@*}"
+    scope="${line##*@@}"
+    matches="$(git grep -n -E "$symbol" -- "$scope" "${EXCLUDE_PATHSPECS[@]}" 2>/dev/null || true)"
+  elif [[ "$line" == *"::"* ]]; then
     symbol="${line%%::*}"
     scope="${line##*::}"
     matches="$(git grep -n -E "$symbol" -- "$scope" "${EXCLUDE_PATHSPECS[@]}" 2>/dev/null || true)"

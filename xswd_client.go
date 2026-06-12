@@ -89,8 +89,8 @@ func (c *XSWDClient) Connect() error {
         c.cancel = cancel
     }
 
-	// Create WebSocket connection
-	conn, _, err := websocket.DefaultDialer.Dial(c.endpoint, nil)
+	// Create WebSocket connection (gated by Privacy Mode at the dialer; see privacy_transport.go)
+	conn, _, err := privacyWSDialer().Dial(c.endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to XSWD: %w", err)
 	}

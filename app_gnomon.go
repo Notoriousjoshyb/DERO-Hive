@@ -241,6 +241,12 @@ func (a *App) StartGnomon() map[string]interface{} {
 
 	a.logToConsole(fmt.Sprintf("[Gnomon] Connecting to daemon: %s (network: %s)", endpoint, network))
 
+	// Privacy Mode: Gnomon's indexer dials the daemon over its own WebSocket (no
+	// dialer hook), so validate the endpoint before Start opens that socket.
+	if !a.checkDaemonEndpointPolicy(endpoint) {
+		return ErrorResponse(fmt.Errorf("daemon endpoint %s blocked by Privacy Mode (allowlist the host to permit it)", endpoint))
+	}
+
 	// One-time index migration: if the search-filter set changed since this DB was
 	// built (e.g. a build that widened discovery to include tokens/NFAs), the new
 	// filter would only apply to blocks indexed going forward — Gnomon never

@@ -430,10 +430,6 @@ export function GetCurrentWalletPath() {
   return window['go']['main']['App']['GetCurrentWalletPath']();
 }
 
-export function GetCypherpunkMode() {
-  return window['go']['main']['App']['GetCypherpunkMode']();
-}
-
 export function GetDevSupportStats() {
   return window['go']['main']['App']['GetDevSupportStats']();
 }
@@ -588,6 +584,10 @@ export function GetPermissionTypes() {
 
 export function GetPersonalTransfers(arg1) {
   return window['go']['main']['App']['GetPersonalTransfers'](arg1);
+}
+
+export function GetPrivacyMode() {
+  return window['go']['main']['App']['GetPrivacyMode']();
 }
 
 export function GetRandomSmartContracts(arg1) {
@@ -1162,10 +1162,6 @@ export function SetContentFilterConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7,
   return window['go']['main']['App']['SetContentFilterConfig'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
-export function SetCypherpunkMode(arg1) {
-  return window['go']['main']['App']['SetCypherpunkMode'](arg1);
-}
-
 export function SetDevSupportEnabled(arg1) {
   return window['go']['main']['App']['SetDevSupportEnabled'](arg1);
 }
@@ -1208,6 +1204,10 @@ export function SetNodePorts(arg1, arg2) {
 
 export function SetOfflineCacheEnabled(arg1) {
   return window['go']['main']['App']['SetOfflineCacheEnabled'](arg1);
+}
+
+export function SetPrivacyMode(arg1) {
+  return window['go']['main']['App']['SetPrivacyMode'](arg1);
 }
 
 export function SetSearchMinLikes(arg1) {

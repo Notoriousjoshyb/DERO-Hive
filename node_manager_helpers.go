@@ -142,8 +142,16 @@ func (a *App) buildNodeArgs(networkMode NetworkMode, fullDataDir string, netConf
 			a.logToConsole(fmt.Sprintf("[Node] Pruning history older than %d blocks", nodeManager.pruneHistory))
 		}
 		if nodeManager.syncNodeEndpoint != "" {
-			args = append(args, "--sync-node", nodeManager.syncNodeEndpoint)
-			a.logToConsole(fmt.Sprintf("[SYNC] Using trusted node for sync: %s", nodeManager.syncNodeEndpoint))
+			// Privacy Mode: the node's P2P sync (--p2p-bind, above) is legitimate DERO
+			// traffic and stays on. But a user-supplied remote --sync-node is a directed
+			// outbound to a single chosen host — refuse it unless allowlisted, so the
+			// shield can't be bypassed by pinning sync to an arbitrary remote.
+			if allowed, reason := isEndpointAllowed(nodeManager.syncNodeEndpoint); allowed {
+				args = append(args, "--sync-node", nodeManager.syncNodeEndpoint)
+				a.logToConsole(fmt.Sprintf("[SYNC] Using trusted node for sync: %s", nodeManager.syncNodeEndpoint))
+			} else {
+				a.logToConsole(fmt.Sprintf("[SHIELD] Privacy Mode: ignoring remote --sync-node %s (%s); node will sync via the DERO P2P network", nodeManager.syncNodeEndpoint, reason))
+			}
 		}
 	}
 

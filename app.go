@@ -144,11 +144,22 @@ func (a *App) shutdown(ctx context.Context) {
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Install the Privacy Mode transport chokepoint before any client connects, so
+	// every outbound HTTP/WS connection is gated at the dialer (no-op while the mode is
+	// off). See privacy_transport.go.
+	installPrivacyTransport(a)
+
 	a.logToConsole("[START] TELA Browser starting up...")
 
 	// Load persisted settings (daemon_endpoint, network, etc.) before any connections
 	// This ensures user-configured endpoints survive app restarts
 	a.loadSettings()
+
+	// Re-arm Privacy Mode from persisted settings before anything dials out
+	// (reconcileDaemonEndpoint below tests the daemon connection). Without this,
+	// an enabled kill switch silently disarms on every restart.
+	a.restorePrivacyModeFromSettings()
 
 	// Reconcile daemon_endpoint with the actual network after loading persisted settings.
 	// Bug #39 fix: persisted settings may contain a stale endpoint (e.g. simulator :20000)

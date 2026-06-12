@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1004,7 +1003,7 @@ func (g *GnomonClient) SearchCodeLine(line string) []map[string]any {
 func queryDaemonHeight(endpoint string) int64 {
 	url := fmt.Sprintf("http://%s/json_rpc", endpoint)
 	body := []byte(`{"jsonrpc":"2.0","id":"1","method":"DERO.GetInfo"}`)
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := newPrivacyHTTPClient(3 * time.Second) // gated by Privacy Mode (privacy_transport.go)
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return -1

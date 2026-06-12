@@ -8,7 +8,7 @@
     DetectRunningNode, CheckDerodStatus,
     StartNode, StopNode, GetNodeStatus, GetSyncProgress, TestAndConnectEndpoint,
     GetConnectedApps, RevokeAppPermissions, RevokeAppPermission, GetPermissionTypes,
-    SetCypherpunkMode, GetNetworkFilterStatus, AddAllowedHost, RemoveAllowedHost,
+    SetPrivacyMode, GetNetworkFilterStatus, AddAllowedHost, RemoveAllowedHost,
     GetConnectionLog, ClearConnectionLog, GetActiveConnections,
     IsEpochEnabled, SetEpochEnabled, GetEpochStats, SetEpochConfig, InitializeEpoch,
     GetDevSupportStatus, GetDevSupportStats, SetDevSupportEnabled, IsDevSupportEnabled,
@@ -694,7 +694,7 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   
   async function togglePrivacyMode() {
     try {
-      const result = await SetCypherpunkMode(!privacyModeEnabled);
+      const result = await SetPrivacyMode(!privacyModeEnabled);
       if (result.success) {
         privacyModeEnabled = result.enabled;
       }
@@ -2823,7 +2823,7 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
             <div class="settings-row">
               <div class="settings-row-info">
                 <div class="settings-row-label">Privacy Mode</div>
-                <div class="settings-row-desc">Block all non-DERO network connections</div>
+                <div class="settings-row-desc">Seal HOLOGRAM's own egress to DERO + localhost</div>
             </div>
                 <input
                   type="checkbox"
@@ -2834,7 +2834,7 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
           </div>
           
           {#if privacyModeEnabled}
-              <div class="alert alert-success">Only DERO network and whitelisted hosts are allowed</div>
+              <div class="alert alert-success">App-level egress sealed — only DERO and allowlisted hosts. TELA dApps in the WebView and the embedded derod node keep their own network access.</div>
           {:else}
               <div class="alert alert-info">All network connections are allowed</div>
           {/if}

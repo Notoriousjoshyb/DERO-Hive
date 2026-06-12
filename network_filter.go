@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -39,15 +40,159 @@ var networkFilter = &NetworkFilter{
 		"0.0.0.0",
 		"::1",
 	},
-	connectionLog: make([]ConnectionLogEntry, 0),
+	connectionLog: make([]ConnectionLogEntry, 0, 1000),
 }
 
-// SetCypherpunkMode enables or disables Cypherpunk Mode
-func (a *App) SetCypherpunkMode(enabled bool) map[string]interface{} {
-	networkFilter.Lock()
-	defer networkFilter.Unlock()
+// deroPorts is the set of ports that carry legitimate DERO/local traffic, used by
+// the address-level allowlist (isAddrAllowed). A connection to one of these ports on
+// an allowed host is permitted in Privacy Mode; everything else is blocked.
+//   10101 P2P · 10102 daemon RPC · 20000/20001 simulator RPC/P2P · 44326 XSWD · 9190-9199 Gnomon WS
+var deroPorts = map[string]bool{
+	"10101": true,
+	"10102": true,
+	"20000": true,
+	"20001": true,
+	"44326": true,
+}
 
+// isDEROPort reports whether port is a known DERO/local service port (including the
+// 9190-9199 Gnomon WS query range).
+func isDEROPort(port string) bool {
+	if deroPorts[port] {
+		return true
+	}
+	// Gnomon WS query server auto-scans 9190-9199.
+	if len(port) == 4 && strings.HasPrefix(port, "919") {
+		return true
+	}
+	return false
+}
+
+// isAddrAllowed is the address-level policy decision used by the transport-layer
+// chokepoint (privacyDialContext). host is a resolved hostname/IP, port is numeric.
+//
+// This is the OFF fast-path: when Privacy Mode is disabled it returns allow
+// immediately, before any allowlist work — guaranteeing zero behavior change for the
+// majority who never enable it.
+//
+// When enabled, the gate is the HOST: only an allowlisted host passes (exact match,
+// no substring spoofing — the old isDEROConnection let https://dero.evil.com through).
+// The allowlist holds the localhost defaults plus any remote host the user explicitly
+// opted into via AddAllowedHost.
+//
+// Loopback hosts are unrestricted by port (a connection to 127.0.0.1 can't leave the
+// machine). For an opted-in REMOTE host, we additionally require a known DERO service
+// port — so allowlisting your remote node's host doesn't also open it on :443 or any
+// arbitrary port. This keeps the opt-in scoped to DERO traffic.
+func isAddrAllowed(host, port string) (bool, string) {
+	networkFilter.RLock()
+	enabled := networkFilter.enabled
+	allowedHosts := networkFilter.allowedHosts
+	networkFilter.RUnlock()
+
+	if !enabled {
+		return true, "Privacy Mode disabled"
+	}
+
+	host = canonicalHost(host)
+
+	allowlisted := false
+	for _, allowed := range allowedHosts {
+		if host == canonicalHost(allowed) {
+			allowlisted = true
+			break
+		}
+	}
+	if !allowlisted {
+		return false, "Blocked by Privacy Mode"
+	}
+
+	// Loopback can't leave the machine — allow any port.
+	if isLoopbackHost(host) {
+		return true, "Loopback host"
+	}
+
+	// Opted-in remote host: confine to DERO service ports.
+	if isDEROPort(port) {
+		return true, "Allowlisted host on DERO port"
+	}
+	return false, "Allowlisted host but non-DERO port blocked in Privacy Mode"
+}
+
+// canonicalHost lowercases/trims a host and collapses IP literals to their canonical
+// form so equivalent spellings compare equal — e.g. the expanded "0:0:0:0:0:0:0:1",
+// bracketed "[::1]", and IPv4-mapped "::ffff:127.0.0.1" all become "::1"/"127.0.0.1".
+// Without this, legitimate local IPv6 connections fail closed against the "::1"
+// allowlist entry. Non-IP hostnames pass through unchanged.
+func canonicalHost(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return host
+}
+
+// privacyModeEnabled reports whether Privacy Mode is currently armed.
+func privacyModeEnabled() bool {
+	networkFilter.RLock()
+	defer networkFilter.RUnlock()
+	return networkFilter.enabled
+}
+
+// isLoopbackHost reports whether host is a loopback address that cannot egress.
+func isLoopbackHost(host string) bool {
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "0.0.0.0":
+		return true
+	}
+	return strings.HasPrefix(host, "127.")
+}
+
+// isEndpointAllowed is the boundary check for library-internal connects (walletapi,
+// Gnomon) that don't expose a dialer hook. endpoint is "host:port" or a URL; we extract
+// host+port and run the same policy as the transport chokepoint. Used to refuse a
+// non-allowlisted remote daemon before the library opens its own socket.
+func isEndpointAllowed(endpoint string) (bool, string) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		// Empty resolves to the localhost default (127.0.0.1:10102) downstream — evaluate
+		// it as loopback so it's allowed in both ON and OFF states.
+		return isAddrAllowed("127.0.0.1", "10102")
+	}
+
+	// Accept either a bare host:port or a scheme://host:port/path URL.
+	host, port := "", ""
+	if strings.Contains(endpoint, "://") {
+		if parsed, err := url.Parse(endpoint); err == nil {
+			host = parsed.Hostname()
+			port = parsed.Port()
+			if port == "" {
+				port = defaultPortForScheme(parsed.Scheme)
+			}
+		}
+	}
+	if host == "" {
+		if h, p, err := net.SplitHostPort(endpoint); err == nil {
+			host, port = h, p
+		} else {
+			host = endpoint // host with no port
+		}
+	}
+
+	return isAddrAllowed(host, port)
+}
+
+// SetPrivacyMode enables or disables Privacy Mode
+func (a *App) SetPrivacyMode(enabled bool) map[string]interface{} {
+	networkFilter.Lock()
 	networkFilter.enabled = enabled
+	networkFilter.Unlock()
+
+	// Persist so the mode survives restart — an armed kill switch must not silently
+	// disarm (fail open) on relaunch. Saved after releasing the filter lock.
+	a.settings["privacy_mode"] = enabled
+	a.saveSettings()
 
 	if enabled {
 		a.logToConsole("[SHIELD] Privacy Mode ENABLED - Only DERO/localhost connections allowed")
@@ -67,8 +212,23 @@ func (a *App) SetCypherpunkMode(enabled bool) map[string]interface{} {
 	}
 }
 
-// GetCypherpunkMode returns the current Cypherpunk Mode status
-func (a *App) GetCypherpunkMode() bool {
+// restorePrivacyModeFromSettings re-arms the network filter from the persisted
+// privacy_mode setting. Must run during startup AFTER loadSettings() and BEFORE
+// anything dials out (reconcileDaemonEndpoint tests the daemon connection), so a
+// kill switch armed last session gates the very first connections of this one.
+func (a *App) restorePrivacyModeFromSettings() {
+	enabled, _ := a.settings["privacy_mode"].(bool)
+	if !enabled {
+		return
+	}
+	networkFilter.Lock()
+	networkFilter.enabled = true
+	networkFilter.Unlock()
+	a.logToConsole("[SHIELD] Privacy Mode restored from saved settings - non-DERO connections blocked")
+}
+
+// GetPrivacyMode returns the current Privacy Mode status
+func (a *App) GetPrivacyMode() bool {
 	networkFilter.RLock()
 	defer networkFilter.RUnlock()
 	return networkFilter.enabled
@@ -190,7 +350,7 @@ func (a *App) ClearConnectionLog() map[string]interface{} {
 	networkFilter.Lock()
 	defer networkFilter.Unlock()
 
-	networkFilter.connectionLog = make([]ConnectionLogEntry, 0)
+	networkFilter.connectionLog = make([]ConnectionLogEntry, 0, 1000)
 	networkFilter.blockedCount = 0
 	networkFilter.allowedCount = 0
 
@@ -202,78 +362,40 @@ func (a *App) ClearConnectionLog() map[string]interface{} {
 
 // Internal helper functions
 
+// checkRequestAllowed is the URL-level policy gate (used by the browser-open path).
+// It parses host+port out of the URL and delegates the decision to isAddrAllowed, so
+// the URL path and the transport-layer dialer share one hardened policy. The OFF
+// fast-path lives in isAddrAllowed.
 func checkRequestAllowed(urlStr string) (bool, string) {
-	networkFilter.RLock()
-	enabled := networkFilter.enabled
-	allowedHosts := networkFilter.allowedHosts
-	networkFilter.RUnlock()
-
-	// If privacy mode is disabled, allow everything
-	if !enabled {
-		return true, "Privacy Mode disabled"
-	}
-
-	// Parse URL
 	parsed, err := url.Parse(urlStr)
 	if err != nil {
+		// Can't parse — only allow if the mode is off (let isAddrAllowed decide).
+		if allowed, reason := isAddrAllowed("", ""); allowed {
+			return true, reason
+		}
 		return false, "Invalid URL"
 	}
 
 	host := parsed.Hostname()
-	if host == "" {
-		host = parsed.Host
+	port := parsed.Port()
+	if port == "" {
+		port = defaultPortForScheme(parsed.Scheme)
 	}
 
-	// Remove port if present
-	if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
-		host = host[:colonIdx]
-	}
-
-	// Check against allowed hosts
-	for _, allowed := range allowedHosts {
-		if host == allowed {
-			return true, "Host in allowed list"
-		}
-	}
-
-	// Check for DERO-specific patterns
-	if isDEROConnection(urlStr, host) {
-		return true, "DERO network connection"
-	}
-
-	return false, "Blocked by Privacy Mode"
+	return isAddrAllowed(host, port)
 }
 
-func isDEROConnection(urlStr, host string) bool {
-	// Allow known DERO patterns
-	deroPatterns := []string{
-		"dero",
-		"xswd",
-		"10102", // default RPC port
-		"10101", // default P2P port
-		"44326", // XSWD port
+// defaultPortForScheme returns the conventional port for a URL scheme when the URL
+// omits one, so the port-aware checks have a value to reason about.
+func defaultPortForScheme(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "https", "wss":
+		return "443"
+	case "http", "ws":
+		return "80"
+	default:
+		return ""
 	}
-
-	lowerURL := strings.ToLower(urlStr)
-	lowerHost := strings.ToLower(host)
-
-	for _, pattern := range deroPatterns {
-		if strings.Contains(lowerURL, pattern) || strings.Contains(lowerHost, pattern) {
-			return true
-		}
-	}
-
-	// Check if it's a blockchain RPC call pattern
-	if strings.Contains(lowerURL, "json_rpc") || strings.Contains(lowerURL, "jsonrpc") {
-		return true
-	}
-
-	// Allow WebSocket connections to localhost (for XSWD)
-	if (strings.HasPrefix(lowerURL, "ws://127.0.0.1") || strings.HasPrefix(lowerURL, "ws://localhost")) {
-		return true
-	}
-
-	return false
 }
 
 // LogConnection logs a connection attempt (called from request interceptor)
@@ -350,6 +472,33 @@ func emitPrivacyBlockedToast(ctx context.Context, urlStr, host, reason string) {
 		"type":    "warning",
 		"message": msg,
 	})
+}
+
+// checkDaemonEndpointPolicy validates a daemon endpoint before a library-internal connect
+// (walletapi/Gnomon) opens its own socket. When Privacy Mode blocks a remote endpoint,
+// it emits a "privacy:remote_endpoint_blocked" event so the UI can offer a one-click
+// "allow this host" opt-in. Returns whether the connect should proceed.
+func (a *App) checkDaemonEndpointPolicy(endpoint string) bool {
+	allowed, reason := isEndpointAllowed(endpoint)
+	if allowed {
+		return true
+	}
+
+	host := endpoint
+	if h, _, err := net.SplitHostPort(endpoint); err == nil {
+		host = h
+	}
+	a.logToConsole("[SHIELD] Privacy Mode blocked daemon endpoint: " + endpoint + " (" + reason + ")")
+	logConnection(endpoint, false, reason)
+
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "privacy:remote_endpoint_blocked", map[string]interface{}{
+			"endpoint": endpoint,
+			"host":     host,
+			"reason":   reason,
+		})
+	}
+	return false
 }
 
 // RequestInterceptor evaluates Privacy Mode for a URL, logs it, and notifies the UI when blocked.

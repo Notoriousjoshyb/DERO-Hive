@@ -137,6 +137,12 @@ func (a *App) ensureWalletDaemonConnectivity(endpoint string) {
 		endpoint = "127.0.0.1:10102"
 	}
 
+	// Privacy Mode: refuse a non-allowlisted remote daemon before walletapi opens its
+	// own socket (it has no dialer hook). The opt-in event is emitted by the policy check.
+	if !a.checkDaemonEndpointPolicy(endpoint) {
+		return
+	}
+
 	if err := walletapi.Connect(endpoint); err != nil {
 		a.logToConsole(fmt.Sprintf("[WARN] Wallet daemon connect failed: %v - will retry in background", err))
 		// Emit event to notify frontend of connection issue
