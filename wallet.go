@@ -460,10 +460,15 @@ func (a *App) GetBalance() map[string]interface{} {
 	if a.simulatorManager != nil && a.simulatorManager.isInitialized {
 		var zerohash [32]byte
 		addr := wallet.GetAddress().String()
-		if bal, _, err := wallet.GetDecryptedBalanceAtTopoHeight(zerohash, -1, addr); err == nil {
+		if bal, _, err := wallet.GetDecryptedBalanceAtTopoHeight(zerohash, -1, addr); err == nil && bal > 0 {
 			mature = bal
+			_, locked = wallet.Get_Balance()
 		} else {
-			// No active connection -- use cached in-memory balance.
+			// No active WS connection (err != nil) or no decrypted balance available
+			// yet: fall back to the cached in-memory balance. In simulator mode this
+			// is the same accurate-then-fallback pattern the status broadcaster uses
+			// (see XSWDServer.GetWalletBalance) so the dashboard and the periodic
+			// status push report the same value.
 			mature, locked = wallet.Get_Balance()
 		}
 	} else {

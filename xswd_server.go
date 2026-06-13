@@ -1140,7 +1140,23 @@ func (s *XSWDServer) GetWalletBalance() (uint64, error) {
 	if !walletManager.isOpen || walletManager.wallet == nil {
 		return 0, fmt.Errorf("wallet not open")
 	}
-	matureBalance, _ := walletManager.wallet.Get_Balance()
+	wallet := walletManager.wallet
+
+	// In simulator mode the in-memory Get_Balance() is stale -- the embedded
+	// wallet never scans the genesis/funding blocks, so it reports 0 even though
+	// the test wallet holds 1000 DERO. The status broadcaster calls this on a
+	// timer; returning that stale 0 made the dashboard balance flicker because a
+	// separate poll (App.GetBalance) writes the correct value back. Use the same
+	// decrypted-balance path GetBalance uses so every balance source agrees.
+	if s.app != nil && s.app.simulatorManager != nil && s.app.simulatorManager.isInitialized {
+		var zerohash [32]byte
+		addr := wallet.GetAddress().String()
+		if bal, _, err := wallet.GetDecryptedBalanceAtTopoHeight(zerohash, -1, addr); err == nil && bal > 0 {
+			return bal, nil
+		}
+	}
+
+	matureBalance, _ := wallet.Get_Balance()
 	return matureBalance, nil
 }
 
