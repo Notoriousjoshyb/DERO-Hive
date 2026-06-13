@@ -13,6 +13,12 @@ require (
 	github.com/wailsapp/wails/v2 v2.11.0
 )
 
+// Local R&D: point derohe at the DEROFDN community-dev fork for sender-attribution
+// privacy work. Not for release — revert before any HOLOGRAM commit/tag.
+// NOTE: `go mod tidy` strips this until HOLOGRAM code actually calls the fork's new
+// symbols; re-add it if it disappears.
+replace github.com/deroproject/derohe => github.com/DHEBP/derohe v0.0.0-20260613172821-92b800569ca4
+
 require (
 	github.com/VictoriaMetrics/metrics v1.23.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
