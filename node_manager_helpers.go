@@ -114,10 +114,15 @@ func (a *App) buildNodeArgs(networkMode NetworkMode, fullDataDir string, netConf
 	var args []string
 
 	if networkMode == NetworkSimulator {
-		// Simulator binary only supports limited flags
+		// Simulator binary only supports limited flags.
+		// Pass --testnet explicitly: newer simulator builds default the chain to
+		// mainnet when the flag is absent, which mismatches HOLOGRAM's in-process
+		// simulator globals. Passing it keeps the spawned daemon on the sim chain
+		// regardless of the binary's internal default.
 		args = []string{
 			"--data-dir", fullDataDir,
 			"--rpc-bind", fmt.Sprintf("127.0.0.1:%d", nodeManager.rpcPort),
+			"--testnet",
 		}
 		a.logToConsole(fmt.Sprintf("[NET] Network mode: %s (using simulator binary)", networkMode))
 	} else {
