@@ -1,7 +1,7 @@
 <script>
   import { walletState, appState, settingsState, addressMasked, balanceMasked, toast, handleBackendError, syncNetworkMode, pendingPayment, clearPendingPayment } from '../lib/stores/appState.js';
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime.js';
-  import { OpenWallet, CloseWallet, GetBalance, GetWalletStatus, ListRecentWallets, GetRecentWalletsWithInfo, RemoveRecentWallet, ClearRecentWallets, ConnectXSWD, SelectWalletFile, CreateWallet, RestoreWallet, GetTransactionHistory, GetIntegratedAddress, InternalWalletCall, GetAddressBook, DeleteContact, SignMessage, VerifySignature, GetSeedPhrase, GetWalletKeys, GetSimulatorTestWallets, SyncSimulatorTestWallets, OpenSimulatorTestWallet, FundTestWallet, RefreshTestWalletBalance, SaveFileWithDialog, SyncWallet, GetWalletSyncStatus, ChangeWalletPassword, SetTransactionLabel, GetAllTransactionLabels, GetTransactionLabel, DeleteTransactionLabel, CreatePaymentRequest, DecodeIntegratedAddress, GetMiningEarningsSummary, GetWalletMiningEarnings, IsWalletOpen, GetCurrentWalletPath, SubscribeToWalletEvents, UnsubscribeFromEvents, GetRegistrationStatus, RegisterWallet, CancelRegistration } from '../../wailsjs/go/main/App.js';
+  import { OpenWallet, CloseWallet, GetBalance, GetWalletStatus, ListRecentWallets, GetRecentWalletsWithInfo, RemoveRecentWallet, ClearRecentWallets, ConnectXSWD, SelectWalletFile, CreateWallet, RestoreWallet, GetTransactionHistory, GetIntegratedAddress, InternalWalletCall, GetAddressBook, DeleteContact, SignMessage, VerifySignature, GetSeedPhrase, GetWalletKeys, GetSimulatorTestWallets, SyncSimulatorTestWallets, OpenSimulatorTestWallet, FundTestWallet, RefreshTestWalletBalance, SaveFileWithDialog, SyncWallet, GetWalletSyncStatus, ChangeWalletPassword, SetTransactionLabel, GetAllTransactionLabels, GetTransactionLabel, DeleteTransactionLabel, CreatePaymentRequest, DecodeIntegratedAddress, GetMiningEarningsSummary, GetWalletMiningEarnings, IsWalletOpen, GetCurrentWalletPath, SubscribeToWalletEvents, UnsubscribeFromEvents, GetRegistrationStatus, RegisterWallet, CancelRegistration, GetRingMemberSets, GetAllSettings, SetSetting } from '../../wailsjs/go/main/App.js';
   import { onMount, onDestroy } from 'svelte';
   import { 
     Copy, ArrowUp, ArrowDown, ArrowLeftRight,
@@ -101,6 +101,18 @@
   let sendLoading = false;
   let showContactPicker = false;
   let showFullSendAddress = false;
+
+  // Sender Visibility / Ring Members (decoy curation) — opt-in privacy controls.
+  let sendAnonymize = false;        // false = Show me (attribution → you), true = Anonymize
+  let sendRingSetId = '';           // '' = Auto (random); otherwise a saved set id
+  let ringMemberSets = [];          // loaded from GetRingMemberSets()
+  // The selected set's members, resolved client-side and passed as preferred_decoys.
+  $: selectedSendSet = ringMemberSets.find(s => s.id === sendRingSetId) || null;
+  $: sendCuratedCount = selectedSendSet ? (selectedSendSet.members || []).length : 0;
+  // Curation is only active when Anonymize is armed above ring 2.
+  $: ringCurationActive = sendAnonymize && sendRingsize > 2;
+  // Honest math: 2 fixed slots (you + recipient) + curated + random = ring.
+  $: sendRandomFill = Math.max(0, sendRingsize - 2 - (ringCurationActive ? sendCuratedCount : 0));
   
   // ============================================
   // RECEIVE SECTION STATE
@@ -333,6 +345,39 @@
   // Load contacts when entering send section (for contact picker)
   $: if (activeSection === 'send' && contacts.length === 0) {
     loadContacts();
+  }
+
+  // Load ring member sets + the persisted active-set choice when entering send
+  $: if (activeSection === 'send') {
+    loadRingMemberSets();
+  }
+
+  async function loadRingMemberSets() {
+    try {
+      const result = await GetRingMemberSets();
+      if (result.success) {
+        ringMemberSets = result.sets || [];
+        // Restore the persisted active-set pointer (if it still exists).
+        const settings = await GetAllSettings();
+        const activeId = settings?.active_ring_member_set || '';
+        sendRingSetId = ringMemberSets.some(s => s.id === activeId) ? activeId : '';
+      }
+    } catch (err) {
+      console.error('Failed to load ring member sets:', err);
+    }
+  }
+
+  // Persist the active-set choice so it survives restarts (the privacy_mode pattern).
+  async function onRingSetChange() {
+    try {
+      await SetSetting(JSON.stringify({ active_ring_member_set: sendRingSetId }));
+    } catch (err) {
+      console.error('Failed to persist active ring set:', err);
+    }
+  }
+
+  function manageRingSetsInSettings() {
+    window.dispatchEvent(new CustomEvent('status-click', { detail: { tab: 'settings', section: 'privacy' } }));
   }
   
   // ============================================
@@ -1209,6 +1254,9 @@
     sendLoading = false;
     showFullSendAddress = false;
     showContactPicker = false;
+    sendAnonymize = false;
+    // sendRingSetId is intentionally NOT reset — the active set is a persisted
+    // preference (reloaded from settings on send), not a per-transaction field.
     clearUriPaste();
   }
 
@@ -1240,9 +1288,16 @@
           destination: sendDest,
           amount: sendAmountAtomic
         }],
-        ringsize: sendRingsize
+        ringsize: sendRingsize,
+        anonymize: sendAnonymize
       };
-      
+      // Curation only applies when Anonymize is armed above ring 2; otherwise there's
+      // no anonymity set to lead. Resolve the chosen set to its member addresses here
+      // (the fork expands them into the front of the ring; random tops up).
+      if (ringCurationActive && selectedSendSet && (selectedSendSet.members || []).length > 0) {
+        params.preferred_decoys = selectedSendSet.members;
+      }
+
       const result = await InternalWalletCall('transfer', params, sendPassword);
       
       if (result.success) {
@@ -2325,6 +2380,67 @@
                   <span class="form-hint">Ring size 2 is required for smart contracts that use SIGNER(). Higher values increase anonymity.</span>
                 </div>
 
+                <!-- Sender Visibility (opt-in attribution + ring member curation) -->
+                <div class="form-group">
+                  <div class="privacy-block">
+                    <div class="privacy-block-head">
+                      <span class="privacy-block-icon">◆</span>
+                      <span class="privacy-block-title">Sender Visibility</span>
+                    </div>
+                    <div class="privacy-block-body">
+                      <div class="form-label-row">
+                        <span class="form-label" style="margin:0;">Who your recipient sees</span>
+                        {#if sendRingsize === 2}
+                          <span class="att-chip att-chip-pinned" title="Ring 2 — attribution is structural: the only other ring member is the recipient">
+                            <MapPin size={10} /> Pinned · Ring 2
+                          </span>
+                        {:else if sendAnonymize}
+                          <span class="att-chip att-chip-claimed" title="Your recipient sees a decoy as the claimed sender. You are 1 of {sendRingsize - 1} other ring members.">
+                            Claimed · 1 of {sendRingsize - 1}
+                          </span>
+                        {:else}
+                          <span class="att-chip att-chip-claimed att-chip-show" title="Attribution points at you — your recipient sees your address as the sender.">
+                            Attribution → you
+                          </span>
+                        {/if}
+                      </div>
+
+                      <div class="address-type-toggle vis-toggle" class:vis-toggle-inert={sendRingsize === 2}>
+                        <button class="toggle-btn" class:active={!sendAnonymize} on:click={() => sendAnonymize = false} disabled={sendRingsize === 2}>Show me</button>
+                        <button class="toggle-btn" class:active={sendAnonymize} on:click={() => sendAnonymize = true} disabled={sendRingsize === 2}>Anonymize</button>
+                      </div>
+
+                      {#if sendRingsize === 2}
+                        <div class="vis-note">Ring 2 has no anonymity set — attribution is structurally pinned to you and the recipient. Raise the ring size to anonymize.</div>
+                      {:else if !sendAnonymize}
+                        <div class="vis-note">Your recipient will see your address as the sender. Choose Anonymize to appear as 1 of {sendRingsize - 1} ring members instead.</div>
+                      {/if}
+
+                      <!-- Ring members: a reference to a saved set, not an inline picker -->
+                      <div class="decoy-ref" class:decoy-ref-inert={!ringCurationActive}>
+                        <span class="decoy-ref-label">Ring members</span>
+                        <select class="select select-sm decoy-ref-select" bind:value={sendRingSetId} on:change={onRingSetChange} disabled={!ringCurationActive}>
+                          <option value="">Auto (random)</option>
+                          {#each ringMemberSets as set}
+                            <option value={set.id}>{set.name} ({(set.members || []).length})</option>
+                          {/each}
+                        </select>
+                        <span class="decoy-ref-manage" on:click={manageRingSetsInSettings} on:keydown={(e) => e.key === 'Enter' && manageRingSetsInSettings()} role="button" tabindex="0">Manage in Settings ▸</span>
+                      </div>
+
+                      {#if ringCurationActive}
+                        <div class="decoy-summary">
+                          {#if selectedSendSet && sendCuratedCount > 0}
+                            You + recipient + <b>{sendCuratedCount} chosen</b> · {sendRandomFill} random fill the rest of ring {sendRingsize}
+                          {:else}
+                            Auto — ring {sendRingsize} filled with random registered members.
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+
                 <div class="form-actions">
                   <button class="btn btn-primary" disabled={!canSend} on:click={() => sendStep = 2}>
                     Review Transaction
@@ -2353,6 +2469,18 @@
                   <div class="confirm-row">
                     <span class="confirm-label">Ring Size</span>
                     <span class="confirm-value">{sendRingsize}{sendRingsize === 2 ? ' (non-anonymous)' : ''}</span>
+                  </div>
+                  <div class="confirm-row">
+                    <span class="confirm-label">Sender visibility</span>
+                    <span class="confirm-value">
+                      {#if sendRingsize === 2}
+                        Pinned · Ring 2
+                      {:else if sendAnonymize}
+                        Anonymize · 1 of {sendRingsize - 1}{#if ringCurationActive && selectedSendSet && sendCuratedCount > 0} · {selectedSendSet.name} ({sendCuratedCount}){/if}
+                      {:else}
+                        Show me (attribution → you)
+                      {/if}
+                    </span>
                   </div>
                 </div>
                 
@@ -5578,6 +5706,67 @@
     gap: var(--s-2);
     min-width: 0;
   }
+  /* === Sender Visibility instrument (send sheet) === */
+  /* Ported from the decided sender-visibility exploration (Direction 01 "Quiet
+     Field" + 2C2 C2 reference). .privacy-block / .decoy-ref are new primitives. */
+  .privacy-block {
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .privacy-block-head {
+    display: flex; align-items: center; gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    background: var(--void-deep);
+    border-bottom: 1px solid var(--border-dim);
+  }
+  .privacy-block-icon { color: var(--cyan-400); font-size: 11px; }
+  .privacy-block-title {
+    font-size: 10px; font-weight: 500;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--text-4);
+  }
+  .privacy-block-body { padding: var(--s-3); }
+  .privacy-block-body .form-label-row { margin-bottom: var(--s-2); }
+  .privacy-block-body .att-chip { justify-self: end; }
+
+  /* Show-me attribution chip: a quiet, calm "points at you" — never alarm. */
+  .att-chip-show { color: var(--text-3); }
+
+  .vis-toggle-inert { opacity: 0.45; pointer-events: none; }
+  .vis-note {
+    font-size: 10px; color: var(--text-5);
+    margin-top: var(--s-2); line-height: 1.5;
+  }
+
+  /* Ring members reference — a saved-set selector, not a picker. Inert (dimmed)
+     when curation can't apply: ring 2 (no anonymity set) or Show me (no decoy). */
+  .decoy-ref {
+    display: flex; align-items: center; gap: var(--s-2);
+    margin-top: var(--s-3);
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--border-dim);
+  }
+  .decoy-ref-inert { opacity: 0.45; pointer-events: none; }
+  .decoy-ref-label {
+    font-size: 10px; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-5); flex: none;
+  }
+  .decoy-ref-select { flex: 1; min-width: 0; }
+  .select-sm { font-size: 11px; padding: var(--s-2) var(--s-3); padding-right: 30px; }
+  .decoy-ref-manage {
+    font-family: var(--font-mono);
+    font-size: 10px; font-weight: 500;
+    letter-spacing: 0.05em;
+    color: var(--text-4); flex: none;
+    cursor: pointer;
+    transition: color var(--dur-fast);
+  }
+  .decoy-ref-manage:hover { color: var(--cyan-400); }
+  .decoy-summary { margin-top: var(--s-2); font-size: 10px; color: var(--text-5); line-height: 1.5; }
+  .decoy-summary b { color: var(--cyan-400); font-weight: 600; }
+
   /* Attestation chip — badge-family DNA (r-sm, 600, 0.05em). Claimed is the quiet
      NORMAL state, never a warning; pinned is distinct but calm (no glow). */
   .att-chip {

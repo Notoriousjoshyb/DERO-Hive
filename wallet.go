@@ -1773,13 +1773,34 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 			}
 			a.logToConsole(fmt.Sprintf("[XSWD] Building transfer TX with ringsize=%d fees=%d", ringsize, fees))
 
-			tx, err := wallet.TransferPayload0(transfers, ringsize, false, scArgs, fees, false)
+			// Opt-in sender-privacy knobs (interactive send only). A zero-value
+			// TransferOptions reproduces TransferPayload0 exactly, so the default
+			// path is unchanged. anonymize → attribution witness points at a decoy
+			// instead of you; preferred_decoys → seed the front of the ring (random
+			// tops up). Strict:false → bad/unregistered decoys are skipped, not fatal.
+			opts := walletapi.TransferOptions{}
+			if anon, _ := params["anonymize"].(bool); anon {
+				opts.Attribution = walletapi.AttributionAnonymous
+			}
+			if decoys, ok := params["preferred_decoys"].([]interface{}); ok && len(decoys) > 0 {
+				members := make([]string, 0, len(decoys))
+				for _, d := range decoys {
+					if s, ok := d.(string); ok && s != "" {
+						members = append(members, s)
+					}
+				}
+				if len(members) > 0 {
+					opts.Ring = &walletapi.RingPreference{PreferredDecoys: members}
+				}
+			}
+
+			tx, err := wallet.TransferPayload0WithOptions(transfers, ringsize, false, scArgs, fees, false, opts)
 			if err != nil {
 				a.logToConsole(fmt.Sprintf("[WARN] Transfer build failed, retrying after resync: %v", err))
 				if syncErr := wallet.Sync_Wallet_Memory_With_Daemon(); syncErr != nil {
 					a.logToConsole(fmt.Sprintf("[WARN] Retry sync failed: %v", syncErr))
 				}
-				tx, err = wallet.TransferPayload0(transfers, ringsize, false, scArgs, fees, false)
+				tx, err = wallet.TransferPayload0WithOptions(transfers, ringsize, false, scArgs, fees, false, opts)
 				if err != nil {
 					return map[string]interface{}{"success": false, "error": FriendlyError(err), "technicalError": err.Error()}
 				}
