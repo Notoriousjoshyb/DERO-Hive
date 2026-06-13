@@ -104,11 +104,14 @@ simulator: check-derohe
 	@chmod +x $(BUILD_DIR)/$(SIMULATOR_BIN)
 	@echo "✅ simulator built: $(BUILD_DIR)/$(SIMULATOR_BIN)"
 
-# Check that derohe dependency is available and add cmd dependencies
+# Check that derohe dependency is available and add cmd dependencies.
+# No version is pinned here: the derohe module is resolved by go.mod (currently a
+# replace onto the public fork), and these go get calls only pull the cmd-only
+# transitive deps (readline, dns, lumberjack) into go.sum so derod/simulator build.
 check-derohe:
 	@echo "🔍 Checking derohe dependency..."
-	@go get $(DEROHE_PKG)/cmd/derod@v0.0.0-20250813215012-9b6a8b82c839 2>/dev/null || true
-	@go get $(DEROHE_PKG)/cmd/simulator@v0.0.0-20250813215012-9b6a8b82c839 2>/dev/null || true
+	@go get $(DEROHE_PKG)/cmd/derod 2>/dev/null || true
+	@go get $(DEROHE_PKG)/cmd/simulator 2>/dev/null || true
 
 # Build mtp-anchor CLI tool
 mtp-anchor:

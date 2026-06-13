@@ -74,3 +74,10 @@ tela-cli/
 
 # Local compiled app artifact
 /HOLOGRAM
+
+# Local test-wallet artifacts (created by manual wallet/sim testing)
+/mywallet
+/mywallet.keys
+
+# Local build output dir
+/bin/

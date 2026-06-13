@@ -13,10 +13,11 @@ require (
 	github.com/wailsapp/wails/v2 v2.11.0
 )
 
-// Local R&D: point derohe at the DEROFDN community-dev fork for sender-attribution
-// privacy work. Not for release — revert before any HOLOGRAM commit/tag.
-// NOTE: `go mod tidy` strips this until HOLOGRAM code actually calls the fork's new
-// symbols; re-add it if it disappears.
+// derohe resolves to the DEROFDN community-dev line plus the sender-attribution
+// privacy work (opt-in anonymous attribution, curated decoy rings) that HOLOGRAM
+// requires. That work is in open upstream PRs, not yet merged or tagged, so it is
+// pinned here via the public fork. Repoint to github.com/DEROFDN/derohe and drop
+// this replace once a release tag includes it.
 replace github.com/deroproject/derohe => github.com/DHEBP/derohe v0.0.0-20260613172821-92b800569ca4
 
 require (
