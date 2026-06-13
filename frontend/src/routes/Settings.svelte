@@ -3657,6 +3657,10 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   .host-item-empty {
     justify-content: center;
     color: var(--text-4);
+    /* .host-item sets no font-size, so empty-state text otherwise falls through to
+       the oversized body default. Pin to the 11px form-hint scale (all Settings
+       empty states: Ring Members, Allowed Hosts, Active Connections). */
+    font-size: 11px;
   }
   
   .settings-row-control {
