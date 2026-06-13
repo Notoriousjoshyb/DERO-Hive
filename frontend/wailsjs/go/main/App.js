@@ -10,6 +10,14 @@ export function AddContact(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddContact'](arg1, arg2, arg3);
 }
 
+export function AddRingMember(arg1, arg2) {
+  return window['go']['main']['App']['AddRingMember'](arg1, arg2);
+}
+
+export function AddRingMemberSet(arg1) {
+  return window['go']['main']['App']['AddRingMemberSet'](arg1);
+}
+
 export function AddSCIDToIndex(arg1) {
   return window['go']['main']['App']['AddSCIDToIndex'](arg1);
 }
@@ -176,6 +184,10 @@ export function DecodeIntegratedAddress(arg1) {
 
 export function DeleteContact(arg1) {
   return window['go']['main']['App']['DeleteContact'](arg1);
+}
+
+export function DeleteRingMemberSet(arg1) {
+  return window['go']['main']['App']['DeleteRingMemberSet'](arg1);
 }
 
 export function DeleteTransactionLabel(arg1) {
@@ -622,6 +634,10 @@ export function GetRegistrationStatus() {
   return window['go']['main']['App']['GetRegistrationStatus']();
 }
 
+export function GetRingMemberSets() {
+  return window['go']['main']['App']['GetRingMemberSets']();
+}
+
 export function GetRingMembers(arg1) {
   return window['go']['main']['App']['GetRingMembers'](arg1);
 }
@@ -834,6 +850,10 @@ export function InvokeSCFunction(arg1) {
   return window['go']['main']['App']['InvokeSCFunction'](arg1);
 }
 
+export function IsAddressRegistered(arg1) {
+  return window['go']['main']['App']['IsAddressRegistered'](arg1);
+}
+
 export function IsAppCachedOffline(arg1) {
   return window['go']['main']['App']['IsAppCachedOffline'](arg1);
 }
@@ -1020,6 +1040,10 @@ export function RemoveFile(arg1) {
 
 export function RemoveRecentWallet(arg1) {
   return window['go']['main']['App']['RemoveRecentWallet'](arg1);
+}
+
+export function RemoveRingMember(arg1, arg2) {
+  return window['go']['main']['App']['RemoveRingMember'](arg1, arg2);
 }
 
 export function RemoveSearchExclusion(arg1) {

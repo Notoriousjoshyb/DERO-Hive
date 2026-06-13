@@ -33,6 +33,7 @@ var persistedSettingKeys = []string{
 	"avatar_hidden",
 	"privacy_mode",
 	"signal_dark",
+	"active_ring_member_set",
 }
 
 // Settings Functions

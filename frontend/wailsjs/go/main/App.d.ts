@@ -7,6 +7,10 @@ export function AddAllowedHost(arg1:string):Promise<Record<string, any>>;
 
 export function AddContact(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
 
+export function AddRingMember(arg1:string,arg2:string):Promise<Record<string, any>>;
+
+export function AddRingMemberSet(arg1:string):Promise<Record<string, any>>;
+
 export function AddSCIDToIndex(arg1:string):Promise<Record<string, any>>;
 
 export function AddSearchExclusion(arg1:string):Promise<Record<string, any>>;
@@ -90,6 +94,8 @@ export function DaemonGetTxPool():Promise<Record<string, any>>;
 export function DecodeIntegratedAddress(arg1:string):Promise<Record<string, any>>;
 
 export function DeleteContact(arg1:string):Promise<Record<string, any>>;
+
+export function DeleteRingMemberSet(arg1:string):Promise<Record<string, any>>;
 
 export function DeleteTransactionLabel(arg1:string):Promise<Record<string, any>>;
 
@@ -313,6 +319,8 @@ export function GetRecentWalletsWithInfo():Promise<Array<main.WalletInfo>>;
 
 export function GetRegistrationStatus():Promise<Record<string, any>>;
 
+export function GetRingMemberSets():Promise<Record<string, any>>;
+
 export function GetRingMembers(arg1:string):Promise<Record<string, any>>;
 
 export function GetSCChangeTimeline(arg1:string):Promise<Record<string, any>>;
@@ -419,6 +427,8 @@ export function InvokeSCFromExplorer(arg1:string,arg2:string,arg3:Array<Record<s
 
 export function InvokeSCFunction(arg1:string):Promise<Record<string, any>>;
 
+export function IsAddressRegistered(arg1:string):Promise<Record<string, any>>;
+
 export function IsAppCachedOffline(arg1:string):Promise<Record<string, any>>;
 
 export function IsDevSupportEnabled():Promise<boolean>;
@@ -512,6 +522,8 @@ export function RemoveCachedApp(arg1:string):Promise<Record<string, any>>;
 export function RemoveFile(arg1:string):Promise<Record<string, any>>;
 
 export function RemoveRecentWallet(arg1:string):Promise<Record<string, any>>;
+
+export function RemoveRingMember(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function RemoveSearchExclusion(arg1:string):Promise<Record<string, any>>;
 
