@@ -2897,15 +2897,6 @@
                         </span>
                       </div>
 
-                      <!-- Ring Size (attribution context for the incoming sender row;
-                           outgoing entries don't carry ring data) -->
-                      {#if tx.incoming && tx.ringsize > 0}
-                        <div class="tx-detail-row">
-                          <span class="tx-detail-label">Ring Size</span>
-                          <span class="tx-detail-value">{tx.ringsize}</span>
-                        </div>
-                      {/if}
-
                       <!-- Amount -->
                       <div class="tx-detail-row">
                         <span class="tx-detail-label">Amount</span>
@@ -2946,25 +2937,10 @@
                         </div>
                       {/if}
 
-                      <!-- Sender (for incoming) — full-span row with attribution chip.
-                           Attribution is structurally pinned only at ring 2; larger rings
-                           carry a sender-reported claim (1 of N−1 other ring members). -->
+                      <!-- Sender (for incoming) -->
                       {#if tx.incoming && tx.sender}
-                        <div class="tx-detail-row tx-detail-sender-row">
-                          <div class="tx-detail-label-row">
-                            <span class="tx-detail-label">Sender</span>
-                            {#if tx.ringsize > 0}
-                              {#if tx.sender_verified}
-                                <span class="att-chip att-chip-pinned" title="Ring 2 — attribution is structural: the only other ring member is the sender">
-                                  <MapPin size={10} /> Pinned · Ring {tx.ringsize}
-                                </span>
-                              {:else}
-                                <span class="att-chip att-chip-claimed" title="Self-reported by the sender. Any of the {tx.ringsize - 1} other ring members could have sent this.">
-                                  Claimed · 1 of {tx.ringsize - 1}
-                                </span>
-                              {/if}
-                            {/if}
-                          </div>
+                        <div class="tx-detail-row">
+                          <span class="tx-detail-label">Sender</span>
                           <div class="tx-detail-value-row">
                             <code class="tx-detail-value tx-detail-address">{tx.sender}</code>
                             <button class="btn-icon-sm" on:click={() => copyToClipboard(tx.sender, 'Sender address copied!')} title="Copy address">
@@ -5696,15 +5672,6 @@
     color: var(--pink-400);
     font-size: 11px;
     line-height: 1.4;
-  }
-  /* Sender attribution: the sender row spans the panel so the address holds one
-     line at the shipped 1000px column (wraps via break-all below, never clips). */
-  .tx-detail-sender-row { grid-column: 1 / -1; }
-  .tx-detail-label-row {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    min-width: 0;
   }
   /* === Sender Visibility instrument (send sheet) === */
   /* Ported from the decided sender-visibility exploration (Direction 01 "Quiet
