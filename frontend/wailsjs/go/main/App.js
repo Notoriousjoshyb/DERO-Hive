@@ -42,12 +42,20 @@ export function BatchPrefetchFavorites(arg1, arg2) {
   return window['go']['main']['App']['BatchPrefetchFavorites'](arg1, arg2);
 }
 
+export function BroadcastRegistrationDCSP(arg1) {
+  return window['go']['main']['App']['BroadcastRegistrationDCSP'](arg1);
+}
+
 export function BuildRating(arg1, arg2) {
   return window['go']['main']['App']['BuildRating'](arg1, arg2);
 }
 
 export function CallXSWD(arg1) {
   return window['go']['main']['App']['CallXSWD'](arg1);
+}
+
+export function CancelColdRegistration() {
+  return window['go']['main']['App']['CancelColdRegistration']();
 }
 
 export function CancelRegistration() {
@@ -266,6 +274,10 @@ export function ExecuteSCViaXSWD(arg1, arg2, arg3) {
   return window['go']['main']['App']['ExecuteSCViaXSWD'](arg1, arg2, arg3);
 }
 
+export function ExportRegistrationDCSP(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportRegistrationDCSP'](arg1, arg2, arg3);
+}
+
 export function FetchByDURL(arg1) {
   return window['go']['main']['App']['FetchByDURL'](arg1);
 }
@@ -288,6 +300,10 @@ export function FormatBlockAge(arg1) {
 
 export function FundTestWallet(arg1, arg2) {
   return window['go']['main']['App']['FundTestWallet'](arg1, arg2);
+}
+
+export function GenerateColdWallet(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GenerateColdWallet'](arg1, arg2, arg3);
 }
 
 export function GenerateSemanticLabel(arg1, arg2) {
@@ -922,6 +938,10 @@ export function ManuallyBlockApp(arg1) {
   return window['go']['main']['App']['ManuallyBlockApp'](arg1);
 }
 
+export function MineRegistration(arg1, arg2) {
+  return window['go']['main']['App']['MineRegistration'](arg1, arg2);
+}
+
 export function MoveFile(arg1, arg2) {
   return window['go']['main']['App']['MoveFile'](arg1, arg2);
 }
@@ -1052,6 +1072,10 @@ export function RemoveSearchExclusion(arg1) {
 
 export function RemoveTrackedToken(arg1) {
   return window['go']['main']['App']['RemoveTrackedToken'](arg1);
+}
+
+export function RenderPaperWallet(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RenderPaperWallet'](arg1, arg2, arg3, arg4);
 }
 
 export function RequestInterceptor(arg1) {
@@ -1424,6 +1448,10 @@ export function ValidateSCCode(arg1) {
 
 export function ValidateSenderProof(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ValidateSenderProof'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function VerifyColdWallet(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['VerifyColdWallet'](arg1, arg2, arg3, arg4);
 }
 
 export function VerifySignature(arg1) {

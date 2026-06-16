@@ -23,9 +23,13 @@ export function BatchDeployToSimulator(arg1:string):Promise<Record<string, any>>
 
 export function BatchPrefetchFavorites(arg1:Array<Record<string, any>>,arg2:number):Promise<Record<string, any>>;
 
+export function BroadcastRegistrationDCSP(arg1:string):Promise<Record<string, any>>;
+
 export function BuildRating(arg1:number,arg2:number):Promise<Record<string, any>>;
 
 export function CallXSWD(arg1:string):Promise<Record<string, any>>;
+
+export function CancelColdRegistration():Promise<Record<string, any>>;
 
 export function CancelRegistration():Promise<Record<string, any>>;
 
@@ -135,6 +139,8 @@ export function EstimateSyncTime():Promise<Record<string, any>>;
 
 export function ExecuteSCViaXSWD(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
 
+export function ExportRegistrationDCSP(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
+
 export function FetchByDURL(arg1:string):Promise<Record<string, any>>;
 
 export function FetchSCID(arg1:string):Promise<Record<string, any>>;
@@ -146,6 +152,8 @@ export function FilterSearchResults(arg1:Array<Record<string, any>>):Promise<Arr
 export function FormatBlockAge(arg1:number):Promise<string>;
 
 export function FundTestWallet(arg1:number,arg2:number):Promise<Record<string, any>>;
+
+export function GenerateColdWallet(arg1:string,arg2:number,arg3:boolean):Promise<Record<string, any>>;
 
 export function GenerateSemanticLabel(arg1:string,arg2:number):Promise<string>;
 
@@ -463,6 +471,8 @@ export function ManuallyAllowApp(arg1:string):Promise<Record<string, any>>;
 
 export function ManuallyBlockApp(arg1:string):Promise<Record<string, any>>;
 
+export function MineRegistration(arg1:string,arg2:string):Promise<Record<string, any>>;
+
 export function MoveFile(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function Navigate(arg1:string):Promise<Record<string, any>>;
@@ -528,6 +538,8 @@ export function RemoveRingMember(arg1:string,arg2:string):Promise<Record<string,
 export function RemoveSearchExclusion(arg1:string):Promise<Record<string, any>>;
 
 export function RemoveTrackedToken(arg1:string):Promise<Record<string, any>>;
+
+export function RenderPaperWallet(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
 export function RequestInterceptor(arg1:string):Promise<Record<string, any>>;
 
@@ -714,6 +726,8 @@ export function ValidateProofFull(arg1:string,arg2:string):Promise<Record<string
 export function ValidateSCCode(arg1:string):Promise<Record<string, any>>;
 
 export function ValidateSenderProof(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<Record<string, any>>;
+
+export function VerifyColdWallet(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
 export function VerifySignature(arg1:string):Promise<Record<string, any>>;
 

@@ -16,7 +16,12 @@
   import AddContactModal from '../lib/components/AddContactModal.svelte';
   import PasswordInput from '../lib/components/PasswordInput.svelte';
   import RevealSecretModal from '../lib/components/RevealSecretModal.svelte';
-  
+  import CreateColdWallet from '../lib/components/CreateColdWallet.svelte';
+
+  // Cold-wallet genesis flow (dedicated component; opens as a modal overlay).
+  let showColdWallet = false;
+  $: coldWalletNetwork = $settingsState.network === 'simulator' ? 'simulator' : 'mainnet';
+
   // ============================================
   // NAVIGATION STATE
   // ============================================
@@ -3784,14 +3789,23 @@
                   </div>
                 {/if}
                 
-                <button 
-                  on:click={handleCreateWallet} 
-                  disabled={createLoading || !createPath || !createPasswordsMatch} 
+                <button
+                  on:click={handleCreateWallet}
+                  disabled={createLoading || !createPath || !createPasswordsMatch}
                   class="btn btn-primary btn-block"
                 >
                   {createLoading ? 'Creating...' : 'Create Wallet'}
                 </button>
-                
+
+                <button
+                  type="button"
+                  on:click={() => (showColdWallet = true)}
+                  class="btn btn-secondary btn-block"
+                  style="margin-top: var(--s-2);"
+                >
+                  Create Cold Wallet (offline)
+                </button>
+
               {:else if activeTab === 'restore'}
                 <!-- Restore Wallet Tab -->
                 <div class="form-group">
@@ -3868,12 +3882,19 @@
 {/if}
 
 <!-- Modals -->
-<AddContactModal 
-  bind:show={showAddContact} 
+<AddContactModal
+  bind:show={showAddContact}
   editContact={editingContact}
   on:saved={loadContacts}
   on:close={() => { editingContact = null; }}
 />
+
+{#if showColdWallet}
+  <CreateColdWallet
+    network={coldWalletNetwork}
+    on:close={() => (showColdWallet = false)}
+  />
+{/if}
 
 <!-- Reveal modals: own all decrypted seed/key state inside the child so
      unmounting (close, ESC, wallet switch, wallet close) drops the only
