@@ -235,3 +235,70 @@ func (a *App) RenderPaperWallet(network, address, seed, registrationHex string) 
 // Kept tiny and local; wire to the real build version if/when one is threaded
 // through the App.
 func hologramVersion() string { return "HOLOGRAM" }
+
+// hotNetwork maps the app's current node network onto the genesis.Network model.
+func (a *App) hotNetwork() genesis.Network {
+	if nodeManager.networkMode == NetworkSimulator {
+		return genesis.NetworkSimulator
+	}
+	return genesis.NetworkMainnet
+}
+
+// ExportRegistrationDCSP (cold side) wraps a generated registration into a DCSP
+// transport blob ("DCSP:<base64-json>") the hot side can scan and broadcast. The
+// blob carries no secret — only the public address and the registration tx.
+func (a *App) ExportRegistrationDCSP(network, address, registrationHex string) map[string]interface{} {
+	if registrationHex == "" {
+		return map[string]interface{}{"success": false, "error": "no registration to export (mine it first)"}
+	}
+	blob, err := genesis.EncodeRegistrationDCSP(
+		genesis.Network(network),
+		time.Now().Unix(),
+		address,
+		registrationHex,
+	)
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}
+	}
+	return map[string]interface{}{"success": true, "blob": blob}
+}
+
+// BroadcastRegistrationDCSP (hot side) decodes a scanned DCSP registration blob,
+// validates it against the wallet's CURRENT network and re-checks the embedded
+// registration tx, then broadcasts it via DERO.SendRawTransaction. Returns the
+// address and txid on success so the UI can confirm.
+//
+// This does NOT run the genesis simulator guard: broadcasting is a hot-wallet
+// operation, and a user legitimately on simulator should be able to broadcast a
+// simulator registration. The network-match check is the real safety gate.
+func (a *App) BroadcastRegistrationDCSP(blob string) map[string]interface{} {
+	msg, err := genesis.DecodeDCSP(blob)
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}
+	}
+	if _, err := genesis.ValidateForBroadcast(msg, a.hotNetwork()); err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}
+	}
+
+	if a.daemonClient == nil {
+		return map[string]interface{}{"success": false, "error": "Not connected to a daemon"}
+	}
+	res, err := a.daemonClient.Call("DERO.SendRawTransaction", map[string]interface{}{
+		"tx_as_hex": msg.RawTx,
+	})
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": fmt.Sprintf("broadcast failed: %v", err)}
+	}
+
+	out := map[string]interface{}{"success": true, "address": msg.Address}
+	// surface the daemon's status/txid when present (shape: {status, txid, ...}).
+	if m, ok := res.(map[string]interface{}); ok {
+		if txid, ok := m["txid"].(string); ok {
+			out["txid"] = txid
+		}
+		if status, ok := m["status"].(string); ok {
+			out["status"] = status
+		}
+	}
+	return out
+}
