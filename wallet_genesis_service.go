@@ -10,6 +10,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -191,3 +192,46 @@ func (a *App) emitGenesis(event string, payload map[string]interface{}) {
 	}
 	wailsruntime.EventsEmit(a.ctx, event, payload)
 }
+
+// RenderPaperWallet renders the offline paper-wallet HTML and writes it to a
+// user-chosen path at 0600. The decided delivery model: the seed stays Go-side
+// — it is written to a local file the user controls, never returned across the
+// Wails bridge into the JS heap/DOM ([M7]/[M9]). The user is told to print then
+// destroy the file (the HTML's own guidance + the UI copy).
+//
+// network is the display network ("mainnet"/"simulator"); registrationHex is
+// optional (the address can be papered before it is registered).
+func (a *App) RenderPaperWallet(network, address, seed, registrationHex string) map[string]interface{} {
+	if refused := a.genesisGuard(); refused != nil {
+		return refused
+	}
+
+	netLabel := "MAINNET"
+	if genesis.Network(network) == genesis.NetworkSimulator {
+		netLabel = "SIMULATOR"
+	}
+
+	savePath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		DefaultFilename: "dero-cold-wallet.html",
+		Title:           "Save Cold Wallet (contains the SECRET seed)",
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "HTML paper wallet (*.html)", Pattern: "*.html"},
+		},
+	})
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": fmt.Sprintf("save dialog error: %v", err)}
+	}
+	if savePath == "" {
+		return map[string]interface{}{"success": false, "cancelled": true}
+	}
+
+	if err := genesis.WritePaperWallet(savePath, netLabel, hologramVersion(), address, seed, registrationHex); err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}
+	}
+	return map[string]interface{}{"success": true, "path": savePath}
+}
+
+// hologramVersion returns a short version string for the paper-wallet footer.
+// Kept tiny and local; wire to the real build version if/when one is threaded
+// through the App.
+func hologramVersion() string { return "HOLOGRAM" }
