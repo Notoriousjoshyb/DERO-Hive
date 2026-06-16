@@ -5,7 +5,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { 
     Copy, ArrowUp, ArrowDown, ArrowLeftRight,
-    Wallet, Plus, RotateCcw, AlertTriangle, Check, FolderOpen, Pickaxe,
+    Wallet, Plus, RotateCcw, AlertTriangle, Check, FolderOpen, Pickaxe, Snowflake,
     LayoutDashboard, QrCode, History, Coins, Users, FileSignature, RefreshCw,
     Loader2, Download, Search, ChevronRight, ExternalLink, Edit, Trash2, Send, Shield,
     Key, Eye, X, MapPin
@@ -3717,6 +3717,10 @@
               <RotateCcw size={16} />
               <span>Restore</span>
             </button>
+            <button class="tab-btn" class:active={activeTab === 'cold'} on:click={() => { activeTab = 'cold'; showColdWallet = true; }}>
+              <Snowflake size={16} />
+              <span>Cold</span>
+            </button>
           </div>
           
           <div class="cmd-stats-panel">
@@ -3795,15 +3799,6 @@
                   class="btn btn-primary btn-block"
                 >
                   {createLoading ? 'Creating...' : 'Create Wallet'}
-                </button>
-
-                <button
-                  type="button"
-                  on:click={() => (showColdWallet = true)}
-                  class="btn btn-secondary btn-block"
-                  style="margin-top: var(--s-2);"
-                >
-                  Create Cold Wallet (offline)
                 </button>
 
               {:else if activeTab === 'restore'}
@@ -3892,7 +3887,7 @@
 {#if showColdWallet}
   <CreateColdWallet
     network={coldWalletNetwork}
-    on:close={() => (showColdWallet = false)}
+    on:close={() => { showColdWallet = false; if (activeTab === 'cold') activeTab = 'open'; }}
   />
 {/if}
 

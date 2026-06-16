@@ -193,29 +193,25 @@ func (a *App) emitGenesis(event string, payload map[string]interface{}) {
 	wailsruntime.EventsEmit(a.ctx, event, payload)
 }
 
-// RenderPaperWallet renders the offline paper-wallet HTML and writes it to a
-// user-chosen path at 0600. The decided delivery model: the seed stays Go-side
-// — it is written to a local file the user controls, never returned across the
-// Wails bridge into the JS heap/DOM ([M7]/[M9]). The user is told to print then
-// destroy the file (the HTML's own guidance + the UI copy).
+// SaveColdBackup writes the cold wallet to a plain, auditable .txt at a
+// user-chosen path (0600). The decided artifact (the "Tim May" choice): a text
+// file the user can open and verify — human-readable seed + the DCSP:
+// registration string + instructions. NOT HTML (a browser), NOT PDF (an opaque
+// binary). The seed stays Go-side — written to a local file the user controls,
+// never returned across the Wails bridge ([M7]/[M9]).
 //
-// network is the display network ("mainnet"/"simulator"); registrationHex is
-// optional (the address can be papered before it is registered).
-func (a *App) RenderPaperWallet(network, address, seed, registrationHex string) map[string]interface{} {
+// network is the display network; registrationHex is optional (the address can
+// be backed up before it is registered).
+func (a *App) SaveColdBackup(network, address, seed, registrationHex string) map[string]interface{} {
 	if refused := a.genesisGuard(); refused != nil {
 		return refused
 	}
 
-	netLabel := "MAINNET"
-	if genesis.Network(network) == genesis.NetworkSimulator {
-		netLabel = "SIMULATOR"
-	}
-
 	savePath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		DefaultFilename: "dero-cold-wallet.html",
-		Title:           "Save Cold Wallet (contains the SECRET seed)",
+		DefaultFilename: "dero-cold-wallet.txt",
+		Title:           "Save Cold Wallet backup (contains the SECRET seed)",
 		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "HTML paper wallet (*.html)", Pattern: "*.html"},
+			{DisplayName: "Text backup (*.txt)", Pattern: "*.txt"},
 		},
 	})
 	if err != nil {
@@ -225,16 +221,11 @@ func (a *App) RenderPaperWallet(network, address, seed, registrationHex string) 
 		return map[string]interface{}{"success": false, "cancelled": true}
 	}
 
-	if err := genesis.WritePaperWallet(savePath, netLabel, hologramVersion(), address, seed, registrationHex); err != nil {
+	if err := genesis.WriteBackupText(savePath, genesis.Network(network), time.Now().Unix(), address, seed, registrationHex); err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error()}
 	}
 	return map[string]interface{}{"success": true, "path": savePath}
 }
-
-// hologramVersion returns a short version string for the paper-wallet footer.
-// Kept tiny and local; wire to the real build version if/when one is threaded
-// through the App.
-func hologramVersion() string { return "HOLOGRAM" }
 
 // hotNetwork maps the app's current node network onto the genesis.Network model.
 func (a *App) hotNetwork() genesis.Network {

@@ -539,8 +539,6 @@ export function RemoveSearchExclusion(arg1:string):Promise<Record<string, any>>;
 
 export function RemoveTrackedToken(arg1:string):Promise<Record<string, any>>;
 
-export function RenderPaperWallet(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
-
 export function RequestInterceptor(arg1:string):Promise<Record<string, any>>;
 
 export function ResetHologram(arg1:string):Promise<Record<string, any>>;
@@ -568,6 +566,8 @@ export function RevokeAppPermissions(arg1:string):Promise<Record<string, any>>;
 export function RevokeXSWDConnection(arg1:string):Promise<Record<string, any>>;
 
 export function SaveBinaryFileWithDialog(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
+
+export function SaveColdBackup(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
 export function SaveFileWithDialog(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 

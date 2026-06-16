@@ -10,8 +10,6 @@ require (
 	github.com/deroproject/graviton v0.0.0-20220130070622-2c248a53b2e1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/makiuchi-d/gozxing v0.1.1
-	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/wailsapp/wails/v2 v2.11.0
 )
 
@@ -20,7 +18,7 @@ require (
 // requires. That work is in open upstream PRs, not yet merged or tagged, so it is
 // pinned here via the public fork. Repoint to github.com/DEROFDN/derohe and drop
 // this replace once a release tag includes it.
-replace github.com/deroproject/derohe => github.com/DHEBP/derohe v0.0.0-20260613172821-92b800569ca4
+replace github.com/deroproject/derohe => github.com/DHEBP/derohe v0.0.0-20260616171338-1082d8054b00
 
 require (
 	github.com/VictoriaMetrics/metrics v1.23.1 // indirect

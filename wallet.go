@@ -365,11 +365,26 @@ func (a *App) OpenWallet(filePath, password string) map[string]interface{} {
 		// encrypted balances are fetched and kept fresh by the ongoing sync.
 		// Without this, non-native token balances would read 0 until the user
 		// re-adds them. Errors are benign (e.g. "token already added").
-		for _, t := range loadTrackedTokens() {
-			if err := wallet.TokenAdd(crypto.HashHexToHash(strings.ToLower(t.SCID))); err != nil {
-				continue
+		//
+		// Defensive: walletapi's TokenAdd writes to account.EntriesNative without
+		// a nil-guard (its sibling InsertReplace has one), so on a freshly
+		// restored/unsynced wallet — common for cold-genesis wallets, which are
+		// unregistered until broadcast — EntriesNative is nil and TokenAdd panics
+		// ("assignment to entry in nil map"). The real fix is in the derohe fork;
+		// here we recover so a token-tracking convenience can never crash the app
+		// during an otherwise-successful wallet open.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					a.logToConsole(fmt.Sprintf("[WARN] skipped tracked-token registration (wallet not sync-ready): %v", r))
+				}
+			}()
+			for _, t := range loadTrackedTokens() {
+				if err := wallet.TokenAdd(crypto.HashHexToHash(strings.ToLower(t.SCID))); err != nil {
+					continue
+				}
 			}
-		}
+		}()
 	}()
 
 	result := map[string]interface{}{

@@ -1074,10 +1074,6 @@ export function RemoveTrackedToken(arg1) {
   return window['go']['main']['App']['RemoveTrackedToken'](arg1);
 }
 
-export function RenderPaperWallet(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['RenderPaperWallet'](arg1, arg2, arg3, arg4);
-}
-
 export function RequestInterceptor(arg1) {
   return window['go']['main']['App']['RequestInterceptor'](arg1);
 }
@@ -1132,6 +1128,10 @@ export function RevokeXSWDConnection(arg1) {
 
 export function SaveBinaryFileWithDialog(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveBinaryFileWithDialog'](arg1, arg2, arg3, arg4);
+}
+
+export function SaveColdBackup(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveColdBackup'](arg1, arg2, arg3, arg4);
 }
 
 export function SaveFileWithDialog(arg1, arg2, arg3, arg4) {
