@@ -37,7 +37,7 @@ func TestGenesis_RefusesUnderSimulatorMode(t *testing.T) {
 	}
 
 	// VerifyColdWallet is gated the same way.
-	vres := a.VerifyColdWallet(testSeedRoot, "", "")
+	vres := a.VerifyColdWallet(testSeedRoot, "", "mainnet", "")
 	if ok, _ := vres["success"].(bool); ok {
 		t.Fatal("VerifyColdWallet must refuse in simulator mode")
 	}

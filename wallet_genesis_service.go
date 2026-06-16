@@ -81,17 +81,22 @@ func (a *App) GenerateColdWallet(network string, languageID int, persist bool) m
 // VerifyColdWallet independently re-derives an address from a seed (and, if a
 // registration hex is supplied, validates it offline) — the cold-storage trust
 // check. Refused under simulator mode for the same rendering reason as genesis.
-func (a *App) VerifyColdWallet(seed, address, registrationHex string) map[string]interface{} {
+// The seed crosses the bridge only as the inbound argument; it is never echoed
+// back in the result (R2/[M7]).
+func (a *App) VerifyColdWallet(seed, address, network, registrationHex string) map[string]interface{} {
 	if refused := a.genesisGuard(); refused != nil {
 		return refused
 	}
-	// Delegates to the subpackage verifier (ported in a following step alongside
-	// the registration logic). Stub envelope keeps the binding shape stable.
+	res, err := genesis.Verify(seed, address, genesis.Network(network), registrationHex)
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}
+	}
 	return map[string]interface{}{
-		"success": false,
-		"error":   "VerifyColdWallet not yet implemented",
-		"seed":    "", // never echo the seed back
-		"_args":   map[string]string{"address": address, "registrationHex": registrationHex},
+		"success":           true,
+		"addressMatch":      res.AddressMatch,
+		"hasRegistration":   res.HasRegistration,
+		"registrationValid": res.RegistrationValid,
+		"bindsToKey":        res.BindsToKey,
 	}
 }
 
