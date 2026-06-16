@@ -64,3 +64,44 @@ func TestGenesis_GeneratesUnderMainnet(t *testing.T) {
 // testSeedRoot mirrors the subpackage's burned vector for the refuse-path check
 // (the value is never derived here — the guard fires before any derivation).
 const testSeedRoot = "anybody auburn down awning nightly eels icon ungainly jump upstairs foolish swung rudely kangaroo catch gossip upcoming kennel echo dwindling bifocals potato jewels jailed bifocals"
+
+// MineRegistration is refused in simulator mode (same guard as genesis).
+func TestMineRegistration_RefusesUnderSimulatorMode(t *testing.T) {
+	withNetworkMode(t, NetworkSimulator)
+	a := &App{}
+	res := a.MineRegistration(testSeedRoot, "mainnet")
+	if ok, _ := res["success"].(bool); ok {
+		t.Fatal("MineRegistration must refuse in simulator mode")
+	}
+}
+
+// A second MineRegistration while one is in progress is rejected; CancelColdRegistration
+// clears it. (a.ctx is nil here so events are no-ops; we drive the state machine
+// directly via the wrapper and a real but immediately-cancelled mine.)
+func TestMineRegistration_RejectsConcurrentAndCancels(t *testing.T) {
+	withNetworkMode(t, NetworkMainnet)
+	a := &App{}
+
+	// Start a real mine (background grind), then immediately assert a second
+	// start is rejected and cancel stops it.
+	res := a.MineRegistration(testSeedRoot, "mainnet")
+	if ok, _ := res["success"].(bool); !ok {
+		t.Fatalf("first MineRegistration should start; got %v", res["error"])
+	}
+	t.Cleanup(func() { a.CancelColdRegistration() }) // ensure the grind never outlives the test
+
+	second := a.MineRegistration(testSeedRoot, "mainnet")
+	if ok, _ := second["success"].(bool); ok {
+		t.Fatal("second concurrent MineRegistration must be rejected")
+	}
+
+	cancel := a.CancelColdRegistration()
+	if ok, _ := cancel["success"].(bool); !ok {
+		t.Fatalf("CancelColdRegistration should succeed while mining; got %v", cancel["error"])
+	}
+	// cancelling again (nothing running) is a clean no-op error, not a panic.
+	again := a.CancelColdRegistration()
+	if ok, _ := again["success"].(bool); ok {
+		t.Fatal("CancelColdRegistration with nothing running should report no-op")
+	}
+}
