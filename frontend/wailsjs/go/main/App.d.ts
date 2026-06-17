@@ -529,8 +529,6 @@ export function ResolveDropPaths(arg1:Array<string>):Promise<Record<string, any>
 
 export function RespondToXSWDRequest(arg1:string,arg2:boolean,arg3:string):Promise<void>;
 
-export function RespondToXSWDRequestConfirmDestroy(arg1:string,arg2:boolean,arg3:string):Promise<void>;
-
 export function RespondToXSWDRequestWithPermissions(arg1:string,arg2:boolean,arg3:string,arg4:Array<string>):Promise<void>;
 
 export function RestoreWallet(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;

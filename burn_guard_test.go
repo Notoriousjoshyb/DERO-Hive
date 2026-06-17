@@ -4,6 +4,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/deroproject/derohe/cryptography/crypto"
@@ -79,59 +83,54 @@ func TestDetectDestructiveBurn(t *testing.T) {
 	}
 }
 
-// TestShouldBlockBurn locks in the destruction POLICY: a destructive native-DERO burn is
-// blocked UNLESS the user explicitly confirmed it. The confirmDestroy flag must only matter
-// when the burn is genuinely destructive -- it must never weaken a normal transfer or a
-// contract deposit. This is the exact decision that would have stopped the incident, plus
-// the deliberate-burn override.
+// TestShouldBlockBurn locks in the destruction POLICY: a destructive native-DERO burn (zero
+// SCID, no contract) is ALWAYS blocked, with no override. HOLOGRAM never burns DERO. The block
+// must apply only to the destructive case -- it must never affect a normal transfer or a
+// contract deposit. This is the exact decision that would have stopped the incident. If anyone
+// ever reintroduces an override path, the "always blocked" cases below will fail.
 func TestShouldBlockBurn(t *testing.T) {
 	tokenSCID := crypto.HashHexToHash("a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90")
 
 	cases := []struct {
-		name           string
-		transfers      []rpc.Transfer
-		hasSCCall      bool
-		confirmDestroy bool
-		wantBurn       uint64
-		wantBlocked    bool
+		name        string
+		transfers   []rpc.Transfer
+		hasSCCall   bool
+		wantBurn    uint64
+		wantBlocked bool
 	}{
 		{
-			name:           "destructive burn, NOT confirmed -> blocked (the incident)",
-			transfers:      []rpc.Transfer{{Burn: 1500000000, SCID: crypto.ZEROHASH}},
-			confirmDestroy: false,
-			wantBurn:       1500000000,
-			wantBlocked:    true,
+			name:        "destructive native burn -> ALWAYS blocked (the incident)",
+			transfers:   []rpc.Transfer{{Burn: 1500000000, SCID: crypto.ZEROHASH}},
+			wantBurn:    1500000000,
+			wantBlocked: true,
 		},
 		{
-			name:           "destructive burn, confirmed -> allowed (deliberate burn)",
-			transfers:      []rpc.Transfer{{Burn: 1500000000, SCID: crypto.ZEROHASH}},
-			confirmDestroy: true,
-			wantBlocked:    false,
+			name:        "small destructive native burn -> ALWAYS blocked (no override)",
+			transfers:   []rpc.Transfer{{Burn: 1, SCID: crypto.ZEROHASH}},
+			wantBurn:    1,
+			wantBlocked: true,
 		},
 		{
-			name:           "contract deposit burn, confirm flag set -> still allowed, flag is a no-op",
-			transfers:      []rpc.Transfer{{Burn: 5, SCID: crypto.ZEROHASH}},
-			hasSCCall:      true,
-			confirmDestroy: true,
-			wantBlocked:    false,
+			name:        "contract deposit burn -> allowed (deposit, not destruction)",
+			transfers:   []rpc.Transfer{{Burn: 5, SCID: crypto.ZEROHASH}},
+			hasSCCall:   true,
+			wantBlocked: false,
 		},
 		{
-			name:           "token transfer (non-zero SCID), confirm flag set -> allowed, flag is a no-op",
-			transfers:      []rpc.Transfer{{Burn: 1000, SCID: tokenSCID}},
-			confirmDestroy: true,
-			wantBlocked:    false,
+			name:        "token transfer (non-zero SCID) -> allowed (normal token transfer)",
+			transfers:   []rpc.Transfer{{Burn: 1000, SCID: tokenSCID}},
+			wantBlocked: false,
 		},
 		{
-			name:           "token transfer, no confirm -> allowed (normal token transfer)",
-			transfers:      []rpc.Transfer{{Burn: 1000, SCID: tokenSCID}},
-			confirmDestroy: false,
-			wantBlocked:    false,
+			name:        "plain native send, no burn -> allowed",
+			transfers:   []rpc.Transfer{{Amount: 100000, SCID: crypto.ZEROHASH}},
+			wantBlocked: false,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotBurn, gotBlocked := shouldBlockBurn(tc.transfers, tc.hasSCCall, tc.confirmDestroy)
+			gotBurn, gotBlocked := shouldBlockBurn(tc.transfers, tc.hasSCCall)
 			if gotBlocked != tc.wantBlocked {
 				t.Fatalf("blocked = %v, want %v", gotBlocked, tc.wantBlocked)
 			}
@@ -139,5 +138,63 @@ func TestShouldBlockBurn(t *testing.T) {
 				t.Errorf("burn amount = %d, want %d", gotBurn, tc.wantBurn)
 			}
 		})
+	}
+}
+
+// TestNoBurnOverrideReintroduced is a source-level sentinel that fails the build if anyone
+// reintroduces a way to bypass the burn prohibition. HOLOGRAM must never burn DERO: there is
+// no confirmDestroy flag, no override parameter, no approve path for a destructive burn. If a
+// future change brings any of that back, this test fails loudly instead of silently shipping a
+// path that can destroy a user's coins. To deliberately burn DERO, users must use the CLI.
+func TestNoBurnOverrideReintroduced(t *testing.T) {
+	// Scan the Go and frontend sources for tokens that only exist when an override is present.
+	roots := []string{".", "frontend/src"}
+	banned := []string{"confirmDestroy", "ConfirmDestroy"}
+
+	skipDir := func(name string) bool {
+		switch name {
+		case "node_modules", "dist", ".git", ".task", "build", "bin":
+			return true
+		}
+		return false
+	}
+
+	var offenders []string
+	for _, root := range roots {
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() {
+				if skipDir(info.Name()) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			switch filepath.Ext(path) {
+			case ".go", ".svelte", ".js", ".ts":
+			default:
+				return nil
+			}
+			// This sentinel test file legitimately names the banned tokens; skip it.
+			if filepath.Base(path) == "burn_guard_test.go" {
+				return nil
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return nil
+			}
+			for _, tok := range banned {
+				if strings.Contains(string(data), tok) {
+					offenders = append(offenders, fmt.Sprintf("%s contains %q", path, tok))
+				}
+			}
+			return nil
+		})
+	}
+
+	if len(offenders) > 0 {
+		t.Fatalf("burn-override token reintroduced (HOLOGRAM must never burn DERO):\n  %s",
+			strings.Join(offenders, "\n  "))
 	}
 }

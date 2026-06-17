@@ -11,13 +11,18 @@
   let walletPath = '';
   let error = '';
   let isLoading = false;
-  let burnConfirmText = ''; // type-to-confirm input for destructive native-DERO burns
 
   const ZERO_SCID = '0000000000000000000000000000000000000000000000000000000000000000';
 
-  // A request carries a smart contract call when it has a top-level scid (with sc_rpc/args)
-  // or parsed sc_args. A burn routed to a contract is a deposit, not destruction.
-  $: hasSCCall = !!(request?.payload?.scid) ||
+  // A request carries a real smart contract call only when there is actual SC invocation
+  // data -- an entrypoint, or a non-empty sc_data/sc_args array. This mirrors the backend:
+  // parseXSWDScArgs (wallet.go) yields args only when sc_rpc carries an entrypoint, so a bare
+  // scid string with no entrypoint is NOT an SC call. Without this mirror, a dApp could send a
+  // scid with no sc_rpc to make the UI show "Approve" while the backend blocks it as a burn.
+  // A burn routed to a real contract is a deposit, not destruction.
+  $: hasSCCall =
+    (typeof request?.payload?.entrypoint === 'string' && request.payload.entrypoint.length > 0) ||
+    (Array.isArray(request?.payload?.sc_data) && request.payload.sc_data.length > 0) ||
     (Array.isArray(request?.payload?.sc_args) && request.payload.sc_args.length > 0);
 
   // Total native-DERO (zero-SCID) burn across the request's transfers.
@@ -25,21 +30,12 @@
     .filter(t => !t.scid || t.scid === ZERO_SCID)
     .reduce((sum, t) => sum + (typeof t.burn === 'number' ? t.burn : 0), 0);
 
-  // DESTRUCTIVE: a native-DERO burn with no contract attached. These coins are destroyed
-  // permanently and sent to no one. This is the case that requires explicit type-to-confirm.
-  $: isDestructiveBurn = nativeBurnTotal > 0 && !hasSCCall;
+  // BLOCKED: a native-DERO burn with no contract attached destroys the coins permanently and
+  // sends them to no one. HOLOGRAM never burns DERO -- this request is rejected outright, with
+  // no approve path. Anyone who genuinely intends to burn DERO must use the DERO CLI wallet.
+  $: isBurnBlocked = nativeBurnTotal > 0 && !hasSCCall;
+  $: blockedBurnAmount = Math.round(nativeBurnTotal / 100000);
 
-  // The whole-number DERO amount used in the confirm phrase, e.g. "BURN 15000".
-  $: burnConfirmAmount = Math.round(nativeBurnTotal / 100000);
-  $: burnConfirmPhrase = `BURN ${burnConfirmAmount}`;
-  $: burnConfirmMatched = burnConfirmText.trim().toUpperCase().replace(/\s+/g, ' ') === burnConfirmPhrase;
-
-  // Reset the confirm input whenever the active request changes (tracked by id).
-  let _lastBurnReqId = null;
-  $: if (request?.id !== _lastBurnReqId) {
-    _lastBurnReqId = request?.id ?? null;
-    burnConfirmText = '';
-  }
   let recentWallets = [];
   let recentWalletsInfo = [];
   let showWalletSwitcher = false;
@@ -238,11 +234,11 @@
     isLoading = true;
     error = '';
 
-    // Defensive backstop: a destructive native-DERO burn can only be approved once the
-    // type-to-confirm phrase matches. The backend enforces this too (it requires the
-    // confirmDestroy flag), but refuse here as well so the flag is never sent unconfirmed.
-    if (isDestructiveBurn && !burnConfirmMatched) {
-      error = `Type "${burnConfirmPhrase}" to confirm you want to permanently destroy these coins.`;
+    // Hard backstop: HOLOGRAM never burns DERO. A native-DERO burn with no contract attached
+    // can never be approved here -- it is rejected at the backend too. This refuses any attempt
+    // to approve one, so there is no path through the UI that broadcasts a destructive burn.
+    if (isBurnBlocked) {
+      error = 'HOLOGRAM does not allow burning DERO. To deliberately burn DERO, use the DERO CLI wallet.';
       isLoading = false;
       return;
     }
@@ -250,11 +246,10 @@
     try {
       // For connect requests, pass the granted permissions
       const permissions = request.type === 'connect' ? getGrantedPermissionsList() : null;
-      await approveWalletRequest(request.id, password, null, permissions, isDestructiveBurn && burnConfirmMatched);
+      await approveWalletRequest(request.id, password, null, permissions);
       password = ''; // Clear password after use
       walletPath = ''; // Reset for next time
       grantedPermissions = {}; // Reset permissions
-      burnConfirmText = ''; // Clear burn confirmation
 
       // Restore focus to main document to prevent iframe from capturing scroll
       restoreFocus();
@@ -464,31 +459,31 @@
                 {@const totalFees = transferFees + topLevelFees}
                 {@const totalDero = totalAmount + totalBurn + totalFees}
 
-                <!-- DESTRUCTIVE BURN: native-DERO burn with no contract attached. These coins
-                     are destroyed permanently and sent to no one. Lead with the danger. -->
-                {#if isDestructiveBurn}
+                <!-- BLOCKED BURN: native-DERO burn with no contract attached destroys the coins
+                     permanently and sends them to no one. HOLOGRAM never burns DERO, so this
+                     request is rejected outright -- there is no approve path. When blocked, we
+                     show only this notice and suppress the cost breakdown below, since nothing
+                     here is approvable. -->
+                {#if isBurnBlocked}
                   <div class="modal-burn-danger">
                     <div class="modal-burn-danger-title">
-                      <span class="modal-burn-danger-ic">⚠</span> PERMANENT DESTRUCTION
+                      <span class="modal-burn-danger-ic">⚠</span> REQUEST BLOCKED
                     </div>
-                    <div class="modal-burn-danger-amount">−{(totalBurn / 100000).toLocaleString()} DERO</div>
+                    <div class="modal-burn-danger-amount">−{blockedBurnAmount.toLocaleString()} DERO</div>
                     <div class="modal-burn-danger-copy">
-                      This request <strong>destroys {(totalBurn / 100000).toLocaleString()} DERO forever</strong>.
-                      The coins are removed from existence — they are <strong>not sent to anyone</strong>
-                      and <strong>cannot be recovered</strong>. A burn with no smart contract attached
-                      is never a way to transfer funds.
+                      This request would <strong>permanently destroy {blockedBurnAmount.toLocaleString()} DERO</strong>.
+                      A burn with no smart contract attached sends the coins to <strong>no one</strong>
+                      and <strong>cannot be undone</strong>. <strong>HOLOGRAM does not burn DERO</strong>,
+                      so this request has been blocked.
                     </div>
-                    {#if request.payload.transfers[0]?.destination}
-                      <div class="modal-burn-danger-norecipient">
-                        ◇ RECIPIENT: <span class="modal-burn-strike">{request.payload.transfers[0].destination.slice(0,12)}…</span>
-                        — no contract attached, funds go to NO ONE
-                      </div>
-                    {/if}
+                    <div class="modal-burn-danger-norecipient">
+                      ◇ To deliberately burn DERO, use the DERO CLI wallet.
+                    </div>
                   </div>
                 {/if}
 
                 <!-- Show total DERO cost -->
-                {#if deroTransfers.length > 0}
+                {#if deroTransfers.length > 0 && !isBurnBlocked}
                   <div class="modal-tx-field">
                     <div class="modal-tx-label">TOTAL COST</div>
                     <div class="modal-tx-amount modal-tx-amount-total">
@@ -497,21 +492,16 @@
                   </div>
                 {/if}
 
-                <!-- Show breakdown of costs if any non-zero values -->
-                {#if totalAmount > 0 || totalBurn > 0 || totalFees > 0}
+                <!-- Show breakdown of costs if any non-zero values. Suppressed entirely for a
+                     blocked burn (nothing here is approvable). A burn that reaches this point
+                     therefore always routes to a contract -- a deposit, not destruction. -->
+                {#if !isBurnBlocked && (totalAmount > 0 || totalBurn > 0 || totalFees > 0)}
                   <div class="modal-tx-breakdown">
                     <div class="modal-tx-label modal-tx-label-small">BREAKDOWN</div>
                     {#if totalBurn > 0}
                       <div class="modal-tx-breakdown-item">
-                        <!-- A burn routed to a contract is a deposit, not destruction. Only an
-                             actual destroy-burn (no contract) is labeled "Burn". -->
-                        {#if hasSCCall}
-                          <span class="modal-tx-breakdown-label">Deposit to contract:</span>
-                          <span class="modal-tx-breakdown-value">{(totalBurn / 100000).toLocaleString()} DERO</span>
-                        {:else}
-                          <span class="modal-tx-breakdown-label modal-tx-breakdown-label-danger">Burn (destroyed):</span>
-                          <span class="modal-tx-breakdown-value modal-tx-breakdown-value-danger">{(totalBurn / 100000).toLocaleString()} DERO</span>
-                        {/if}
+                        <span class="modal-tx-breakdown-label">Deposit to contract:</span>
+                        <span class="modal-tx-breakdown-value">{(totalBurn / 100000).toLocaleString()} DERO</span>
                       </div>
                     {/if}
                     {#if totalFees > 0}
@@ -529,10 +519,9 @@
                   </div>
                 {/if}
 
-                <!-- Show destination only when funds actually go somewhere. For a destructive
-                     burn there is no recipient, so the destination is shown (struck through)
-                     inside the danger banner above instead. -->
-                {#if request.payload.transfers[0]?.destination && !isDestructiveBurn}
+                <!-- Show destination only when funds actually go somewhere. For a blocked burn
+                     there is no recipient and nothing is approvable, so it is suppressed. -->
+                {#if request.payload.transfers[0]?.destination && !isBurnBlocked}
                   <div class="modal-tx-field">
                     <div class="modal-tx-label">DESTINATION</div>
                     <div class="modal-tx-destination">
@@ -783,35 +772,8 @@
               bind:value={password}
               placeholder="Enter wallet password..."
               class="modal-input wallet-password-input"
-              on:keydown={(e) => e.key === 'Enter' && !isDestructiveBurn && handleApprove()}
+              on:keydown={(e) => e.key === 'Enter' && !isBurnBlocked && handleApprove()}
             />
-          </div>
-        </div>
-      {/if}
-
-      <!-- Type-to-confirm gate for a destructive native-DERO burn. Shown regardless of
-           wallet-open state. The Destroy button stays disabled until the phrase matches. -->
-      {#if isDestructiveBurn}
-        <div class="modal-burn-confirm">
-          <div class="modal-burn-confirm-prompt">
-            To approve this destruction, type
-            <code class="modal-burn-confirm-phrase">{burnConfirmPhrase}</code> below:
-          </div>
-          <input
-            type="text"
-            bind:value={burnConfirmText}
-            placeholder="Type the phrase to enable…"
-            autocomplete="off"
-            spellcheck="false"
-            class="modal-input modal-burn-confirm-input"
-            class:matched={burnConfirmMatched}
-          />
-          <div class="modal-burn-confirm-hint" class:ok={burnConfirmMatched}>
-            {#if burnConfirmMatched}
-              ✓ Phrase matches — destruction can be approved.
-            {:else}
-              Approve stays disabled until the phrase matches exactly.
-            {/if}
           </div>
         </div>
       {/if}
@@ -825,26 +787,23 @@
 
     <!-- Actions -->
     <div class="modal-panel-actions">
-      <button
-        on:click={handleDeny}
-        class="modal-panel-btn modal-panel-btn-deny"
-        disabled={isLoading}
-      >
-        Deny
-      </button>
-      {#if isDestructiveBurn}
+      {#if isBurnBlocked}
+        <!-- A blocked burn has no approve path at all -- only a way to dismiss it. -->
         <button
-          on:click={handleApprove}
-          class="modal-panel-btn modal-panel-btn-destroy"
-          disabled={isLoading || !burnConfirmMatched}
+          on:click={handleDeny}
+          class="modal-panel-btn modal-panel-btn-approve"
+          disabled={isLoading}
         >
-          {#if isLoading}
-            Processing...
-          {:else}
-            Destroy {burnConfirmAmount.toLocaleString()} DERO
-          {/if}
+          Dismiss
         </button>
       {:else}
+        <button
+          on:click={handleDeny}
+          class="modal-panel-btn modal-panel-btn-deny"
+          disabled={isLoading}
+        >
+          Deny
+        </button>
         <button
           on:click={handleApprove}
           class="modal-panel-btn modal-panel-btn-approve"

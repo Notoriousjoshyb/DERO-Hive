@@ -154,7 +154,7 @@ export function addExternalRequest(request, onApprove, onDeny) {
   walletRequests.update(reqs => [...reqs, fullRequest]);
 }
 
-export async function approveWalletRequest(id, password, txid = null, permissions = null, confirmDestroy = false) {
+export async function approveWalletRequest(id, password, txid = null, permissions = null) {
   // Find the request
   const requests = get(walletRequests);
   const request = requests.find(r => r.id === id);
@@ -163,9 +163,8 @@ export async function approveWalletRequest(id, password, txid = null, permission
     // Log to history
     logWalletRequest(request, 'approved', txid);
 
-    // We resolve with the password and permissions so the caller can use them.
-    // confirmDestroy is set only for an explicitly type-to-confirmed destructive burn.
-    request.resolve({ approved: true, password, permissions, confirmDestroy });
+    // We resolve with the password and permissions so the caller can use them
+    request.resolve({ approved: true, password, permissions });
 
     // Remove from queue
     walletRequests.update(reqs => reqs.filter(r => r.id !== id));

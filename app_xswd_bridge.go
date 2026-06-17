@@ -12,12 +12,3 @@ func (a *App) RespondToXSWDRequestWithPermissions(reqID string, approved bool, p
 		a.xswdServer.ProcessApprovalWithPermissions(reqID, approved, password, permissions)
 	}
 }
-
-// RespondToXSWDRequestConfirmDestroy approves a request that carries a destructive
-// native-DERO burn. The frontend calls this only after the user passes type-to-confirm;
-// it injects the confirmDestroy flag so the backend burn guard allows the destruction.
-func (a *App) RespondToXSWDRequestConfirmDestroy(reqID string, approved bool, password string) {
-	if a.xswdServer != nil {
-		a.xswdServer.ProcessApprovalConfirmDestroy(reqID, approved, password)
-	}
-}

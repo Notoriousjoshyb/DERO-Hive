@@ -1069,25 +1069,16 @@ func (s *XSWDServer) sendRawJSON(conn *websocket.Conn, payload interface{}) {
 
 // ProcessApproval is called from App (legacy, no permissions)
 func (s *XSWDServer) ProcessApproval(reqID string, approved bool, password string) {
-	s.processApproval(reqID, approved, password, nil, false)
+	s.processApproval(reqID, approved, password, nil)
 }
 
 // ProcessApprovalWithPermissions is called from App with explicit permissions
 func (s *XSWDServer) ProcessApprovalWithPermissions(reqID string, approved bool, password string, permissions []string) {
-	s.processApproval(reqID, approved, password, permissions, false)
+	s.processApproval(reqID, approved, password, permissions)
 }
 
-// ProcessApprovalConfirmDestroy approves a request whose destructive native-DERO burn was
-// explicitly type-to-confirmed by the user. It injects the confirmDestroy flag so the
-// backend burn guard permits the destruction.
-func (s *XSWDServer) ProcessApprovalConfirmDestroy(reqID string, approved bool, password string) {
-	s.processApproval(reqID, approved, password, nil, true)
-}
-
-// processApproval is the shared approval path. confirmDestroy, when true, is injected into
-// the request params so the burn guard in InternalWalletCall allows a deliberate native-DERO
-// burn that the user explicitly confirmed.
-func (s *XSWDServer) processApproval(reqID string, approved bool, password string, permissions []string, confirmDestroy bool) {
+// processApproval is the shared approval path.
+func (s *XSWDServer) processApproval(reqID string, approved bool, password string, permissions []string) {
 	s.pendingLock.Lock()
 	req, ok := s.pendingRequests[reqID]
 	s.pendingLock.Unlock()
@@ -1121,15 +1112,6 @@ func (s *XSWDServer) processApproval(reqID string, approved bool, password strin
 	if !approved {
 		req.RespChan <- fmt.Errorf("User denied request")
 		return
-	}
-
-	// Inject explicit destruction confirmation so the burn guard permits a deliberate,
-	// user-confirmed native-DERO burn. Without this flag the guard rejects it.
-	if confirmDestroy {
-		if req.Params == nil {
-			req.Params = map[string]interface{}{}
-		}
-		req.Params["confirmDestroy"] = true
 	}
 
 	// Execute wallet call

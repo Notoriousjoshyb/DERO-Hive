@@ -1054,10 +1054,6 @@ export function RespondToXSWDRequest(arg1, arg2, arg3) {
   return window['go']['main']['App']['RespondToXSWDRequest'](arg1, arg2, arg3);
 }
 
-export function RespondToXSWDRequestConfirmDestroy(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RespondToXSWDRequestConfirmDestroy'](arg1, arg2, arg3);
-}
-
 export function RespondToXSWDRequestWithPermissions(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RespondToXSWDRequestWithPermissions'](arg1, arg2, arg3, arg4);
 }
