@@ -144,16 +144,14 @@
       let result = null;
       let useXSWD = false;
       
-      // If local wallet is open, ALWAYS try GetTrackedTokens first (it includes native DERO)
+      // If local wallet is open, try GetTrackedTokens first. The list is
+      // contract-assets only — native DERO is the base coin and lives on the
+      // Dashboard, not here.
       if (localWalletOpen) {
         result = await GetTrackedTokens();
         if (result.success) {
           tokens = result.tokens || [];
-          tokens.sort((a, b) => {
-            if (a.native) return -1;
-            if (b.native) return 1;
-            return (b.balance || 0) - (a.balance || 0);
-          });
+          tokens.sort((a, b) => (b.balance || 0) - (a.balance || 0));
           error = null;
           loading = false;
           maybeAutoScan();
@@ -166,11 +164,7 @@
         result = await GetTokenPortfolio();
         if (result.success) {
           tokens = result.tokens || [];
-          tokens.sort((a, b) => {
-            if (a.native) return -1;
-            if (b.native) return 1;
-            return (b.balance || 0) - (a.balance || 0);
-          });
+          tokens.sort((a, b) => (b.balance || 0) - (a.balance || 0));
           useXSWD = true;
           error = null;
           loading = false;
@@ -236,7 +230,7 @@
     }
   }
 
-  // Auto-scan once per mount when the portfolio holds nothing but native DERO —
+  // Auto-scan once per mount when the portfolio holds no contract tokens —
   // mirrors Engram's first-view rescan. Runs quietly: a no-result auto-scan
   // shows no toast, and if Gnomon isn't running the backend just returns an
   // error we swallow (the manual Scan button surfaces it on demand).
@@ -244,8 +238,9 @@
     if (scanning || !localWalletOpen) return;
     const addr = $walletState.address;
     if (!addr || autoScannedWallets.has(addr)) return;
-    const onlyNative = tokens.length <= 1 && tokens.every(t => t.native);
-    if (!onlyNative) return;
+    // No contract tokens held yet — auto-scan to discover any. (Native DERO is
+    // never in this list, so an empty list means "no tokens".)
+    if (tokens.length > 0) return;
     // Don't auto-scan against a half-built index. Right after a filter-change
     // re-index (or any cold start), Gnomon's candidate set isn't complete yet, so
     // a scan would find nothing and falsely conclude the wallet holds no tokens.
@@ -375,7 +370,8 @@
   {:else if tokens.length === 0}
     <div class="portfolio-empty">
       <Coins size={24} strokeWidth={1} />
-      <p>No tokens found</p>
+      <p>No contract tokens yet</p>
+      <p class="empty-hint">This list holds DERO-native contract assets. Your DERO balance lives on the Dashboard.</p>
       {#if localWalletOpen && !gnomonRunning}
         <p class="empty-hint">Start Gnomon in Settings to auto-detect tokens your wallet holds.</p>
       {/if}
@@ -390,17 +386,15 @@
   {:else}
     <div class="token-list">
       {#each tokens as token}
-        <div class="token-row" class:native={token.native}>
+        <div class="token-row">
           <div class="token-icon">
             {#if shouldShowIcon(token.icon)}
               <img src={token.icon} alt={token.name || 'Token'} on:error={() => handleIconError(token.icon)} />
-            {:else if token.native}
-              <span class="dero-icon">◆</span>
             {:else}
               <span class="default-icon">⬡</span>
             {/if}
           </div>
-          
+
           <div class="token-info">
             <div class="token-name">
               {token.name || 'Unknown Token'}
@@ -410,11 +404,9 @@
             </div>
             <div class="token-scid">
               <span>{formatSCID(token.scid)}</span>
-              {#if !token.native}
-                <button class="copy-btn" on:click={() => copyToClipboard(token.scid)} title="Copy SCID">
-                  <Copy size={10} />
-                </button>
-              {/if}
+              <button class="copy-btn" on:click={() => copyToClipboard(token.scid)} title="Copy SCID">
+                <Copy size={10} />
+              </button>
             </div>
           </div>
           
@@ -428,7 +420,7 @@
                XSWD *server* is running — always, on most setups — which hid
                these buttons permanently rather than only for remote portfolios. -->
           <div class="row-actions">
-            {#if !token.native && localWalletOpen}
+            {#if localWalletOpen}
               <button
                 class="row-action"
                 on:click={() => openRefreshModal(token)}
@@ -446,7 +438,7 @@
                 <ArrowUp size={13} strokeWidth={2} />
               </button>
             {/if}
-            {#if !token.native && localWalletOpen}
+            {#if localWalletOpen}
               <button
                 class="row-action row-action-danger"
                 on:click={() => openRemoveModal(token)}
@@ -678,11 +670,7 @@
   .token-row:hover {
     background: var(--void-up);
   }
-  
-  .token-row.native {
-    background: linear-gradient(135deg, rgba(34, 211, 238, 0.05), transparent);
-  }
-  
+
   .token-icon {
     width: 36px;
     height: 36px;
@@ -699,11 +687,6 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-  }
-  
-  .dero-icon {
-    font-size: 18px;
-    color: var(--cyan-400);
   }
   
   .default-icon {
