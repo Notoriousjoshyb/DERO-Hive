@@ -141,6 +141,49 @@ func TestShouldBlockBurn(t *testing.T) {
 	}
 }
 
+// TestTransferTokenCannotBurnNativeDero reproduces the v1.0.6 incident at the source level:
+// native DERO sent through the token path (TransferToken) with the exact incident signature
+// -- native SCID, 1,500,000,000 atomic (15000 DERO), the user-selected ring size of 128 --
+// destroyed the coins because TransferToken built Burn:amount on the zero SCID. This test
+// exercises the SAME production constructor TransferToken now uses (buildTokenTransfer), so
+// it tests real code, not a re-implementation, and proves two things:
+//  1. the corrected constructor emits a NON-destructive transfer (Amount-credited, Burn 0),
+//     so shouldBlockBurn would NOT trip on a normal send;
+//  2. the guard wired into TransferToken catches the destructive shape -- had the old
+//     Burn:amount construction survived, shouldBlockBurn would have blocked it.
+// If anyone reverts buildTokenTransfer to Burn:amount, assertion (1) fails loudly.
+func TestTransferTokenCannotBurnNativeDero(t *testing.T) {
+	const nativeSCID = "0000000000000000000000000000000000000000000000000000000000000000"
+	const incidentAmount = uint64(1500000000) // 15000.00000 DERO, the exact burned amount
+	const incidentRing = uint64(128)          // user-selected ring size in the incident
+	_ = incidentRing                          // ring size is irrelevant to burn classification; pinned for provenance
+
+	dest := "dero1qy976ssakhfynpd4lnh39u7gw9spfzr9z55ckfd0yhrhsdr235glgqq28xlvm"
+
+	// (1) The real constructor TransferToken uses, with the incident's native SCID + amount.
+	transfers := buildTokenTransfer(nativeSCID, dest, incidentAmount)
+	if _, block := shouldBlockBurn(transfers, false); block {
+		t.Fatalf("buildTokenTransfer produced a destructive native-DERO transfer for a normal send -- it must credit Amount with Burn 0, not burn")
+	}
+	if got := transfers[0].Burn; got != 0 {
+		t.Fatalf("buildTokenTransfer set Burn=%d on a token send; must be 0 (the v1.0.6 incident was Burn:amount)", got)
+	}
+	if got := transfers[0].Amount; got != incidentAmount {
+		t.Fatalf("buildTokenTransfer set Amount=%d; the recipient must be credited the full %d", got, incidentAmount)
+	}
+
+	// (2) Counterfactual: the exact v1.0.6 destructive construction (Burn:amount on zero SCID)
+	// MUST be classified as a block, proving the guard wired into TransferToken covers it.
+	v106Destructive := []rpc.Transfer{{Destination: dest, Amount: 0, Burn: incidentAmount, SCID: crypto.ZEROHASH}}
+	burnAmt, block := shouldBlockBurn(v106Destructive, false)
+	if !block {
+		t.Fatalf("the v1.0.6 destructive shape (Burn=%d on zero SCID) was NOT blocked -- the TransferToken guard would not have stopped the incident", incidentAmount)
+	}
+	if burnAmt != incidentAmount {
+		t.Errorf("blocked burn amount = %d, want %d", burnAmt, incidentAmount)
+	}
+}
+
 // TestNoBurnOverrideReintroduced is a source-level sentinel that fails the build if anyone
 // reintroduces a way to bypass the burn prohibition. HOLOGRAM must never burn DERO: there is
 // no confirmDestroy flag, no override parameter, no approve path for a destructive burn. If a
