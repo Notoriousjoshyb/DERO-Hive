@@ -2660,16 +2660,10 @@ func (a *App) GetTrackedTokens() map[string]interface{} {
 
 	result := make([]map[string]interface{}, 0)
 
-	// Always include native DERO first if wallet is open
-	if localWalletOpen {
-		result = append(result, map[string]interface{}{
-			"scid":    deroSCID,
-			"name":    "DERO",
-			"symbol":  "DERO",
-			"balance": readNativeBalance(wallet),
-			"native":  true,
-		})
-	}
+	// Native DERO is the base coin, not a contract token: it is intentionally NOT
+	// listed here. Its balance and send/receive live on the Dashboard. Listing it
+	// among contract tokens routed native sends through the token-transfer path,
+	// which is reserved for non-zero SCIDs. This list is contract-assets only.
 
 	// For each tracked token, read the cached encrypted balance the wallet
 	// engine already maintains. A DERO token balance is an encrypted per-account

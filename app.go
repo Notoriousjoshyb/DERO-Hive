@@ -1027,6 +1027,12 @@ func (a *App) GetTokenPortfolio() map[string]interface{} {
 	if resultMap, ok := result.(map[string]interface{}); ok {
 		if balances, ok := resultMap["balances"].(map[string]interface{}); ok {
 			for scid, balance := range balances {
+				// Native DERO is the base coin, not a contract token. Skip the
+				// zero SCID so it never appears in the contract-token list (its
+				// balance/send live on the Dashboard). Mirrors GetTrackedTokens.
+				if scid == deroSCID {
+					continue
+				}
 				token := map[string]interface{}{
 					"scid":    scid,
 					"balance": balance,
@@ -1047,12 +1053,6 @@ func (a *App) GetTokenPortfolio() map[string]interface{} {
 							token["description"] = decodeHexString(fmt.Sprintf("%v", v.Value))
 						}
 					}
-				}
-
-				if scid == deroSCID {
-					token["name"] = "DERO"
-					token["symbol"] = "DERO"
-					token["native"] = true
 				}
 
 				tokens = append(tokens, token)
