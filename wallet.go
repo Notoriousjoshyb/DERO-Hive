@@ -1567,6 +1567,24 @@ func shouldBlockBurn(transfers []rpc.Transfer, hasSCCall bool) (uint64, bool) {
 	return detectDestructiveBurn(transfers, hasSCCall)
 }
 
+// buildTokenTransfer constructs the transfer for a plain wallet-to-wallet token (or native
+// DERO) send. The recipient is credited from Amount on the named SCID -- Burn must be 0.
+// Burn is value attached to a smart-contract call (the SC then credits it); with no SC on
+// the other end, Amount:0/Burn:amount would debit the sender and credit no one, destroying
+// the funds. (Engram's transferAsset uses Amount too.) This was the v1.0.6 incident: native
+// DERO sent through the token path with Burn:amount on the zero SCID was destroyed. Kept as
+// a standalone helper so the exact production construction is unit-testable without a wallet.
+func buildTokenTransfer(scid, destination string, amount uint64) []rpc.Transfer {
+	return []rpc.Transfer{
+		{
+			Destination: destination,
+			Amount:      amount, // token amount the recipient receives (on this SCID)
+			Burn:        0,
+			SCID:        crypto.HashHexToHash(scid),
+		},
+	}
+}
+
 // InternalWalletCall executes a wallet method directly using the embedded wallet
 func (a *App) InternalWalletCall(method string, params map[string]interface{}, password string) map[string]interface{} {
 	walletManager.Lock()
@@ -3451,18 +3469,23 @@ func (a *App) TransferToken(scid, destination string, amount uint64, password st
 
 	a.logToConsole(fmt.Sprintf("[Transfer] Transferring %d units of token %s to %s", amount, scid[:16]+"...", destination[:16]+"..."))
 
-	// Build transfer with asset (token). For a plain wallet-to-wallet token send,
-	// the recipient is credited from Amount on the named SCID — Burn must be 0.
-	// Burn is value attached to a smart-contract call (the SC then credits it);
-	// with no SC on the other end, Amount:0/Burn:amount would debit the sender and
-	// credit no one, destroying the tokens. Engram's transferAsset uses Amount too.
-	transfers := []rpc.Transfer{
-		{
-			Destination: destination,
-			Amount:      amount, // token amount the recipient receives (on this SCID)
-			Burn:        0,
-			SCID:        crypto.HashHexToHash(scid),
-		},
+	// Credit the recipient from Amount on the named SCID; never Burn (see helper for why).
+	transfers := buildTokenTransfer(scid, destination, amount)
+
+	// Centralized burn prohibition. TransferToken builds transfers directly and does NOT go
+	// through InternalWalletCall, so the XSWD-path guard never runs here. Enforce the same
+	// policy at this chokepoint: a zero-SCID (native DERO) burn with no contract destroys
+	// coins and is never legitimate. buildTokenTransfer already uses Amount (Burn:0)
+	// for a normal send; this guard makes the function structurally incapable of emitting a
+	// destructive burn no matter who calls it (TransferToken is an exported binding) or how
+	// the construction is later edited.
+	if burnAmt, block := shouldBlockBurn(transfers, false); block {
+		a.logToConsole(fmt.Sprintf("[Transfer] BLOCKED native-DERO burn: %s DERO with no contract attached", formatDEROAmount(burnAmt)))
+		return map[string]interface{}{
+			"success":        false,
+			"error":          fmt.Sprintf("HOLOGRAM does not allow burning DERO. This request would permanently destroy %s DERO -- a burn with no smart contract attached sends the coins to no one and cannot be undone. If you intend to deliberately burn DERO, use the DERO CLI wallet.", formatDEROAmount(burnAmt)),
+			"technicalError": fmt.Sprintf("rejected native-DERO burn of %d atomic units (zero SCID, no SC call) in TransferToken; HOLOGRAM prohibits burns", burnAmt),
+		}
 	}
 
 	if ringsize < 2 {
