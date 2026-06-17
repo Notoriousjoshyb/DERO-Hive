@@ -1069,11 +1069,16 @@ func (s *XSWDServer) sendRawJSON(conn *websocket.Conn, payload interface{}) {
 
 // ProcessApproval is called from App (legacy, no permissions)
 func (s *XSWDServer) ProcessApproval(reqID string, approved bool, password string) {
-	s.ProcessApprovalWithPermissions(reqID, approved, password, nil)
+	s.processApproval(reqID, approved, password, nil)
 }
 
 // ProcessApprovalWithPermissions is called from App with explicit permissions
 func (s *XSWDServer) ProcessApprovalWithPermissions(reqID string, approved bool, password string, permissions []string) {
+	s.processApproval(reqID, approved, password, permissions)
+}
+
+// processApproval is the shared approval path.
+func (s *XSWDServer) processApproval(reqID string, approved bool, password string, permissions []string) {
 	s.pendingLock.Lock()
 	req, ok := s.pendingRequests[reqID]
 	s.pendingLock.Unlock()

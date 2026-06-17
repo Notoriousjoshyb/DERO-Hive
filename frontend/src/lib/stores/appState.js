@@ -158,14 +158,14 @@ export async function approveWalletRequest(id, password, txid = null, permission
   // Find the request
   const requests = get(walletRequests);
   const request = requests.find(r => r.id === id);
-  
+
   if (request) {
     // Log to history
     logWalletRequest(request, 'approved', txid);
-    
+
     // We resolve with the password and permissions so the caller can use them
     request.resolve({ approved: true, password, permissions });
-    
+
     // Remove from queue
     walletRequests.update(reqs => reqs.filter(r => r.id !== id));
   }

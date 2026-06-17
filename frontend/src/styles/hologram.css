@@ -7432,7 +7432,62 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
-    
+
+    /* ===== Destructive native-DERO burn (permanent destruction) ===== */
+    .modal-burn-danger {
+      background: linear-gradient(180deg, rgba(248, 113, 113, 0.16), rgba(248, 113, 113, 0.06));
+      border: 1px solid rgba(248, 113, 113, 0.45);
+      border-radius: var(--r-md);
+      padding: var(--s-4);
+      margin-bottom: var(--s-4);
+    }
+
+    .modal-burn-danger-title {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--status-err);
+      margin-bottom: 6px;
+    }
+
+    .modal-burn-danger-ic {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .modal-burn-danger-amount {
+      font-family: var(--font-mono);
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--status-err);
+      text-shadow: 0 0 24px rgba(248, 113, 113, 0.35);
+      margin: 4px 0 8px;
+    }
+
+    .modal-burn-danger-copy {
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: #ffd5d5;
+    }
+    .modal-burn-danger-copy strong { color: #fff; }
+
+    .modal-burn-danger-norecipient {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--status-err);
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(248, 113, 113, 0.3);
+    }
+
     /* Modal Panel App Info Card */
     .modal-app-info-card {
       background: rgba(24, 24, 36, 0.5);

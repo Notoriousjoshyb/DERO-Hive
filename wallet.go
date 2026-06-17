@@ -1542,6 +1542,31 @@ func parseXSWDScArgs(params map[string]interface{}, scid string) rpc.Arguments {
 	return append(prefix, scArgs...)
 }
 
+// detectDestructiveBurn scans transfers for a burn that would permanently destroy native
+// DERO. A burn on a non-zero SCID moves token value within that asset's pool (a normal
+// token transfer); a burn on the zero SCID (native DERO) with no smart contract attached
+// to the transaction destroys the coins forever. The latter is never a legitimate native
+// send, so it is rejected. hasSCCall reports whether the overall tx carries an SC call.
+func detectDestructiveBurn(transfers []rpc.Transfer, hasSCCall bool) (uint64, bool) {
+	if hasSCCall {
+		return 0, false
+	}
+	for _, t := range transfers {
+		if t.Burn > 0 && t.SCID == crypto.ZEROHASH {
+			return t.Burn, true
+		}
+	}
+	return 0, false
+}
+
+// shouldBlockBurn applies the destruction policy: a destructive native-DERO burn (zero SCID,
+// no contract attached) is ALWAYS blocked. HOLOGRAM is a consumer wallet and never burns DERO
+// -- a burn with no contract only destroys coins, so there is no legitimate path for it here.
+// Anyone who genuinely intends to burn DERO must use the DERO CLI wallet. There is no override.
+func shouldBlockBurn(transfers []rpc.Transfer, hasSCCall bool) (uint64, bool) {
+	return detectDestructiveBurn(transfers, hasSCCall)
+}
+
 // InternalWalletCall executes a wallet method directly using the embedded wallet
 func (a *App) InternalWalletCall(method string, params map[string]interface{}, password string) map[string]interface{} {
 	walletManager.Lock()
@@ -1735,6 +1760,19 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 			return map[string]interface{}{"success": false, "error": "Please specify a transfer amount and destination, or a smart contract call."}
 		}
 
+		// Reject any burn that would permanently destroy native DERO. A native-DERO (zero-SCID)
+		// burn with no smart contract attached does not send funds anywhere -- it destroys them
+		// irrecoverably. HOLOGRAM never burns DERO; there is no override. Anyone who genuinely
+		// intends to burn DERO must use the DERO CLI wallet. This is a hard, unconditional block.
+		if burnAmt, block := shouldBlockBurn(transfers, len(scArgs) > 0); block {
+			a.logToConsole(fmt.Sprintf("[XSWD] BLOCKED native-DERO burn: %s DERO with no contract attached", formatDEROAmount(burnAmt)))
+			return map[string]interface{}{
+				"success":        false,
+				"error":          fmt.Sprintf("HOLOGRAM does not allow burning DERO. This request would permanently destroy %s DERO -- a burn with no smart contract attached sends the coins to no one and cannot be undone. If you intend to deliberately burn DERO, use the DERO CLI wallet.", formatDEROAmount(burnAmt)),
+				"technicalError": fmt.Sprintf("rejected native-DERO burn of %d atomic units (zero SCID, no SC call); HOLOGRAM prohibits burns", burnAmt),
+			}
+		}
+
 		runTransfer := func() map[string]interface{} {
 			if !a.IsInSimulatorMode() {
 				if errResp := checkDaemonConnectivity(wallet); errResp != nil {
@@ -1887,6 +1925,19 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 		}
 		// Merge deposit entries in front of any explicit transfers
 		transfers = append(scDeposit, transfers...)
+
+		// Defense in depth: a native-DERO (zero-SCID) burn is only safe here when it routes to
+		// a real contract call. Block it explicitly at this broadcast site too, so the burn
+		// prohibition does not silently depend on chain-side refund behavior if this path is
+		// ever refactored. HOLOGRAM never burns DERO; deliberate burns belong in the CLI.
+		if burnAmt, block := shouldBlockBurn(transfers, len(scArgs) > 0); block {
+			a.logToConsole(fmt.Sprintf("[XSWD] BLOCKED native-DERO burn in scinvoke: %s DERO with no contract attached", formatDEROAmount(burnAmt)))
+			return map[string]interface{}{
+				"success":        false,
+				"error":          fmt.Sprintf("HOLOGRAM does not allow burning DERO. This request would permanently destroy %s DERO with no contract attached. If you intend to deliberately burn DERO, use the DERO CLI wallet.", formatDEROAmount(burnAmt)),
+				"technicalError": fmt.Sprintf("rejected native-DERO burn of %d atomic units in scinvoke (zero SCID, no SC call); HOLOGRAM prohibits burns", burnAmt),
+			}
+		}
 
 		runSCInvoke := func() map[string]interface{} {
 			if !a.IsInSimulatorMode() {
