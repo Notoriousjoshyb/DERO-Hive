@@ -11,6 +11,35 @@
   let walletPath = '';
   let error = '';
   let isLoading = false;
+  let burnConfirmText = ''; // type-to-confirm input for destructive native-DERO burns
+
+  const ZERO_SCID = '0000000000000000000000000000000000000000000000000000000000000000';
+
+  // A request carries a smart contract call when it has a top-level scid (with sc_rpc/args)
+  // or parsed sc_args. A burn routed to a contract is a deposit, not destruction.
+  $: hasSCCall = !!(request?.payload?.scid) ||
+    (Array.isArray(request?.payload?.sc_args) && request.payload.sc_args.length > 0);
+
+  // Total native-DERO (zero-SCID) burn across the request's transfers.
+  $: nativeBurnTotal = (request?.payload?.transfers || [])
+    .filter(t => !t.scid || t.scid === ZERO_SCID)
+    .reduce((sum, t) => sum + (typeof t.burn === 'number' ? t.burn : 0), 0);
+
+  // DESTRUCTIVE: a native-DERO burn with no contract attached. These coins are destroyed
+  // permanently and sent to no one. This is the case that requires explicit type-to-confirm.
+  $: isDestructiveBurn = nativeBurnTotal > 0 && !hasSCCall;
+
+  // The whole-number DERO amount used in the confirm phrase, e.g. "BURN 15000".
+  $: burnConfirmAmount = Math.round(nativeBurnTotal / 100000);
+  $: burnConfirmPhrase = `BURN ${burnConfirmAmount}`;
+  $: burnConfirmMatched = burnConfirmText.trim().toUpperCase().replace(/\s+/g, ' ') === burnConfirmPhrase;
+
+  // Reset the confirm input whenever the active request changes (tracked by id).
+  let _lastBurnReqId = null;
+  $: if (request?.id !== _lastBurnReqId) {
+    _lastBurnReqId = request?.id ?? null;
+    burnConfirmText = '';
+  }
   let recentWallets = [];
   let recentWalletsInfo = [];
   let showWalletSwitcher = false;
@@ -209,14 +238,24 @@
     isLoading = true;
     error = '';
 
+    // Defensive backstop: a destructive native-DERO burn can only be approved once the
+    // type-to-confirm phrase matches. The backend enforces this too (it requires the
+    // confirmDestroy flag), but refuse here as well so the flag is never sent unconfirmed.
+    if (isDestructiveBurn && !burnConfirmMatched) {
+      error = `Type "${burnConfirmPhrase}" to confirm you want to permanently destroy these coins.`;
+      isLoading = false;
+      return;
+    }
+
     try {
       // For connect requests, pass the granted permissions
       const permissions = request.type === 'connect' ? getGrantedPermissionsList() : null;
-      await approveWalletRequest(request.id, password, null, permissions);
+      await approveWalletRequest(request.id, password, null, permissions, isDestructiveBurn && burnConfirmMatched);
       password = ''; // Clear password after use
       walletPath = ''; // Reset for next time
       grantedPermissions = {}; // Reset permissions
-      
+      burnConfirmText = ''; // Clear burn confirmation
+
       // Restore focus to main document to prevent iframe from capturing scroll
       restoreFocus();
     } catch (e) {
@@ -416,7 +455,7 @@
               
               <!-- Transfers (DERO or token amounts) -->
               {#if request.payload.transfers && request.payload.transfers.length > 0}
-                {@const deroTransfers = request.payload.transfers.filter(t => !t.scid || t.scid === '0000000000000000000000000000000000000000000000000000000000000000')}
+                {@const deroTransfers = request.payload.transfers.filter(t => !t.scid || t.scid === ZERO_SCID)}
                 <!-- Sum all cost fields: amount, burn (if numeric), fees from transfers AND top-level fees -->
                 {@const totalAmount = deroTransfers.reduce((sum, t) => sum + (t.amount || 0), 0)}
                 {@const totalBurn = deroTransfers.reduce((sum, t) => sum + (typeof t.burn === 'number' ? t.burn : 0), 0)}
@@ -424,8 +463,30 @@
                 {@const topLevelFees = request.payload.fees || 0}
                 {@const totalFees = transferFees + topLevelFees}
                 {@const totalDero = totalAmount + totalBurn + totalFees}
-                {@const hasBurnField = deroTransfers.some(t => t.burn)}
-                
+
+                <!-- DESTRUCTIVE BURN: native-DERO burn with no contract attached. These coins
+                     are destroyed permanently and sent to no one. Lead with the danger. -->
+                {#if isDestructiveBurn}
+                  <div class="modal-burn-danger">
+                    <div class="modal-burn-danger-title">
+                      <span class="modal-burn-danger-ic">⚠</span> PERMANENT DESTRUCTION
+                    </div>
+                    <div class="modal-burn-danger-amount">−{(totalBurn / 100000).toLocaleString()} DERO</div>
+                    <div class="modal-burn-danger-copy">
+                      This request <strong>destroys {(totalBurn / 100000).toLocaleString()} DERO forever</strong>.
+                      The coins are removed from existence — they are <strong>not sent to anyone</strong>
+                      and <strong>cannot be recovered</strong>. A burn with no smart contract attached
+                      is never a way to transfer funds.
+                    </div>
+                    {#if request.payload.transfers[0]?.destination}
+                      <div class="modal-burn-danger-norecipient">
+                        ◇ RECIPIENT: <span class="modal-burn-strike">{request.payload.transfers[0].destination.slice(0,12)}…</span>
+                        — no contract attached, funds go to NO ONE
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+
                 <!-- Show total DERO cost -->
                 {#if deroTransfers.length > 0}
                   <div class="modal-tx-field">
@@ -435,15 +496,22 @@
                     </div>
                   </div>
                 {/if}
-                
+
                 <!-- Show breakdown of costs if any non-zero values -->
                 {#if totalAmount > 0 || totalBurn > 0 || totalFees > 0}
                   <div class="modal-tx-breakdown">
                     <div class="modal-tx-label modal-tx-label-small">BREAKDOWN</div>
                     {#if totalBurn > 0}
                       <div class="modal-tx-breakdown-item">
-                        <span class="modal-tx-breakdown-label">Burn:</span>
-                        <span class="modal-tx-breakdown-value">{(totalBurn / 100000).toLocaleString()} DERO</span>
+                        <!-- A burn routed to a contract is a deposit, not destruction. Only an
+                             actual destroy-burn (no contract) is labeled "Burn". -->
+                        {#if hasSCCall}
+                          <span class="modal-tx-breakdown-label">Deposit to contract:</span>
+                          <span class="modal-tx-breakdown-value">{(totalBurn / 100000).toLocaleString()} DERO</span>
+                        {:else}
+                          <span class="modal-tx-breakdown-label modal-tx-breakdown-label-danger">Burn (destroyed):</span>
+                          <span class="modal-tx-breakdown-value modal-tx-breakdown-value-danger">{(totalBurn / 100000).toLocaleString()} DERO</span>
+                        {/if}
                       </div>
                     {/if}
                     {#if totalFees > 0}
@@ -460,9 +528,11 @@
                     {/if}
                   </div>
                 {/if}
-                
-                <!-- Show destination if present (usually same for all burns to SC) -->
-                {#if request.payload.transfers[0]?.destination}
+
+                <!-- Show destination only when funds actually go somewhere. For a destructive
+                     burn there is no recipient, so the destination is shown (struck through)
+                     inside the danger banner above instead. -->
+                {#if request.payload.transfers[0]?.destination && !isDestructiveBurn}
                   <div class="modal-tx-field">
                     <div class="modal-tx-label">DESTINATION</div>
                     <div class="modal-tx-destination">
@@ -713,8 +783,35 @@
               bind:value={password}
               placeholder="Enter wallet password..."
               class="modal-input wallet-password-input"
-              on:keydown={(e) => e.key === 'Enter' && handleApprove()}
+              on:keydown={(e) => e.key === 'Enter' && !isDestructiveBurn && handleApprove()}
             />
+          </div>
+        </div>
+      {/if}
+
+      <!-- Type-to-confirm gate for a destructive native-DERO burn. Shown regardless of
+           wallet-open state. The Destroy button stays disabled until the phrase matches. -->
+      {#if isDestructiveBurn}
+        <div class="modal-burn-confirm">
+          <div class="modal-burn-confirm-prompt">
+            To approve this destruction, type
+            <code class="modal-burn-confirm-phrase">{burnConfirmPhrase}</code> below:
+          </div>
+          <input
+            type="text"
+            bind:value={burnConfirmText}
+            placeholder="Type the phrase to enable…"
+            autocomplete="off"
+            spellcheck="false"
+            class="modal-input modal-burn-confirm-input"
+            class:matched={burnConfirmMatched}
+          />
+          <div class="modal-burn-confirm-hint" class:ok={burnConfirmMatched}>
+            {#if burnConfirmMatched}
+              ✓ Phrase matches — destruction can be approved.
+            {:else}
+              Approve stays disabled until the phrase matches exactly.
+            {/if}
           </div>
         </div>
       {/if}
@@ -728,24 +825,38 @@
 
     <!-- Actions -->
     <div class="modal-panel-actions">
-      <button 
+      <button
         on:click={handleDeny}
         class="modal-panel-btn modal-panel-btn-deny"
         disabled={isLoading}
       >
         Deny
       </button>
-      <button 
-        on:click={handleApprove}
-        class="modal-panel-btn modal-panel-btn-approve"
-        disabled={isLoading}
-      >
-        {#if isLoading}
-          Processing...
-        {:else}
-          Approve
-        {/if}
-      </button>
+      {#if isDestructiveBurn}
+        <button
+          on:click={handleApprove}
+          class="modal-panel-btn modal-panel-btn-destroy"
+          disabled={isLoading || !burnConfirmMatched}
+        >
+          {#if isLoading}
+            Processing...
+          {:else}
+            Destroy {burnConfirmAmount.toLocaleString()} DERO
+          {/if}
+        </button>
+      {:else}
+        <button
+          on:click={handleApprove}
+          class="modal-panel-btn modal-panel-btn-approve"
+          disabled={isLoading}
+        >
+          {#if isLoading}
+            Processing...
+          {:else}
+            Approve
+          {/if}
+        </button>
+      {/if}
     </div>
   </div>
 {/if}

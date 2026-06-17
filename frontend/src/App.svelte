@@ -13,7 +13,7 @@
   // Mining tab removed - Developer Support now in Settings > Developer Support
   // Network tab removed - node controls moved to Settings > Node
   import { appState, walletState, settingsState, updateStatus, addExternalRequest, dismissWalletRequest, toast, loadSettings, syncNetworkMode, navigateTo, requestPayment } from './lib/stores/appState.js';
-  import { GetSetting, RespondToXSWDRequest, RespondToXSWDRequestWithPermissions, NotifyWizardComplete, ConsumeLaunchURL } from '../wailsjs/go/main/App.js';
+  import { GetSetting, RespondToXSWDRequest, RespondToXSWDRequestWithPermissions, RespondToXSWDRequestConfirmDestroy, NotifyWizardComplete, ConsumeLaunchURL } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
   import { waitForWails } from './lib/utils/wails.js';
   
@@ -409,6 +409,10 @@
         // Use new function with permissions for connect requests
         if (requestType === 'connect' && result.permissions) {
           RespondToXSWDRequestWithPermissions(req.id, true, result.password || "", result.permissions);
+        } else if (result.confirmDestroy) {
+          // Explicitly type-to-confirmed destructive native-DERO burn: route through the
+          // confirm-destroy bridge so the backend's burn guard allows it.
+          RespondToXSWDRequestConfirmDestroy(req.id, true, result.password || "");
         } else {
           RespondToXSWDRequest(req.id, true, result.password || "");
         }

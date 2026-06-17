@@ -1542,6 +1542,35 @@ func parseXSWDScArgs(params map[string]interface{}, scid string) rpc.Arguments {
 	return append(prefix, scArgs...)
 }
 
+// detectDestructiveBurn scans transfers for a burn that would permanently destroy native
+// DERO. A burn on a non-zero SCID moves token value within that asset's pool (a normal
+// token transfer); a burn on the zero SCID (native DERO) with no smart contract attached
+// to the transaction destroys the coins forever. The latter is never a legitimate native
+// send, so it is rejected. hasSCCall reports whether the overall tx carries an SC call.
+func detectDestructiveBurn(transfers []rpc.Transfer, hasSCCall bool) (uint64, bool) {
+	if hasSCCall {
+		return 0, false
+	}
+	for _, t := range transfers {
+		if t.Burn > 0 && t.SCID == crypto.ZEROHASH {
+			return t.Burn, true
+		}
+	}
+	return 0, false
+}
+
+// shouldBlockBurn applies the destruction policy: a destructive native-DERO burn is blocked
+// unless the user explicitly confirmed it (confirmDestroy). It returns the burn amount and
+// whether to block. confirmDestroy is honored ONLY when the burn is actually destructive, so
+// the flag can never affect a normal transfer or a contract deposit.
+func shouldBlockBurn(transfers []rpc.Transfer, hasSCCall bool, confirmDestroy bool) (uint64, bool) {
+	burnAmt, destructive := detectDestructiveBurn(transfers, hasSCCall)
+	if !destructive {
+		return 0, false
+	}
+	return burnAmt, !confirmDestroy
+}
+
 // InternalWalletCall executes a wallet method directly using the embedded wallet
 func (a *App) InternalWalletCall(method string, params map[string]interface{}, password string) map[string]interface{} {
 	walletManager.Lock()
@@ -1733,6 +1762,30 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 
 		if len(transfers) == 0 && len(scArgs) == 0 {
 			return map[string]interface{}{"success": false, "error": "Please specify a transfer amount and destination, or a smart contract call."}
+		}
+
+		// Reject burns that would permanently destroy native DERO. A native-DERO (zero-SCID)
+		// burn with no smart contract attached does not send funds anywhere -- it destroys
+		// them irrecoverably. This guards against a dApp/caller sending a deposit-style burn
+		// without the SCID + sc_rpc that would route it to a contract.
+		//
+		// A deliberate burn is still possible, but only when the request carries an explicit
+		// confirmDestroy flag, which the approval modal sets ONLY after the user types the
+		// type-to-confirm phrase. The backend never relies on the UI alone: both the flag and
+		// the destructive condition must be present for the burn to proceed.
+		confirmDestroy := false
+		if c, ok := params["confirmDestroy"].(bool); ok {
+			confirmDestroy = c
+		}
+		if burnAmt, block := shouldBlockBurn(transfers, len(scArgs) > 0, confirmDestroy); block {
+			a.logToConsole(fmt.Sprintf("[XSWD] BLOCKED destructive native-DERO burn: %s DERO with no contract attached", formatDEROAmount(burnAmt)))
+			return map[string]interface{}{
+				"success":        false,
+				"error":          fmt.Sprintf("This request would permanently destroy %s DERO. A burn with no smart contract attached does not send funds -- it destroys them. The transaction was blocked.", formatDEROAmount(burnAmt)),
+				"technicalError": fmt.Sprintf("rejected native-DERO burn of %d atomic units (zero SCID, no SC call)", burnAmt),
+			}
+		} else if burnAmt > 0 {
+			a.logToConsole(fmt.Sprintf("[XSWD] CONFIRMED destructive native-DERO burn: %s DERO destroyed by explicit user confirmation", formatDEROAmount(burnAmt)))
 		}
 
 		runTransfer := func() map[string]interface{} {
