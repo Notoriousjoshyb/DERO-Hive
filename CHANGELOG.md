@@ -9,13 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.7] - 2026-06-18
 
-Clearer asset handling, hardened transfer validation, and Linux release binaries that run on current distros out of the box.
+Privacy Mode, automatic token discovery, clearer asset handling, hardened transfer validation, and Linux release binaries that run on current distros out of the box.
+
+### Added
+- **Privacy Mode** — seals HOLOGRAM's network connections behind your approval. Switch it on and the app blocks every outbound connection until you approve the destination, so nothing reaches the network without your say-so. Its armed state shows on the wallet anchor.
+- **Signal Dark** — display masking for your address, balances, tokens, and avatar, now an independent control separate from Privacy Mode.
+- Wallet: automatic token discovery via Gnomon — held tokens and NFAs are detected and added to the portfolio without manual SCID entry.
 
 ### Changed
 - Wallet: native DERO is managed as the base coin (Dashboard / Send), separate from the contract-token portfolio — which now lists contract assets only.
+- Wallet: refreshed token portfolio rows with per-token actions (send, refresh metadata, remove) and an improved empty state.
 
 ### Fixed
 - Wallet: hardened transfer validation so a native-DERO burn is consistently rejected across all send paths.
+- Wallet: token transfers are credited via the amount field on the token's SCID, and per-token encrypted balances and metadata resolve correctly (including unindexed SCIDs).
+- XSWD: canonical response shapes, correct SC deposit semantics, scid-aware balance reads for the TELA bridge, and a permission-tracking data-race fix.
 - Linux: release binaries are built against `webkit2gtk-4.1` (libsoup3) instead of the discontinued `4.0`, so they launch on Ubuntu 24.04+, Debian 13+, Fedora 40+, and Arch without a manual library symlink. CI now fails the release if a Linux binary links the old `4.0` runtime.
 
 ---
