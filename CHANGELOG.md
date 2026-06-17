@@ -7,11 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [1.0.7] - 2026-06-09
+## [1.0.7] - 2026-06-18
 
-Linux release binaries now run on current distros out of the box.
+Clearer asset handling, hardened transfer validation, and Linux release binaries that run on current distros out of the box.
+
+### Changed
+- Wallet: native DERO is managed as the base coin (Dashboard / Send), separate from the contract-token portfolio — which now lists contract assets only.
 
 ### Fixed
+- Wallet: hardened transfer validation so a native-DERO burn is consistently rejected across all send paths.
 - Linux: release binaries are built against `webkit2gtk-4.1` (libsoup3) instead of the discontinued `4.0`, so they launch on Ubuntu 24.04+, Debian 13+, Fedora 40+, and Arch without a manual library symlink. CI now fails the release if a Linux binary links the old `4.0` runtime.
 
 ---
