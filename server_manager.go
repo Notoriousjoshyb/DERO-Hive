@@ -345,9 +345,15 @@ func injectScriptIntoHTML(html, script string) string {
 	return script + "\n" + html
 }
 
-// getHologramClipboardBridgeScript wraps navigator.clipboard read/write inside the TELA iframe.
+// getHologramClipboardBridgeScript wraps navigator.clipboard WRITE inside the TELA iframe.
 // WKWebKit/WebKitGTK often rejects the Clipboard API in embedded frames even with sandbox flags;
-// the parent resolves operations via Wails ClipboardGetText / ClipboardSetText (see Browser.svelte).
+// the parent resolves writes via Wails ClipboardSetText (see Browser.svelte).
+//
+// READ is deliberately NOT bridged. Bridging readText would let untrusted TELA content read the
+// host OS clipboard — including a recovery seed/secret key the user just copied from the reveal
+// modal (a ~30s window before auto-clear) — which is total, irreversible key exposure. TELA apps
+// have no legitimate need to read the host clipboard; only their copy buttons (write) do. We leave
+// the native readText in place (WebKit may reject it in-frame, which is the correct posture).
 func getHologramClipboardBridgeScript() string {
 	return `<script>
 (function() {
@@ -356,9 +362,8 @@ func getHologramClipboardBridgeScript() string {
     if (!navigator || !navigator.clipboard || window.parent === window) return;
     var clip = navigator.clipboard;
     var ow = clip.writeText && clip.writeText.bind(clip);
-    var or = clip.readText && clip.readText.bind(clip);
 
-    function viaBridge(op, text) {
+    function viaBridgeWrite(text) {
       return new Promise(function(resolve, reject) {
         var id = 'hcb_' + Math.random().toString(36).slice(2) + '_' + Date.now();
         function onMsg(ev) {
@@ -366,10 +371,8 @@ func getHologramClipboardBridgeScript() string {
           if (!d || d.type !== 'hologram-clipboard-response' || d.id !== id) return;
           window.removeEventListener('message', onMsg);
           clearTimeout(tmo);
-          if (d.ok) {
-            if (op === 'read') resolve(typeof d.text === 'string' ? d.text : '');
-            else resolve();
-          } else reject(new Error(d.error || 'Clipboard operation failed'));
+          if (d.ok) resolve();
+          else reject(new Error(d.error || 'Clipboard operation failed'));
         }
         window.addEventListener('message', onMsg);
         var tmo = setTimeout(function() {
@@ -377,7 +380,7 @@ func getHologramClipboardBridgeScript() string {
           reject(new Error('Clipboard bridge timeout'));
         }, 15000);
         try {
-          window.parent.postMessage({ type: 'hologram-clipboard-request', id: id, op: op, text: text === undefined || text === null ? '' : String(text) }, '*');
+          window.parent.postMessage({ type: 'hologram-clipboard-request', id: id, op: 'write', text: text === undefined || text === null ? '' : String(text) }, '*');
         } catch (e) {
           window.removeEventListener('message', onMsg);
           clearTimeout(tmo);
@@ -387,13 +390,10 @@ func getHologramClipboardBridgeScript() string {
     }
 
     clip.writeText = function(txt) {
-      if (!ow) return viaBridge('write', txt);
-      return ow(txt).catch(function() { return viaBridge('write', txt); });
+      if (!ow) return viaBridgeWrite(txt);
+      return ow(txt).catch(function() { return viaBridgeWrite(txt); });
     };
-    clip.readText = function() {
-      if (!or) return viaBridge('read');
-      return or().catch(function() { return viaBridge('read'); });
-    };
+    // readText intentionally left as the native implementation — never bridged.
   } catch (e) {}
 })();
 </script>`

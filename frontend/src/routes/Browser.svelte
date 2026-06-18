@@ -5,7 +5,7 @@
   import { favorites } from '../lib/stores/favorites.js';
   import { Navigate, FetchSCID, FetchByDURL, GetAppRating, GetNameSuggestions, CallXSWD, ConnectXSWD, ApproveWalletConnection, InternalWalletCall, GetDiscoveredApps, StartGnomon, EnsureGnomonRunning, GetLocalDevServerStatus, StartLocalDevServer, ServeTELAContent, ShutdownServer, ListActiveServers, ClearConsoleLogs as ClearBackendLogs, SetGnomonAutostart, GetGnomonAutostart, GetAllTags, GetTELAAppsWithTags, GetSCIDMetadata, CheckAppFilter, GetContentFilterConfig, ManuallyAllowApp, ManuallyBlockApp, ClearAppFilterOverride, GetLiveStats, GetBalance, GetTransactionHistory, SaveBinaryFileWithDialog, SelectFileWithContent, OpenURLInBrowserIfAllowed, ClearAppCache, IsAppCachedOffline } from '../../wailsjs/go/main/App.js';
   import ReloadSplitButton from '../lib/components/browser/ReloadSplitButton.svelte';
-  import { EventsOn, EventsOff, ClipboardSetText, ClipboardGetText } from '../../wailsjs/runtime/runtime.js';
+  import { EventsOn, EventsOff, ClipboardSetText } from '../../wailsjs/runtime/runtime.js';
 import { HoloBadge, DotIndicator, Icons } from '../lib/components/holo';
 import RatingModal from '../lib/components/RatingModal.svelte';
 import RatingsBreakdown from '../lib/components/RatingsBreakdown.svelte';
@@ -1002,7 +1002,11 @@ let addressInput = '';
         return;
       }
 
-      // TELA iframe: Clipboard API fallback via native Wails clipboard (keep in sync with server_manager.go getHologramClipboardBridgeScript)
+      // TELA iframe: Clipboard WRITE fallback via native Wails clipboard (keep in sync with
+      // server_manager.go getHologramClipboardBridgeScript). READ is intentionally refused —
+      // bridging clipboard read would let untrusted TELA content exfiltrate the host OS
+      // clipboard (e.g. a recovery seed the user just copied from the reveal modal), so 'read'
+      // is rejected here even though the injected script no longer requests it (defense in depth).
       if (event.data && event.data.type === 'hologram-clipboard-request') {
         const { id, op, text } = event.data;
         if (!id || !op || !event.source || typeof event.source.postMessage !== 'function') return;
@@ -1011,11 +1015,9 @@ let addressInput = '';
             if (op === 'write') {
               await ClipboardSetText(text == null ? '' : String(text));
               event.source.postMessage({ type: 'hologram-clipboard-response', id, ok: true }, '*');
-            } else if (op === 'read') {
-              const t = await ClipboardGetText();
-              event.source.postMessage({ type: 'hologram-clipboard-response', id, ok: true, text: t == null ? '' : String(t) }, '*');
             } else {
-              event.source.postMessage({ type: 'hologram-clipboard-response', id, ok: false, error: 'unknown clipboard op' }, '*');
+              // 'read' and any other op are refused: untrusted content must never read the host clipboard.
+              event.source.postMessage({ type: 'hologram-clipboard-response', id, ok: false, error: 'clipboard read not permitted' }, '*');
             }
           } catch (e) {
             const msg = e && e.message ? e.message : String(e);

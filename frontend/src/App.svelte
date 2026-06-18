@@ -13,7 +13,7 @@
   // Mining tab removed - Developer Support now in Settings > Developer Support
   // Network tab removed - node controls moved to Settings > Node
   import { appState, walletState, settingsState, updateStatus, addExternalRequest, dismissWalletRequest, toast, loadSettings, syncNetworkMode, navigateTo, requestPayment } from './lib/stores/appState.js';
-  import { GetSetting, RespondToXSWDRequest, RespondToXSWDRequestWithPermissions, NotifyWizardComplete, ConsumeLaunchURL } from '../wailsjs/go/main/App.js';
+  import { GetSetting, RespondToXSWDRequest, RespondToXSWDRequestWithPermissions, NotifyWizardComplete, ConsumeLaunchURL, NoteWalletActivity } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
   import { waitForWails } from './lib/utils/wails.js';
   
@@ -84,9 +84,22 @@
 
   onMount(async () => {
     console.log('Hologram initializing...');
-    
+
     // Generate noise texture once (replaces expensive SVG feTurbulence filter)
     generateNoiseTexture();
+
+    // Idle auto-lock: tell the backend the user is active so it doesn't lock an
+    // in-use wallet. Throttled to once per 30s; the backend lock window is minutes.
+    let lastActivityPing = 0;
+    const pingActivity = () => {
+      const now = Date.now();
+      if (now - lastActivityPing < 30000) return;
+      lastActivityPing = now;
+      NoteWalletActivity().catch(() => {});
+    };
+    for (const evt of ['pointerdown', 'keydown', 'wheel']) {
+      window.addEventListener(evt, pingActivity, { passive: true });
+    }
     
     // Fix for Wails/WebView scroll focus issue on macOS
     // When the app loses and regains focus, scroll events may not work until

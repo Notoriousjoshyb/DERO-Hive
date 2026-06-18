@@ -153,6 +153,10 @@ func (a *App) startup(ctx context.Context) {
 
 	a.logToConsole("[START] TELA Browser starting up...")
 
+	// Idle auto-lock: drop the decrypted wallet from memory after the configured idle
+	// window so an unattended machine doesn't keep the secret scalar live all session.
+	a.startIdleAutoLockWatcher()
+
 	// Load persisted settings (daemon_endpoint, network, etc.) before any connections
 	// This ensures user-configured endpoints survive app restarts
 	a.loadSettings()

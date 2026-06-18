@@ -910,6 +910,10 @@ export function Navigate(arg1) {
   return window['go']['main']['App']['Navigate'](arg1);
 }
 
+export function NoteWalletActivity() {
+  return window['go']['main']['App']['NoteWalletActivity']();
+}
+
 export function NotifyWizardComplete() {
   return window['go']['main']['App']['NotifyWizardComplete']();
 }

@@ -30,6 +30,21 @@ type WalletManager struct {
 	walletPath    string
 	isOpen        bool
 	recentWallets []string
+	lastActivity  time.Time // updated on any wallet use; drives idle auto-lock
+}
+
+// defaultAutoLockMinutes is the idle window after which an open wallet is locked
+// (its decrypted secret dropped from memory). The wallet's secret scalar otherwise
+// lives in process memory for the whole session; idle auto-lock bounds that exposure
+// for an unattended machine. 0 disables (set via the auto_lock_minutes setting).
+const defaultAutoLockMinutes = 15
+
+// noteWalletActivity stamps the wallet as recently used. Call under no lock; it takes
+// the manager lock itself. Cheap enough to call on every wallet operation.
+func noteWalletActivity() {
+	walletManager.Lock()
+	walletManager.lastActivity = time.Now()
+	walletManager.Unlock()
 }
 
 // NewWalletManager creates a new wallet manager
@@ -288,6 +303,7 @@ func (a *App) OpenWallet(filePath, password string) map[string]interface{} {
 	walletManager.wallet = wallet
 	walletManager.walletPath = filePath
 	walletManager.isOpen = true
+	walletManager.lastActivity = time.Now() // arm the idle auto-lock window
 
 	// Set network mode (mainnet vs simulator) - MUST be called before GetAddress()
 	wallet.SetNetwork(currentNetwork == "mainnet")
@@ -409,6 +425,61 @@ func (a *App) CloseWallet() map[string]interface{} {
 		"success": true,
 		"message": "Wallet closed successfully",
 	}
+}
+
+// NoteWalletActivity is called by the frontend on user interaction to defer the idle
+// auto-lock. It is a no-op when no wallet is open.
+func (a *App) NoteWalletActivity() {
+	noteWalletActivity()
+}
+
+// autoLockMinutes returns the configured idle auto-lock window in minutes (0 = disabled).
+func (a *App) autoLockMinutes() int {
+	if v, ok := a.settings["auto_lock_minutes"]; ok {
+		switch n := v.(type) {
+		case float64:
+			return int(n)
+		case int:
+			return n
+		}
+	}
+	return defaultAutoLockMinutes
+}
+
+// startIdleAutoLockWatcher runs a background loop that locks the wallet (dropping the
+// decrypted secret from memory) once it has been idle longer than the configured window.
+// Started once from startup(). The secret scalar otherwise persists in process memory for
+// the entire app session; this bounds the exposure on an unattended machine.
+func (a *App) startIdleAutoLockWatcher() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			mins := a.autoLockMinutes()
+			if mins <= 0 {
+				continue // disabled
+			}
+			walletManager.RLock()
+			open := walletManager.isOpen && walletManager.wallet != nil
+			idle := time.Since(walletManager.lastActivity)
+			last := walletManager.lastActivity
+			walletManager.RUnlock()
+
+			if !open || last.IsZero() {
+				continue
+			}
+			if idle >= time.Duration(mins)*time.Minute {
+				a.logToConsole(fmt.Sprintf("[WALLET] Auto-locking after %d min idle", mins))
+				res := a.CloseWallet()
+				if ok, _ := res["success"].(bool); ok && a.ctx != nil {
+					runtime.EventsEmit(a.ctx, "wallet:autoLocked", map[string]interface{}{
+						"reason":      "idle",
+						"idleMinutes": mins,
+					})
+				}
+			}
+		}
+	}()
 }
 
 // GetWalletStatus returns the current wallet status

@@ -457,6 +457,8 @@ export function MoveFile(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function Navigate(arg1:string):Promise<Record<string, any>>;
 
+export function NoteWalletActivity():Promise<void>;
+
 export function NotifyWizardComplete():Promise<void>;
 
 export function OmniSearch(arg1:string):Promise<main.SearchResult>;
