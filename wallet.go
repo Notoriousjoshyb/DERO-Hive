@@ -892,6 +892,30 @@ func (a *App) ListRecentWallets() []string {
 	return walletManager.recentWallets
 }
 
+// checkIntegratedInvoice reconciles a send against an integrated-address (deroi…)
+// invoice. RPC_VALUE_TRANSFER is a "pay exactly X" request and RPC_EXPIRY a deadline;
+// the protocol does NOT auto-honor either (RPC_VALUE_TRANSFER is "readable, value is
+// never transferred"). Returns a non-empty, user-facing error string when the send
+// must be blocked — an expired address, or an amount that does not match the requested
+// amount — so a mis-payment cannot be made silently. Returns "" when the send is fine
+// (non-integrated address, or invoice satisfied). Pure and wallet-free for testability.
+func checkIntegratedInvoice(addr *rpc.Address, amount uint64, now time.Time) string {
+	if addr == nil || !addr.IsIntegratedAddress() {
+		return ""
+	}
+	if addr.Arguments.Has(rpc.RPC_EXPIRY, rpc.DataTime) {
+		if exp, ok := addr.Arguments.Value(rpc.RPC_EXPIRY, rpc.DataTime).(time.Time); ok && now.After(exp) {
+			return "This payment address has expired. Ask the recipient for a current address before sending — a send cannot be undone."
+		}
+	}
+	if addr.Arguments.Has(rpc.RPC_VALUE_TRANSFER, rpc.DataUint64) {
+		if want, ok := addr.Arguments.Value(rpc.RPC_VALUE_TRANSFER, rpc.DataUint64).(uint64); ok && want != amount {
+			return fmt.Sprintf("This payment address requests exactly %s DERO, but you entered %s DERO. Match the requested amount, or use a plain address — a wrong amount cannot be undone.", formatDEROAmount(want), formatDEROAmount(amount))
+		}
+	}
+	return ""
+}
+
 // Transfer sends DERO to another address
 func (a *App) Transfer(destination string, amount uint64, paymentID string, ringsize uint64) map[string]interface{} {
 	walletManager.Lock()
@@ -946,6 +970,16 @@ func (a *App) Transfer(destination string, amount uint64, paymentID string, ring
 				"error":   fmt.Sprintf("This is a %s address but your wallet is on %s. Sending to a wrong-network address cannot be undone — double-check you pasted the right address.", destNet, walletNet),
 			}
 		}
+
+		// Reconcile an integrated-address (deroi…) invoice (expiry + requested amount)
+		// so a wrong-amount or expired-invoice send is rejected, not made silently.
+		if invoiceErr := checkIntegratedInvoice(addr, amount, time.Now()); invoiceErr != "" {
+			a.logToConsole(fmt.Sprintf("[Transfer] BLOCKED integrated-address invoice: %s", invoiceErr))
+			return map[string]interface{}{
+				"success": false,
+				"error":   invoiceErr,
+			}
+		}
 	}
 
 	destPreview := destination
@@ -962,10 +996,10 @@ func (a *App) Transfer(destination string, amount uint64, paymentID string, ring
 		},
 	}
 
-	// Handle payment ID if provided (integrated address or separate)
+	// A payment ID baked into an integrated destination is carried on-chain by the
+	// address itself (and its invoice fields are reconciled above). A separately
+	// supplied paymentID is not attached here; log it for visibility.
 	if paymentID != "" {
-		// Payment IDs are typically embedded in integrated addresses
-		// For now, log it - full implementation would handle this
 		a.logToConsole(fmt.Sprintf("[Transfer] Payment ID provided: %s", paymentID))
 	}
 
