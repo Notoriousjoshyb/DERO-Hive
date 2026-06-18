@@ -385,9 +385,13 @@ func formatUptime(seconds int64) string {
 	}
 }
 
-// formatDEROAmount formats atomic units to human-readable DERO
+// formatDEROAmount formats atomic units to human-readable DERO.
+// DERO has 5 decimal places: 1 DERO = 100000 (1e5) atomic units. This must match
+// the divisor used everywhere else (Get_Balance display, live stats); a wrong
+// divisor understates the figure on the send/approval surface, which mis-anchors
+// consent on an irreversible action.
 func formatDEROAmount(atomicUnits uint64) string {
-	dero := float64(atomicUnits) / 1e12
+	dero := float64(atomicUnits) / 1e5
 	if dero >= 1000000 {
 		return fmt.Sprintf("%.2fM", dero/1000000)
 	} else if dero >= 1000 {
@@ -395,7 +399,7 @@ func formatDEROAmount(atomicUnits uint64) string {
 	} else if dero >= 1 {
 		return fmt.Sprintf("%.5f", dero)
 	}
-	return fmt.Sprintf("%.12f", dero)
+	return fmt.Sprintf("%.5f", dero)
 }
 
 // ================== EPOCH Address Switching (Fair Developer Support) ==================

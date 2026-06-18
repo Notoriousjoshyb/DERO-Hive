@@ -922,6 +922,32 @@ func (a *App) Transfer(destination string, amount uint64, paymentID string, ring
 		}
 	}
 
+	// Validate the destination's network matches the active network. The DERO
+	// library rejects an unparseable address at build time, but it never checks
+	// the address network byte: a mainnet (dero1) and a testnet/simulator (deto1)
+	// address wrap the SAME public key, so a wrong-network paste builds and sends
+	// silently. Reject it here — a send is irreversible and there is no legitimate
+	// reason to send to an address rendered for a different network than this
+	// wallet. (NameToAddress names are resolved by the library, so only skip the
+	// check when the input does not parse as a bech32 address at all.)
+	if addr, addrErr := rpc.NewAddress(destination); addrErr == nil {
+		walletIsMainnet := !a.IsInSimulatorMode()
+		if addr.IsMainnet() != walletIsMainnet {
+			destNet, walletNet := "simulator/testnet", "simulator/testnet"
+			if addr.IsMainnet() {
+				destNet = "mainnet"
+			}
+			if walletIsMainnet {
+				walletNet = "mainnet"
+			}
+			a.logToConsole(fmt.Sprintf("[Transfer] BLOCKED network mismatch: %s address while wallet is on %s", destNet, walletNet))
+			return map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("This is a %s address but your wallet is on %s. Sending to a wrong-network address cannot be undone — double-check you pasted the right address.", destNet, walletNet),
+			}
+		}
+	}
+
 	destPreview := destination
 	if len(destination) > 16 {
 		destPreview = destination[:16] + "..."

@@ -724,7 +724,7 @@ func (a *App) GetSimulatorStatus() map[string]interface{} {
 		"walletOpen":    status.WalletOpen,
 		"walletAddress": status.WalletAddress,
 		"balance":       status.Balance,
-		"balanceDERO":   float64(status.Balance) / 1e12,
+		"balanceDERO":   float64(status.Balance) / 1e5, // DERO has 5 decimals: 1 DERO = 100000 atomic units
 		"blockHeight":   status.BlockHeight,
 		"rpcEndpoint":   status.RpcEndpoint,
 		"miningStats":   status.Extra["miningStats"],
