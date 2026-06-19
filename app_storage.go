@@ -610,6 +610,7 @@ func (a *App) restoreSettings() (int64, error) {
 	a.settings["avatar_hidden"] = false
 	a.settings["privacy_mode"] = false
 	a.settings["signal_dark"] = false
+	a.settings["active_ring_member_set"] = ""
 
 	wailsRuntime.EventsEmit(a.ctx, "settings:restored", nil)
 	return before, nil

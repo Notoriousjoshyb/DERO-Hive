@@ -13,6 +13,13 @@ require (
 	github.com/wailsapp/wails/v2 v2.11.0
 )
 
+// derohe resolves to the DEROFDN community-dev line plus the sender-attribution
+// privacy work (opt-in anonymous attribution, curated decoy rings) that HOLOGRAM
+// requires. That work is in open upstream PRs, not yet merged or tagged, so it is
+// pinned here via the public fork. Repoint to github.com/DEROFDN/derohe and drop
+// this replace once a release tag includes it.
+replace github.com/deroproject/derohe => github.com/DHEBP/derohe v0.0.0-20260616171338-1082d8054b00
+
 require (
 	github.com/VictoriaMetrics/metrics v1.23.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect

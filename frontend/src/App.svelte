@@ -228,18 +228,26 @@
         }));
       }
       if (status.wallet) {
+        // The periodic status broadcast is authoritative for connection state, not
+        // for balance: the dedicated wallet poll (GetBalance) owns the balance and
+        // uses the accurate decrypted-balance path. If the broadcast carries a 0
+        // while the wallet is open and we already hold a positive balance, keep the
+        // known-good value -- otherwise the two writers race and the balance flickers
+        // 1000 -> 0 -> 1000. A real drop to 0 still propagates via the wallet poll.
+        const statusBalance = status.wallet.balance || 0;
+        const statusLocked = status.wallet.lockedBalance || 0;
         appState.update(state => ({
           ...state,
           walletOpen: status.wallet.open,
           walletAddress: status.wallet.address || '',
-          walletBalance: status.wallet.balance || 0,
+          walletBalance: status.wallet.open && statusBalance === 0 ? state.walletBalance : statusBalance,
         }));
         walletState.update(state => ({
           ...state,
           isOpen: !!status.wallet.open,
           address: status.wallet.address || '',
-          balance: status.wallet.balance || 0,
-          lockedBalance: status.wallet.lockedBalance || 0,
+          balance: status.wallet.open && statusBalance === 0 ? state.balance : statusBalance,
+          lockedBalance: status.wallet.open && statusBalance === 0 ? state.lockedBalance : statusLocked,
           walletPath: status.wallet.open ? state.walletPath : '',
         }));
       }

@@ -7,6 +7,10 @@ export function AddAllowedHost(arg1:string):Promise<Record<string, any>>;
 
 export function AddContact(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
 
+export function AddRingMember(arg1:string,arg2:string):Promise<Record<string, any>>;
+
+export function AddRingMemberSet(arg1:string):Promise<Record<string, any>>;
+
 export function AddSCIDToIndex(arg1:string):Promise<Record<string, any>>;
 
 export function AddSearchExclusion(arg1:string):Promise<Record<string, any>>;
@@ -19,9 +23,13 @@ export function BatchDeployToSimulator(arg1:string):Promise<Record<string, any>>
 
 export function BatchPrefetchFavorites(arg1:Array<Record<string, any>>,arg2:number):Promise<Record<string, any>>;
 
+export function BroadcastRegistrationDCSP(arg1:string):Promise<Record<string, any>>;
+
 export function BuildRating(arg1:number,arg2:number):Promise<Record<string, any>>;
 
 export function CallXSWD(arg1:string):Promise<Record<string, any>>;
+
+export function CancelColdRegistration():Promise<Record<string, any>>;
 
 export function CancelRegistration():Promise<Record<string, any>>;
 
@@ -91,6 +99,8 @@ export function DecodeIntegratedAddress(arg1:string):Promise<Record<string, any>
 
 export function DeleteContact(arg1:string):Promise<Record<string, any>>;
 
+export function DeleteRingMemberSet(arg1:string):Promise<Record<string, any>>;
+
 export function DeleteTransactionLabel(arg1:string):Promise<Record<string, any>>;
 
 export function DeleteVar(arg1:string,arg2:string):Promise<Record<string, any>>;
@@ -129,6 +139,8 @@ export function EstimateSyncTime():Promise<Record<string, any>>;
 
 export function ExecuteSCViaXSWD(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
 
+export function ExportRegistrationDCSP(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
+
 export function FetchByDURL(arg1:string):Promise<Record<string, any>>;
 
 export function FetchSCID(arg1:string):Promise<Record<string, any>>;
@@ -140,6 +152,8 @@ export function FilterSearchResults(arg1:Array<Record<string, any>>):Promise<Arr
 export function FormatBlockAge(arg1:number):Promise<string>;
 
 export function FundTestWallet(arg1:number,arg2:number):Promise<Record<string, any>>;
+
+export function GenerateColdWallet(arg1:string,arg2:number,arg3:boolean):Promise<Record<string, any>>;
 
 export function GenerateSemanticLabel(arg1:string,arg2:number):Promise<string>;
 
@@ -313,6 +327,8 @@ export function GetRecentWalletsWithInfo():Promise<Array<main.WalletInfo>>;
 
 export function GetRegistrationStatus():Promise<Record<string, any>>;
 
+export function GetRingMemberSets():Promise<Record<string, any>>;
+
 export function GetRingMembers(arg1:string):Promise<Record<string, any>>;
 
 export function GetSCChangeTimeline(arg1:string):Promise<Record<string, any>>;
@@ -419,6 +435,8 @@ export function InvokeSCFromExplorer(arg1:string,arg2:string,arg3:Array<Record<s
 
 export function InvokeSCFunction(arg1:string):Promise<Record<string, any>>;
 
+export function IsAddressRegistered(arg1:string):Promise<Record<string, any>>;
+
 export function IsAppCachedOffline(arg1:string):Promise<Record<string, any>>;
 
 export function IsDevSupportEnabled():Promise<boolean>;
@@ -452,6 +470,8 @@ export function LoadFilesFromPaths(arg1:Array<string>):Promise<Record<string, an
 export function ManuallyAllowApp(arg1:string):Promise<Record<string, any>>;
 
 export function ManuallyBlockApp(arg1:string):Promise<Record<string, any>>;
+
+export function MineRegistration(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function MoveFile(arg1:string,arg2:string):Promise<Record<string, any>>;
 
@@ -515,6 +535,8 @@ export function RemoveFile(arg1:string):Promise<Record<string, any>>;
 
 export function RemoveRecentWallet(arg1:string):Promise<Record<string, any>>;
 
+export function RemoveRingMember(arg1:string,arg2:string):Promise<Record<string, any>>;
+
 export function RemoveSearchExclusion(arg1:string):Promise<Record<string, any>>;
 
 export function RemoveTrackedToken(arg1:string):Promise<Record<string, any>>;
@@ -546,6 +568,8 @@ export function RevokeAppPermissions(arg1:string):Promise<Record<string, any>>;
 export function RevokeXSWDConnection(arg1:string):Promise<Record<string, any>>;
 
 export function SaveBinaryFileWithDialog(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
+
+export function SaveColdBackup(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
 export function SaveFileWithDialog(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
@@ -704,6 +728,8 @@ export function ValidateProofFull(arg1:string,arg2:string):Promise<Record<string
 export function ValidateSCCode(arg1:string):Promise<Record<string, any>>;
 
 export function ValidateSenderProof(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<Record<string, any>>;
+
+export function VerifyColdWallet(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
 export function VerifySignature(arg1:string):Promise<Record<string, any>>;
 

@@ -10,6 +10,14 @@ export function AddContact(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddContact'](arg1, arg2, arg3);
 }
 
+export function AddRingMember(arg1, arg2) {
+  return window['go']['main']['App']['AddRingMember'](arg1, arg2);
+}
+
+export function AddRingMemberSet(arg1) {
+  return window['go']['main']['App']['AddRingMemberSet'](arg1);
+}
+
 export function AddSCIDToIndex(arg1) {
   return window['go']['main']['App']['AddSCIDToIndex'](arg1);
 }
@@ -34,12 +42,20 @@ export function BatchPrefetchFavorites(arg1, arg2) {
   return window['go']['main']['App']['BatchPrefetchFavorites'](arg1, arg2);
 }
 
+export function BroadcastRegistrationDCSP(arg1) {
+  return window['go']['main']['App']['BroadcastRegistrationDCSP'](arg1);
+}
+
 export function BuildRating(arg1, arg2) {
   return window['go']['main']['App']['BuildRating'](arg1, arg2);
 }
 
 export function CallXSWD(arg1) {
   return window['go']['main']['App']['CallXSWD'](arg1);
+}
+
+export function CancelColdRegistration() {
+  return window['go']['main']['App']['CancelColdRegistration']();
 }
 
 export function CancelRegistration() {
@@ -178,6 +194,10 @@ export function DeleteContact(arg1) {
   return window['go']['main']['App']['DeleteContact'](arg1);
 }
 
+export function DeleteRingMemberSet(arg1) {
+  return window['go']['main']['App']['DeleteRingMemberSet'](arg1);
+}
+
 export function DeleteTransactionLabel(arg1) {
   return window['go']['main']['App']['DeleteTransactionLabel'](arg1);
 }
@@ -254,6 +274,10 @@ export function ExecuteSCViaXSWD(arg1, arg2, arg3) {
   return window['go']['main']['App']['ExecuteSCViaXSWD'](arg1, arg2, arg3);
 }
 
+export function ExportRegistrationDCSP(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportRegistrationDCSP'](arg1, arg2, arg3);
+}
+
 export function FetchByDURL(arg1) {
   return window['go']['main']['App']['FetchByDURL'](arg1);
 }
@@ -276,6 +300,10 @@ export function FormatBlockAge(arg1) {
 
 export function FundTestWallet(arg1, arg2) {
   return window['go']['main']['App']['FundTestWallet'](arg1, arg2);
+}
+
+export function GenerateColdWallet(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GenerateColdWallet'](arg1, arg2, arg3);
 }
 
 export function GenerateSemanticLabel(arg1, arg2) {
@@ -622,6 +650,10 @@ export function GetRegistrationStatus() {
   return window['go']['main']['App']['GetRegistrationStatus']();
 }
 
+export function GetRingMemberSets() {
+  return window['go']['main']['App']['GetRingMemberSets']();
+}
+
 export function GetRingMembers(arg1) {
   return window['go']['main']['App']['GetRingMembers'](arg1);
 }
@@ -834,6 +866,10 @@ export function InvokeSCFunction(arg1) {
   return window['go']['main']['App']['InvokeSCFunction'](arg1);
 }
 
+export function IsAddressRegistered(arg1) {
+  return window['go']['main']['App']['IsAddressRegistered'](arg1);
+}
+
 export function IsAppCachedOffline(arg1) {
   return window['go']['main']['App']['IsAppCachedOffline'](arg1);
 }
@@ -900,6 +936,10 @@ export function ManuallyAllowApp(arg1) {
 
 export function ManuallyBlockApp(arg1) {
   return window['go']['main']['App']['ManuallyBlockApp'](arg1);
+}
+
+export function MineRegistration(arg1, arg2) {
+  return window['go']['main']['App']['MineRegistration'](arg1, arg2);
 }
 
 export function MoveFile(arg1, arg2) {
@@ -1026,6 +1066,10 @@ export function RemoveRecentWallet(arg1) {
   return window['go']['main']['App']['RemoveRecentWallet'](arg1);
 }
 
+export function RemoveRingMember(arg1, arg2) {
+  return window['go']['main']['App']['RemoveRingMember'](arg1, arg2);
+}
+
 export function RemoveSearchExclusion(arg1) {
   return window['go']['main']['App']['RemoveSearchExclusion'](arg1);
 }
@@ -1088,6 +1132,10 @@ export function RevokeXSWDConnection(arg1) {
 
 export function SaveBinaryFileWithDialog(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveBinaryFileWithDialog'](arg1, arg2, arg3, arg4);
+}
+
+export function SaveColdBackup(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveColdBackup'](arg1, arg2, arg3, arg4);
 }
 
 export function SaveFileWithDialog(arg1, arg2, arg3, arg4) {
@@ -1404,6 +1452,10 @@ export function ValidateSCCode(arg1) {
 
 export function ValidateSenderProof(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ValidateSenderProof'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function VerifyColdWallet(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['VerifyColdWallet'](arg1, arg2, arg3, arg4);
 }
 
 export function VerifySignature(arg1) {

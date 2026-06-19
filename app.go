@@ -100,20 +100,21 @@ func NewApp() *App {
 		gnomonClient: NewGnomonClient("gravdb"),
 		cache:        NewGravitonCache(),
 		settings: map[string]interface{}{
-			"min_rating":         60,
-			"block_malware":      true,
-			"show_nsfw":          false,
-			"auto_connect_ws":    true,
-			"gnomon_enabled":     false,
-			"daemon_endpoint":    daemonEndpoint,
-			"network":            "mainnet",
-			"integrated_wallet":  true,
-			"allow_github_check": true, // Allow pinging GitHub for derod updates
-			"hide_balance":       false,
-			"hide_address":       false,
-			"avatar_hidden":      false,
-			"privacy_mode":       false, // network seal (Privacy Mode)
-			"signal_dark":        false, // display masking (Signal Dark) — independent of the seal
+			"min_rating":             60,
+			"block_malware":          true,
+			"show_nsfw":              false,
+			"auto_connect_ws":        true,
+			"gnomon_enabled":         false,
+			"daemon_endpoint":        daemonEndpoint,
+			"network":                "mainnet",
+			"integrated_wallet":      true,
+			"allow_github_check":     true, // Allow pinging GitHub for derod updates
+			"hide_balance":           false,
+			"hide_address":           false,
+			"avatar_hidden":          false,
+			"privacy_mode":           false, // network seal (Privacy Mode)
+			"signal_dark":            false, // display masking (Signal Dark) — independent of the seal
+			"active_ring_member_set": "",    // selected ring member set id ("" = Auto/random)
 		},
 		history:     make([]string, 0),
 		consoleLogs: make([]ConsoleLog, 0),

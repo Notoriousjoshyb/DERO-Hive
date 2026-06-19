@@ -381,11 +381,26 @@ func (a *App) OpenWallet(filePath, password string) map[string]interface{} {
 		// encrypted balances are fetched and kept fresh by the ongoing sync.
 		// Without this, non-native token balances would read 0 until the user
 		// re-adds them. Errors are benign (e.g. "token already added").
-		for _, t := range loadTrackedTokens() {
-			if err := wallet.TokenAdd(crypto.HashHexToHash(strings.ToLower(t.SCID))); err != nil {
-				continue
+		//
+		// Defensive: walletapi's TokenAdd writes to account.EntriesNative without
+		// a nil-guard (its sibling InsertReplace has one), so on a freshly
+		// restored/unsynced wallet — common for cold-genesis wallets, which are
+		// unregistered until broadcast — EntriesNative is nil and TokenAdd panics
+		// ("assignment to entry in nil map"). The real fix is in the derohe fork;
+		// here we recover so a token-tracking convenience can never crash the app
+		// during an otherwise-successful wallet open.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					a.logToConsole(fmt.Sprintf("[WARN] skipped tracked-token registration (wallet not sync-ready): %v", r))
+				}
+			}()
+			for _, t := range loadTrackedTokens() {
+				if err := wallet.TokenAdd(crypto.HashHexToHash(strings.ToLower(t.SCID))); err != nil {
+					continue
+				}
 			}
-		}
+		}()
 	}()
 
 	result := map[string]interface{}{
@@ -531,10 +546,15 @@ func (a *App) GetBalance() map[string]interface{} {
 	if a.simulatorManager != nil && a.simulatorManager.isInitialized {
 		var zerohash [32]byte
 		addr := wallet.GetAddress().String()
-		if bal, _, err := wallet.GetDecryptedBalanceAtTopoHeight(zerohash, -1, addr); err == nil {
+		if bal, _, err := wallet.GetDecryptedBalanceAtTopoHeight(zerohash, -1, addr); err == nil && bal > 0 {
 			mature = bal
+			_, locked = wallet.Get_Balance()
 		} else {
-			// No active connection -- use cached in-memory balance.
+			// No active WS connection (err != nil) or no decrypted balance available
+			// yet: fall back to the cached in-memory balance. In simulator mode this
+			// is the same accurate-then-fallback pattern the status broadcaster uses
+			// (see XSWDServer.GetWalletBalance) so the dashboard and the periodic
+			// status push report the same value.
 			mature, locked = wallet.Get_Balance()
 		}
 	} else {
@@ -1173,9 +1193,13 @@ func (a *App) GetTransactionHistory(limit int) map[string]interface{} {
 			"coinbase":    e.Coinbase,
 			"destination": e.Destination,
 			"sender":      e.Sender,
-			"proof":       e.Proof,
-			"status":      e.Status,
-			"time":        e.Time.Unix(),
+			// Attribution trust: sender is structurally pinned only at ring size 2;
+			// for larger rings it is sender-reported (see rpc.Entry in derohe fork).
+			"sender_verified": e.SenderVerified,
+			"ringsize":        e.RingSize,
+			"proof":           e.Proof,
+			"status":          e.Status,
+			"time":            e.Time.Unix(),
 		}
 
 		// Extract payload comment if available
@@ -1956,13 +1980,34 @@ func (a *App) InternalWalletCall(method string, params map[string]interface{}, p
 			}
 			a.logToConsole(fmt.Sprintf("[XSWD] Building transfer TX with ringsize=%d fees=%d", ringsize, fees))
 
-			tx, err := wallet.TransferPayload0(transfers, ringsize, false, scArgs, fees, false)
+			// Opt-in sender-privacy knobs (interactive send only). A zero-value
+			// TransferOptions reproduces TransferPayload0 exactly, so the default
+			// path is unchanged. anonymize → attribution witness points at a decoy
+			// instead of you; preferred_decoys → seed the front of the ring (random
+			// tops up). Strict:false → bad/unregistered decoys are skipped, not fatal.
+			opts := walletapi.TransferOptions{}
+			if anon, _ := params["anonymize"].(bool); anon {
+				opts.Attribution = walletapi.AttributionAnonymous
+			}
+			if decoys, ok := params["preferred_decoys"].([]interface{}); ok && len(decoys) > 0 {
+				members := make([]string, 0, len(decoys))
+				for _, d := range decoys {
+					if s, ok := d.(string); ok && s != "" {
+						members = append(members, s)
+					}
+				}
+				if len(members) > 0 {
+					opts.Ring = &walletapi.RingPreference{PreferredDecoys: members}
+				}
+			}
+
+			tx, err := wallet.TransferPayload0WithOptions(transfers, ringsize, false, scArgs, fees, false, opts)
 			if err != nil {
 				a.logToConsole(fmt.Sprintf("[WARN] Transfer build failed, retrying after resync: %v", err))
 				if syncErr := wallet.Sync_Wallet_Memory_With_Daemon(); syncErr != nil {
 					a.logToConsole(fmt.Sprintf("[WARN] Retry sync failed: %v", syncErr))
 				}
-				tx, err = wallet.TransferPayload0(transfers, ringsize, false, scArgs, fees, false)
+				tx, err = wallet.TransferPayload0WithOptions(transfers, ringsize, false, scArgs, fees, false, opts)
 				if err != nil {
 					return map[string]interface{}{"success": false, "error": FriendlyError(err), "technicalError": err.Error()}
 				}
@@ -3816,6 +3861,208 @@ func (a *App) DeleteContact(id string) map[string]interface{} {
 	}
 }
 
+// ============================================
+// RING MEMBER SET CRUD (bound to Wails)
+// ============================================
+//
+// These mirror the address-book CRUD shape. Member validation here is the same set
+// the fork's curatedRingCandidates enforces at send time (parseable, not your own,
+// distinct), MINUS registration — registration is advisory in the UI (via
+// IsAddressRegistered) and re-checked by the fork at send, so an address that
+// registers later still works without re-editing the set.
+
+// GetRingMemberSets returns all saved ring member sets.
+func (a *App) GetRingMemberSets() map[string]interface{} {
+	sets := loadRingMemberSets()
+	return map[string]interface{}{
+		"success": true,
+		"sets":    sets,
+		"count":   len(sets),
+	}
+}
+
+// AddRingMemberSet creates a new, empty named set.
+func (a *App) AddRingMemberSet(name string) map[string]interface{} {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return map[string]interface{}{"success": false, "error": "Name is required"}
+	}
+
+	sets := loadRingMemberSets()
+	for _, s := range sets {
+		if strings.EqualFold(s.Name, name) {
+			return map[string]interface{}{"success": false, "error": "A set with that name already exists"}
+		}
+	}
+
+	id := fmt.Sprintf("ringset_%d", time.Now().UnixNano())
+	newSet := RingMemberSet{
+		ID:        id,
+		Name:      name,
+		Members:   []string{},
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	}
+
+	sets = append(sets, newSet)
+	saveRingMemberSets(sets)
+	a.logToConsole(fmt.Sprintf("[RingMembers] Created set: %s", name))
+
+	return map[string]interface{}{"success": true, "set": newSet, "message": "Ring member set created"}
+}
+
+// AddRingMember adds one address to a set after local validation. The footgun guard
+// (your own address collapses your anonymity set) mirrors curatedRingCandidates.
+func (a *App) AddRingMember(setID, address string) map[string]interface{} {
+	address = strings.TrimSpace(address)
+
+	// Parseable DERO base address only — reject integrated (deto1) and malformed.
+	addr, err := rpc.NewAddress(address)
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": "Invalid DERO address format"}
+	}
+	if addr.IsIntegratedAddress() {
+		return map[string]interface{}{"success": false, "error": "Use a plain (dero1) address, not an integrated address"}
+	}
+
+	// Footgun: a ring member that is your own address collapses your anonymity set.
+	walletManager.Lock()
+	if walletManager.isOpen && walletManager.wallet != nil {
+		if address == walletManager.wallet.GetAddress().String() {
+			walletManager.Unlock()
+			return map[string]interface{}{"success": false, "error": "A ring member cannot be your own address — it would collapse your anonymity set"}
+		}
+	}
+	walletManager.Unlock()
+
+	sets := loadRingMemberSets()
+	idx := -1
+	for i := range sets {
+		if sets[i].ID == setID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return map[string]interface{}{"success": false, "error": "Ring member set not found"}
+	}
+
+	for _, m := range sets[idx].Members {
+		if m == address {
+			return map[string]interface{}{"success": false, "error": "Address already in this set"}
+		}
+	}
+
+	sets[idx].Members = append(sets[idx].Members, address)
+	sets[idx].UpdatedAt = time.Now().Unix()
+	saveRingMemberSets(sets)
+
+	return map[string]interface{}{"success": true, "set": sets[idx], "message": "Ring member added"}
+}
+
+// RemoveRingMember drops one address from a set.
+func (a *App) RemoveRingMember(setID, address string) map[string]interface{} {
+	sets := loadRingMemberSets()
+	idx := -1
+	for i := range sets {
+		if sets[i].ID == setID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return map[string]interface{}{"success": false, "error": "Ring member set not found"}
+	}
+
+	newMembers := make([]string, 0, len(sets[idx].Members))
+	found := false
+	for _, m := range sets[idx].Members {
+		if m == address {
+			found = true
+			continue
+		}
+		newMembers = append(newMembers, m)
+	}
+	if !found {
+		return map[string]interface{}{"success": false, "error": "Address not in this set"}
+	}
+
+	sets[idx].Members = newMembers
+	sets[idx].UpdatedAt = time.Now().Unix()
+	saveRingMemberSets(sets)
+
+	return map[string]interface{}{"success": true, "set": sets[idx], "message": "Ring member removed"}
+}
+
+// DeleteRingMemberSet removes an entire set.
+func (a *App) DeleteRingMemberSet(setID string) map[string]interface{} {
+	sets := loadRingMemberSets()
+	newSets := make([]RingMemberSet, 0, len(sets))
+	found := false
+	for _, s := range sets {
+		if s.ID != setID {
+			newSets = append(newSets, s)
+		} else {
+			found = true
+		}
+	}
+	if !found {
+		return map[string]interface{}{"success": false, "error": "Ring member set not found"}
+	}
+
+	saveRingMemberSets(newSets)
+	return map[string]interface{}{"success": true, "message": "Ring member set deleted"}
+}
+
+// IsAddressRegistered probes whether an address is registered on the base (zero-SCID)
+// balance tree — the same registration test curatedRingCandidates applies to a decoy
+// at send time. It uses HOLOGRAM's own daemon client (the canonical connection, always
+// pointed at the active network incl. the simulator) rather than the open wallet's
+// connection, so it works in Settings regardless of wallet sync state.
+//
+// The stock daemon's DERO.GetEncryptedBalance does not return a clean "unregistered"
+// status — it PANICS and surfaces an RPC error for an unregistered base-tree account.
+// So any error here is treated as not-registered (the conservative ⚠), which also
+// matches what the send path does: curatedRingCandidates silently skips it.
+func (a *App) IsAddressRegistered(address string) map[string]interface{} {
+	address = strings.TrimSpace(address)
+	if _, err := rpc.NewAddress(address); err != nil {
+		return map[string]interface{}{"success": false, "error": "Invalid DERO address format"}
+	}
+
+	params := map[string]interface{}{
+		"address":    address,
+		"topoheight": -1,
+	}
+
+	var result interface{}
+	var err error
+	if a.xswdClient.IsConnected() {
+		result, err = a.xswdClient.Call("DERO.GetEncryptedBalance", params)
+	} else {
+		result, err = a.daemonClient.Call("DERO.GetEncryptedBalance", params)
+	}
+	if err != nil {
+		// Unregistered (the daemon panics) OR a transient connection issue. Either way
+		// the address isn't usable as a decoy right now — show ⚠, never a false ✓.
+		return map[string]interface{}{"success": true, "registered": false}
+	}
+
+	// A registered base-tree account returns a result carrying registration:1.
+	if m, ok := result.(map[string]interface{}); ok {
+		if reg, ok := m["registration"]; ok {
+			switch v := reg.(type) {
+			case float64:
+				return map[string]interface{}{"success": true, "registered": v >= 1}
+			case int64:
+				return map[string]interface{}{"success": true, "registered": v >= 1}
+			}
+		}
+	}
+	// Got a result with no error → treat as registered (daemon answered the balance query).
+	return map[string]interface{}{"success": true, "registered": true}
+}
+
 // Helper functions for address book storage
 func loadAddressBook() []AddressBookEntry {
 	configFile := filepath.Join(getDatashardsDir(), "settings", "address_book.json")
@@ -3847,6 +4094,58 @@ func saveAddressBook(contacts []AddressBookEntry) {
 
 	if err := os.WriteFile(filepath.Join(configDir, "address_book.json"), data, 0600); err != nil {
 		log.Printf("Failed to save address book: %v", err)
+	}
+}
+
+// ============================================
+// RING MEMBER SETS
+// ============================================
+//
+// A Ring Member Set is a named, HOLOGRAM-LOCAL list of addresses the user chooses
+// to seed the front of a transfer's ring. It is a convenience expanded into the
+// fork's per-transfer PreferredDecoys at send time — NOT a protocol feature.
+// Curation never raises anonymity above ring size; random members top up the rest.
+// Storage mirrors the address book exactly (separate ring_members.json).
+
+// RingMemberSet is a named set of addresses curated to lead a transfer ring.
+type RingMemberSet struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Members   []string `json:"members"`
+	CreatedAt int64    `json:"createdAt"`
+	UpdatedAt int64    `json:"updatedAt"`
+}
+
+func loadRingMemberSets() []RingMemberSet {
+	configFile := filepath.Join(getDatashardsDir(), "settings", "ring_members.json")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return []RingMemberSet{}
+	}
+
+	var sets []RingMemberSet
+	if err := json.Unmarshal(data, &sets); err != nil {
+		return []RingMemberSet{}
+	}
+
+	return sets
+}
+
+func saveRingMemberSets(sets []RingMemberSet) {
+	configDir := filepath.Join(getDatashardsDir(), "settings")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		log.Printf("Failed to create settings directory: %v", err)
+		return
+	}
+
+	data, err := json.Marshal(sets)
+	if err != nil {
+		log.Printf("Failed to marshal ring member sets: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(filepath.Join(configDir, "ring_members.json"), data, 0600); err != nil {
+		log.Printf("Failed to save ring member sets: %v", err)
 	}
 }
 

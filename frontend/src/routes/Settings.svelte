@@ -21,7 +21,9 @@
     StartGnomonWSServer, StopGnomonWSServer, GetGnomonWSStatus,
     GetTagStats, RebuildTagIndex,
     // Time Machine Watch List
-    GetWatchedSmartContracts, UnwatchSmartContract, RefreshWatchedSCs
+    GetWatchedSmartContracts, UnwatchSmartContract, RefreshWatchedSCs,
+    // Ring Members (sender-visibility decoy curation)
+    GetRingMemberSets, AddRingMemberSet, AddRingMember, RemoveRingMember, DeleteRingMemberSet, IsAddressRegistered
   } from '../../wailsjs/go/main/App.js';
   import OfflineCacheManager from '../lib/components/OfflineCacheManager.svelte';
   import SyncManager from '../lib/components/SyncManager.svelte';
@@ -36,6 +38,7 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   
   const sections = [
     { id: 'general', label: 'General', iconName: 'settings' },
+    { id: 'privacy', label: 'Advanced Privacy', iconName: 'shield' },
     { id: 'data-storage', label: 'Data & Storage', iconName: 'hard-drive' },
     { id: 'node', label: 'Node', iconName: 'server' },
     { id: 'simulator', label: 'Simulator', iconName: 'gamepad' },
@@ -46,7 +49,6 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
     { id: 'network', label: 'Network', iconName: 'globe' },
     { id: 'gnomon', label: 'Gnomon', iconName: 'database' },
     { id: 'connected-apps', label: 'Connected Apps', iconName: 'link' },
-    { id: 'privacy', label: 'Privacy Mode', iconName: 'lock' },
     { id: 'console', label: 'Console', iconName: 'terminal' },
     { id: 'developer-support', label: 'Developer Support', iconName: 'heart' },
     { id: 'about', label: 'About', iconName: 'info' },
@@ -86,6 +88,17 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   let activeConnections = [];
   let newAllowedHost = '';
   let privacyLoading = false;
+
+  // Ring Members state (sender-visibility decoy curation)
+  let ringMemberSets = [];
+  let newRingSetName = '';
+  let selectedRingSetId = '';      // which set's members are open in the editor
+  let newRingMemberAddr = '';
+  let ringMemberError = '';
+  let ringSetDeleteArmed = '';     // confirm-tap: id armed for delete
+  // address -> 'checking' | 'ok' | 'unregistered' ; advisory registration probe
+  let ringMemberStatus = {};
+  $: selectedRingSet = ringMemberSets.find(s => s.id === selectedRingSetId) || null;
   
   // Node detection state
   let detecting = false;
@@ -656,6 +669,11 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
     const perm = permissionTypes.find(p => p.id === permId);
     return perm?.name || permId;
   }
+
+  function formatAddress(addr) {
+    if (!addr) return '';
+    return addr.slice(0, 12) + '...' + addr.slice(-8);
+  }
   
   // Load apps when section becomes active
   $: if (activeSection === 'connected-apps') {
@@ -665,6 +683,7 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   // Load privacy mode data when section becomes active
   $: if (activeSection === 'privacy') {
     loadPrivacyModeData();
+    loadRingMemberSets();
   }
   
   async function loadPrivacyModeData() {
@@ -727,6 +746,112 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
       }
     } catch (e) {
       console.error('Failed to remove host:', e);
+    }
+  }
+
+  // ── Ring Members (decoy curation) ───────────────────────────────────
+  async function loadRingMemberSets() {
+    try {
+      const result = await GetRingMemberSets();
+      if (result.success) {
+        ringMemberSets = result.sets || [];
+        // keep the editor open on a still-existing set; otherwise close it
+        if (selectedRingSetId && !ringMemberSets.some(s => s.id === selectedRingSetId)) {
+          selectedRingSetId = '';
+        }
+        if (selectedRingSet) probeRingMembers(selectedRingSet.members || []);
+      }
+    } catch (e) {
+      console.error('Failed to load ring member sets:', e);
+    }
+  }
+
+  async function addRingSet() {
+    ringMemberError = '';
+    const name = newRingSetName.trim();
+    if (!name) return;
+    try {
+      const result = await AddRingMemberSet(name);
+      if (result.success) {
+        newRingSetName = '';
+        await loadRingMemberSets();
+        if (result.set?.id) selectedRingSetId = result.set.id; // open the new set
+      } else {
+        ringMemberError = result.error || 'Could not create set';
+      }
+    } catch (e) {
+      console.error('Failed to add ring set:', e);
+    }
+  }
+
+  function openRingSet(id) {
+    selectedRingSetId = (selectedRingSetId === id) ? '' : id;
+    ringMemberError = '';
+    const set = ringMemberSets.find(s => s.id === id);
+    if (set) probeRingMembers(set.members || []);
+  }
+
+  async function deleteRingSet(id) {
+    if (ringSetDeleteArmed !== id) { ringSetDeleteArmed = id; return; } // confirm-tap
+    ringSetDeleteArmed = '';
+    try {
+      const result = await DeleteRingMemberSet(id);
+      if (result.success) {
+        if (selectedRingSetId === id) selectedRingSetId = '';
+        await loadRingMemberSets();
+      }
+    } catch (e) {
+      console.error('Failed to delete ring set:', e);
+    }
+  }
+
+  async function addRingMember() {
+    ringMemberError = '';
+    const addr = newRingMemberAddr.trim();
+    if (!addr || !selectedRingSetId) return;
+    try {
+      const result = await AddRingMember(selectedRingSetId, addr);
+      if (result.success) {
+        newRingMemberAddr = '';
+        await loadRingMemberSets();
+        probeOne(addr);
+      } else {
+        ringMemberError = result.error || 'Could not add address';
+      }
+    } catch (e) {
+      console.error('Failed to add ring member:', e);
+    }
+  }
+
+  async function removeRingMember(addr) {
+    if (!selectedRingSetId) return;
+    try {
+      const result = await RemoveRingMember(selectedRingSetId, addr);
+      if (result.success) await loadRingMemberSets();
+    } catch (e) {
+      console.error('Failed to remove ring member:', e);
+    }
+  }
+
+  // Advisory registration probe — mirrors the send-time check. A non-registered
+  // (or unreachable) result reads as ⚠, never a hard claim, since the send path
+  // gracefully skips such members anyway.
+  async function probeOne(addr) {
+    ringMemberStatus = { ...ringMemberStatus, [addr]: 'checking' };
+    try {
+      const result = await IsAddressRegistered(addr);
+      ringMemberStatus = {
+        ...ringMemberStatus,
+        [addr]: (result.success && result.registered) ? 'ok' : 'unregistered',
+      };
+    } catch (e) {
+      ringMemberStatus = { ...ringMemberStatus, [addr]: 'unregistered' };
+    }
+  }
+
+  function probeRingMembers(members) {
+    for (const m of members) {
+      if (!ringMemberStatus[m]) probeOne(m);
     }
   }
   
@@ -2865,6 +2990,108 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
           </div>
         </div>
         
+        <!-- Ring Members (sender-visibility decoy curation) — #2 under Privacy & Security -->
+        <div class="card-wrapper">
+          <div class="explorer-header">
+            <div class="explorer-header-left">
+              <span class="explorer-header-icon">◎</span>
+              <span class="explorer-header-title">RING MEMBERS</span>
+            </div>
+          </div>
+          <div class="card-content">
+            <div class="ring-info">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px;"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+              <span>Ring member sets are a <strong>HOLOGRAM convenience</strong>, stored locally on this device — not a network feature. When you Anonymize a transfer, a set's members fill the front of the ring and random registered members fill the rest. A set never raises anonymity above the ring size, and is never sourced from your Address Book.</span>
+            </div>
+
+            <!-- name a new set -->
+            <div class="add-host-form">
+              <input
+                type="text"
+                bind:value={newRingSetName}
+                placeholder="Name a new set…"
+                class="input host-input"
+                on:keydown={(e) => e.key === 'Enter' && addRingSet()}
+              />
+              <button on:click={addRingSet} disabled={!newRingSetName.trim()} class="btn btn-primary">
+                Add Set
+              </button>
+            </div>
+
+            <!-- list of sets -->
+            <div class="host-list">
+              {#each ringMemberSets as set}
+                <div class="host-item" class:host-item-active={selectedRingSetId === set.id}>
+                  <span class="host-dot"></span>
+                  <span class="host-name">{set.name}</span>
+                  <span class="connection-protocol">{(set.members || []).length} {(set.members || []).length === 1 ? 'member' : 'members'}</span>
+                  <button class="btn btn-ghost btn-sm settings-ml-auto" on:click={() => openRingSet(set.id)}>
+                    {selectedRingSetId === set.id ? 'Close' : 'Edit'}
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    class:ring-delete-armed={ringSetDeleteArmed === set.id}
+                    on:click={() => deleteRingSet(set.id)}
+                    on:blur={() => { if (ringSetDeleteArmed === set.id) ringSetDeleteArmed = ''; }}
+                    title={ringSetDeleteArmed === set.id ? 'Tap again to delete' : 'Delete set'}
+                  >
+                    {ringSetDeleteArmed === set.id ? 'Confirm' : '✕'}
+                  </button>
+                </div>
+              {/each}
+              {#if ringMemberSets.length === 0}
+                <div class="host-item host-item-empty">
+                  No ring member sets yet
+                </div>
+              {/if}
+            </div>
+
+            <!-- member editor for the selected set -->
+            {#if selectedRingSet}
+              <div class="settings-divider">
+                <span class="form-hint" style="display:block;margin-bottom:var(--s-3);">
+                  Members of <strong style="color:var(--text-2);">{selectedRingSet.name}</strong>. Each must be a registered DERO base address — not your own.
+                </span>
+                <div class="decoy-add-row">
+                  <input
+                    type="text"
+                    bind:value={newRingMemberAddr}
+                    placeholder="dero1…"
+                    class="input"
+                    on:keydown={(e) => e.key === 'Enter' && addRingMember()}
+                  />
+                  <button class="btn btn-primary btn-sm" on:click={addRingMember} disabled={!newRingMemberAddr.trim()}>Add</button>
+                </div>
+                {#if ringMemberError}
+                  <span class="form-error" style="display:block;margin-top:var(--s-2);">{ringMemberError}</span>
+                {/if}
+                <div class="decoy-chips">
+                  {#each (selectedRingSet.members || []) as addr}
+                    <span class="decoy-chip">
+                      {#if ringMemberStatus[addr] === 'ok'}
+                        <span class="ok" title="Registered on-chain"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+                      {:else if ringMemberStatus[addr] === 'checking'}
+                        <span class="checking" title="Checking registration…"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.4"/></svg></span>
+                      {:else}
+                        <span class="unreg" title="Not registered on-chain (or daemon unreachable) — it will be skipped at send"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>
+                      {/if}
+                      {formatAddress(addr)}
+                      <span class="x" on:click={() => removeRingMember(addr)} on:keydown={(e) => e.key === 'Enter' && removeRingMember(addr)} role="button" tabindex="0" title="Remove"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+                    </span>
+                  {/each}
+                  {#if (selectedRingSet.members || []).length === 0}
+                    <span class="form-hint">No members yet — add registered addresses above.</span>
+                  {/if}
+                </div>
+                <div class="decoy-warn">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                  <span>Quality, not count. Members you control collapse your anonymity set — anyone who knows these addresses are yours can rule them out. Never add your own addresses. A good set is other people's real, active addresses.</span>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+
         <!-- Allowed Hosts -->
         <div class="card-wrapper">
           <div class="explorer-header">
@@ -3096,6 +3323,64 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
 </div>
 
 <style>
+  /* === Ring Members (sender-visibility decoy curation) === */
+  /* Ported from the decided sender-visibility exploration (2C2 settings surface). */
+  /* The honesty banner is scoped to the design's 11px/r-md sizing — the global
+     .alert is 13px/r-lg/s-4 padding, which renders oversized against the 11px
+     form-hint text the sibling cards use. */
+  .ring-info {
+    display: flex; align-items: flex-start; gap: var(--s-3);
+    padding: var(--s-3);
+    border-radius: var(--r-md);
+    font-size: 11px; line-height: 1.55;
+    margin-bottom: var(--s-4);
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    color: var(--cyan-400);
+  }
+  .ring-info svg { flex: none; }
+
+  .host-item-active { background: var(--void-up); }
+  .host-item-active .host-name { color: var(--cyan-400); }
+  .ring-delete-armed { color: var(--status-err) !important; }
+
+  .settings-divider {
+    margin-top: var(--s-4); padding-top: var(--s-4);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .decoy-add-row { display: flex; gap: var(--s-2); }
+  .decoy-add-row .input { flex: 1; min-width: 0; font-size: 11px; padding: var(--s-2) var(--s-3); }
+
+  .decoy-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-2); }
+  .decoy-chip {
+    display: inline-flex; align-items: center; gap: var(--s-2);
+    padding: var(--s-1) var(--s-2);
+    background: var(--void-up);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-2);
+    font-family: var(--font-mono);
+  }
+  .decoy-chip .ok { color: var(--status-ok); display: inline-flex; }
+  .decoy-chip .checking { color: var(--text-4); display: inline-flex; }
+  .decoy-chip .unreg { color: var(--status-warn); display: inline-flex; }
+  .decoy-chip .x { color: var(--text-4); cursor: pointer; display: inline-flex; }
+  .decoy-chip .x:hover { color: var(--status-err); }
+
+  /* the footgun warning — status-warn is sanctioned here: this IS a genuine
+     warning (self-owned members collapse the set), not decorative. */
+  .decoy-warn {
+    display: flex; align-items: flex-start; gap: var(--s-2);
+    margin-top: var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    font-size: 10px; line-height: 1.5;
+    color: var(--status-warn);
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    border-radius: var(--r-sm);
+  }
+  .decoy-warn svg { flex: none; margin-top: 1px; }
+
   /* === HOLOGRAM v7.0 Settings Page Styles === */
   /* Strict compliance with HOLOGRAM-DESIGN-SYSTEM.md */
   /* Utilitarian Card Headers (Explorer Style) */
@@ -3372,6 +3657,10 @@ import { HoloCard, DotIndicator, HoloBadge, Icons } from '../lib/components/holo
   .host-item-empty {
     justify-content: center;
     color: var(--text-4);
+    /* .host-item sets no font-size, so empty-state text otherwise falls through to
+       the oversized body default. Pin to the 11px form-hint scale (all Settings
+       empty states: Ring Members, Allowed Hosts, Active Connections). */
+    font-size: 11px;
   }
   
   .settings-row-control {
