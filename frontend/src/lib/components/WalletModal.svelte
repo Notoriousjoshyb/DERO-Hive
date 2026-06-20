@@ -537,8 +537,7 @@
                      Rendered ONLY when the dApp set one of these knobs; a default honest send
                      shows nothing (the norm needs no disclosure). Neutral/HUD treatment -- not
                      the warning palette, no padlock. Claimed addresses are shown in full
-                     (never middle-folded) so the user can read who the payment will appear from.
-                     DRAFT COPY -- owner to preview before ship. -->
+                     (never middle-folded) so the user can read who the payment will appear from. -->
                 {#if request.payload.preferred_decoys?.length || request.payload.anonymize}
                   <div class="modal-tx-field">
                     <div class="modal-tx-label">APPARENT SENDER</div>
