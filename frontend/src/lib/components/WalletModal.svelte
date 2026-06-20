@@ -529,6 +529,38 @@
                     </div>
                   </div>
                 {/if}
+
+                <!-- APPARENT SENDER (attribution disclosure)
+                     Surfaces what the dApp asked for via anonymize / preferred_decoys, so the
+                     approval reflects the WHOLE request. Informational only -- removes no
+                     capability; the user still approves exactly what they approved before.
+                     Rendered ONLY when the dApp set one of these knobs; a default honest send
+                     shows nothing (the norm needs no disclosure). Neutral/HUD treatment -- not
+                     the warning palette, no padlock. Claimed addresses are shown in full
+                     (never middle-folded) so the user can read who the payment will appear from.
+                     DRAFT COPY -- owner to preview before ship. -->
+                {#if request.payload.preferred_decoys?.length || request.payload.anonymize}
+                  <div class="modal-tx-field">
+                    <div class="modal-tx-label">APPARENT SENDER</div>
+                    {#if request.payload.preferred_decoys?.length}
+                      <!-- Load-bearing case: dApp named the address(es) the payment will appear from -->
+                      <div class="modal-tx-attribution-copy">
+                        This payment will appear to come from an address this app specified:
+                      </div>
+                      {#each request.payload.preferred_decoys as decoyAddr}
+                        <div class="modal-tx-destination">{decoyAddr}</div>
+                      {/each}
+                      <div class="modal-tx-attribution-note">
+                        It does not change who actually sent it, the amount, or the recipient.
+                      </div>
+                    {:else}
+                      <!-- anonymize only: appears from an unnamed decoy ring member -->
+                      <div class="modal-tx-attribution-copy">
+                        This payment will appear to come from a decoy ring member, not your address.
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               {:else if request.payload.scid}
                 <!-- SC call with no explicit transfers - show 0 DERO burn -->
                 <div class="modal-tx-field">
@@ -1092,7 +1124,23 @@
   .modal-tx-field-secondary {
     opacity: 0.7;
   }
-  
+
+  /* Attribution disclosure (APPARENT SENDER) -- neutral/informational, not a warning.
+     Pairs with the .modal-tx-destination boxed value reused for the address(es). */
+  .modal-tx-attribution-copy {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-3);
+  }
+
+  .modal-tx-attribution-note {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-4);
+  }
+
   /* Wallet Switcher */
   .wallet-switcher {
     display: flex;

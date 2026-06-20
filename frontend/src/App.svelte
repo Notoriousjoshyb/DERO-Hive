@@ -404,6 +404,8 @@
           scid: req.params?.scid,
           entrypoint: entrypoint,
           ringsize: req.params?.ringsize,
+          anonymize: req.params?.anonymize,
+          preferred_decoys: req.params?.preferred_decoys,
         };
       }
 
