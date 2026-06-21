@@ -69,7 +69,11 @@
       --emerald-300: #6ee7b7;
       --emerald-400: #34d399;
       --emerald-500: #10b981;
-      
+
+      /* === PINK (accent) === */
+      --pink-400: #f472b6;
+      --pink-500: #ec4899;
+
       /* === SEMANTIC STATUS === */
       --status-ok: #34d399;
       --status-warn: #fbbf24;
