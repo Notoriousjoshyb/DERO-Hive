@@ -2942,18 +2942,14 @@
                         </div>
                       {/if}
 
-                      <!-- Sender (for incoming) -->
-                      {#if tx.incoming && tx.sender}
-                        <div class="tx-detail-row">
-                          <span class="tx-detail-label">Sender</span>
-                          <div class="tx-detail-value-row">
-                            <code class="tx-detail-value tx-detail-address">{tx.sender}</code>
-                            <button class="btn-icon-sm" on:click={() => copyToClipboard(tx.sender, 'Sender address copied!')} title="Copy address">
-                              <Copy size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      {/if}
+                      <!--
+                        Sender (for incoming) is intentionally NOT rendered. On DERO a sender
+                        label is only trustworthy at ring size 2 (structural), which is rare,
+                        opt-in, and already deducible by the receiver; for larger rings the
+                        engine blanks it as an unverified claim. Displaying it gains a rare,
+                        derivable signal at the cost of a coherent "the wallet never shows a
+                        sender" privacy line. Do not re-add without a deliberate decision.
+                      -->
 
                       <!-- Destination (for outgoing) -->
                       {#if !tx.incoming && tx.destination}
