@@ -90,8 +90,8 @@
       </div>
 
 
-      <!-- Server status -->
-      <div id="status" class="status-box">⏳ Waiting for node...</div>
+      <!-- Toast notifications -->
+      <div id="status" class="status-box"></div>
 
       <!-- Theme Toggle -->
       <button id="theme-toggle" class="theme-toggle" title="Toggle theme">
@@ -121,73 +121,141 @@
         <div id="page-server" class="page active">
           <h2>Server Status</h2>
 
-          <div class="setting-item">
-            <div class="setting-label">Servers Status</div>
-            <div class="controls-column">
-              <!-- TELA Status -->
-              <div class="status-row">
-                <strong>TELA:</strong>
-                <span id="page-tela-status" data-server="tela">🔴 Not connected</span>
+          <div class="status-grid">
+            <!-- Connection -->
+            <div class="status-card">
+              <div class="card-header">💻 Connection</div>
+              <div class="card-body">
+                <div class="card-row">
+                  <span class="card-label">Node</span>
+                  <span class="card-value" id="sv-node">—</span>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Version</span>
+                  <span class="card-value" id="sv-version">—</span>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Network</span>
+                  <span class="card-value" id="sv-network">—</span>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Uptime</span>
+                  <span class="card-value" id="sv-uptime">—</span>
+                </div>
               </div>
             </div>
-          </div>  
-             <div class="setting-item">
-            <div class="setting-label">Servers Status</div>
-            <div class="controls-column">
-              <!-- Gnomon Status -->
-              <div class="status-row">
-                <strong>Gnomon:</strong>
-                <span id="page-gnomon-status" data-server="gnomon">🔴 Not connected</span>
-              </div>
-             <!-- Sync Progress -->
-            <div id="sync-info" style="display:block; margin-top: 8px;">
-              <div class="status-row">
-                <strong>Sync:</strong>
-                <span id="sync-label">Waiting...</span>
-              </div>
-              <div style="margin-top: 4px; background: var(--input-bg, #222); border-radius: 4px; overflow: hidden; height: 8px;">
-                <div id="sync-bar" style="height: 100%; width: 0%; background: var(--accent, #4caf50); transition: width 0.5s ease;"></div>
-              </div>
-              <div style="margin-top: 6px; font-size: 0.8rem; color: var(--text-muted, #888);">
-                <div class="status-row">
-                  <strong>Daemon:</strong>
-                  <span id="daemon-height">—</span>
+
+            <!-- Sync -->
+            <div class="status-card">
+              <div class="card-header">⚡ Sync</div>
+              <div class="card-body">
+                <div class="card-row">
+                  <span class="card-label">Indexed</span>
+                  <span class="card-value" id="db-height">—</span>
                 </div>
-                <div class="status-row">
-                  <strong>DB:</strong>
-                  <span id="db-height">—</span>
+                <div class="card-row">
+                  <span class="card-label">Chain</span>
+                  <span class="card-value" id="daemon-height">—</span>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Difficulty</span>
+                  <span class="card-value" id="sv-difficulty">—</span>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Mempool</span>
+                  <span class="card-value" id="sv-mempool">—</span>
+                </div>
+                <div id="sync-info" style="margin-top: 10px;">
+                  <div id="sync-label" class="sync-label">Waiting...</div>
+                  <div class="progress-bar"><div id="sync-bar" class="progress-fill" style="width:0%"></div></div>
+                  <div id="sync-eta" class="sync-label" style="margin-top: 4px;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Scanner -->
+            <div class="status-card">
+              <div class="card-header">🔍 Scanner</div>
+              <div class="card-body">
+                <div class="card-row">
+                  <span class="card-label">Live</span>
+                  <span class="card-value" id="sv-scanner-live">—</span>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Historical</span>
+                  <span class="card-value" id="sv-scanner-hist">—</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Apps -->
+            <div class="status-card">
+              <div class="card-header">📊 Discovered Apps</div>
+              <div class="card-body">
+                <div class="card-row">
+                  <span class="card-label">Total SCIDs</span>
+                  <span class="card-value card-value-lg" id="sv-scid-count">—</span>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+
+          <div class="servers-bar">
+            <div class="server-badge">
+              <strong>TELA:</strong>
+              <span id="page-tela-status" data-server="tela">🔴 Not connected</span>
+            </div>
+            <div class="server-badge">
+              <strong>Gnomon:</strong>
+              <span id="page-gnomon-status" data-server="gnomon">🔴 Not connected</span>
+            </div>
+          </div>
+
           <p>Servers are started automatically once a node is connected.</p>
         </div>
 
       <!-- Search Page -->
       <div id="page-search" class="page">
-        <h2>Search</h2>
-        <div class="input-row">
-          <input id="searchBox" placeholder="Search for SCIDs, nodes, or content..." disabled> 
-          <button id="search-btn">🔍 Search</button>
-        </div>
-        <div class="controls-row">
-          <div class="control-group">
-            <label for="minRating">Min rating:</label>
-            <span id="minRatingVal">0</span>
-            <input type="range" id="minRating" min="0" max="99" step="1" value="0">
+
+          <h2>Search</h2>
+
+          <div class="search-sticky">
+
+            <div class="input-row">
+              <div class="input-wrapper">
+                <input id="searchBox" type="text" placeholder="Search for SCIDs, nodes, or content..." disabled> 
+                <div id="searchSuggestions" class="search-dropdown hidden"></div>
+              </div>
+            </div> 
+            
+            <div class="controls-row">
+              <div class="control-group">
+                <label for="minRating">Min rating:</label>
+                <span id="minRatingVal">30</span>
+                <input type="range" id="minRating" min="0" max="99" step="1" value="30">
+              </div>
+
+              <div class="control-group">
+                <label>Sort:</label>
+                <div class="custom-select" id="sortMode">
+                  <button class="custom-select-trigger" type="button">
+                    <span class="custom-select-text">Name A → Z</span>
+                    <span class="custom-select-arrow">▼</span>
+                  </button>
+                  <ul class="custom-select-menu">
+                    <li data-value="name_asc" class="selected">Name A → Z</li>
+                    <li data-value="name_desc">Name Z → A</li>
+                    <li data-value="newest">Newest SCID</li>
+                    <li data-value="oldest">Oldest SCID</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
           </div>
-          <div class="control-group">
-            <label for="sortMode">Sort:</label>
-            <select id="sortMode">
-              <option value="name_asc">Name A → Z</option>
-              <option value="name_desc">Name Z → A</option>
-              <option value="newest">Newest SCID</option>
-              <option value="oldest">Oldest SCID</option>
-            </select>
-          </div>
-        </div>
+        
         <div id="search-status">Loading SCIDs...</div>
+
         <div id="results">
           <div class="no-results">Enter a search query to begin</div>
         </div>
@@ -212,10 +280,6 @@
         <div class="setting-item">
           <div class="setting-label">Default Node</div>
           <input type="text" id="setting-default-node" placeholder="e.g. 127.0.0.1:10102">
-          <div class="controls">
-            <button id="save-settings">💾 Save Settings</button>
-            <button id="reset-settings" class="secondary">🔄 Reset to Defaults</button>
-          </div>
         </div>
         <div class="setting-item">
           <div class="setting-label">Direct Load SCIDs</div>
@@ -224,6 +288,21 @@
             <input type="checkbox" id="setting-direct-load" checked>
           </label>
         </div>
+        <div class="setting-item">
+          <div class="setting-label">Hidden dURL Extensions</div>
+          <input
+            type="text"
+            id="setting-hidden-exts"
+            placeholder=".jpg, .js, .shards"
+          >
+          <div class="setting-description">
+            Comma separated extensions hidden from search results
+          </div>
+        </div>
+        <div class="controls">
+            <button id="save-settings">💾 Save Settings</button>
+            <button id="reset-settings" class="secondary">🔄 Reset to Defaults</button>
+          </div>
       </div>
 
      <!-- Help Page -->
@@ -249,7 +328,7 @@
     <h3>Install Native Helper (Linux/MacOS - Firefox)</h3>
     <ol>
       <li>Open your Terminal and Run: 
-        <pre><code>curl -fsSL https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases/download/v0.9.70/install.sh | bash</code></pre></li>        
+        <pre><code>curl -fsSL https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases/download/v1.0.0/install.sh | bash</code></pre></li>        
       <li><strong>Restart Firefox</strong> after installation.</l1>
     </ol>    
     <p>Visit the github releases page for more information on the <a href="https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases" target="_blank"><strong>PureWolf Native</strong></a> 
@@ -298,16 +377,18 @@
       <div id="page-about" class="page">
         <h2>About</h2>
         <div class="info-box">
-          <p><strong>Version:</strong> 0.9.7</p>
+          <p><strong>Version:</strong> 1.0.0</p>
           <p><strong>Description:</strong> Browser extension to access TELA's decentralized applications and websites from the DERO blockchain.</p>
         </div>
         <div class="info-box">
           <p><strong>DERO</strong></p>
           <p>Dero Foundation: <a href="https://www.derofoundation.org/" target="_blank"><strong>derofoundation.org</strong></a></p>
-          <p>Quick Reference Guide: <a href="https://derod.org/" target="_blank"><strong>derod.org</strong></a></p>
-          <p>Everything Dero: <a href="https://dero.world" target="_blank"><strong>dero.world</strong></a></p>
+          <p>Dero Reference Guide: <a href="https://derod.org/" target="_blank"><strong>derod.org</strong></a></p>
+          <p>Dero World: <a href="https://dero.world" target="_blank"><strong>dero.world</strong></a></p>
           <p>Local Node: <a href="https://dero.world/anotherworld/how-and-why-would-you-run-a-full-node/" target="_blank"><strong>How to run your own node?</strong></a></p>
-          <p>Wallet: <a href="https://github.com/DEROFDN/Engram/releases" target="_blank"><strong>Engram GUI Wallet</strong></a></p>
+          <p>Native Desktop Browser: <a href="https://hologram.derod.org/" target="_blank"><strong>Hologram Native Desktop Browser for DERO</strong></a></p>
+          <p>Wallet: <a href="https://github.com/moralpriest/Engram/releases" target="_blank"><strong>Engram GUI Wallet</strong></a></p>
+          <p>Wallet: <a href="https://github.com/moralpriest/derotui/releases" target="_blank"><strong>Engram TUI Wallet</strong></a></p>
           <p>Github | Dero Project: <a href="https://github.com/deroproject" target="_blank"><strong>github.com/deroproject</strong></a></p>
           <p>Github | PureWolf: <a href="https://github.com/ArcaneSphere/PureWolf-Browser-Extension" target="_blank"><strong>github.com/ArcaneSphere/PureWolf-Browser-Extension</strong></a></p>
         </div>

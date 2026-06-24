@@ -12,7 +12,6 @@ import (
 
 var (
 	telaPort   = flag.Int("tela-port", 4040, "TELA control port")
-	scidRoot   = flag.String("scid-root", "scids", "Local SCID folders")
 	gnomonPort = flag.Int("gnomon-api", 8099, "Gnomon API")
 )
 

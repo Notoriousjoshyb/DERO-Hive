@@ -3,6 +3,8 @@ const RT = typeof browser !== "undefined" ? browser : chrome;
 
 let nativePort = null;
 let pending = {};
+let connectedPorts = new Set();
+
 function connectNative() {
   if (nativePort) return;
 
@@ -28,7 +30,7 @@ function onNativeMessage(msg) {
     return;
   }
 
-  // Forward native events (sync_progress, sync_complete, etc.) to dashboard
+  // Forward native events (sync_progress, tip_synced, catalog_*, etc.) to dashboard
   if (msg.event) {
     RT.runtime.sendMessage(msg).catch(() => {
       // Dashboard may not be open — ignore
@@ -128,23 +130,21 @@ RT.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 /* ===================== LIFECYCLE ===================== */
 
-// Chrome / MV3
-if (RT.runtime.onSuspend) {
-  RT.runtime.onSuspend.addListener(() => {
-    console.log("[ext] suspended → shutting down native");
-    try { nativePort?.postMessage({ cmd: "shutdown" }); } catch {}
+RT.runtime.onConnect.addListener(port => {
+  connectedPorts.add(port);
+  port.onDisconnect.addListener(() => {
+    connectedPorts.delete(port);
+    console.log(`[ext] port disconnected (${connectedPorts.size} remaining)`);
+    if (connectedPorts.size === 0 && nativePort) {
+      console.log("[ext] all ports gone → shutting down native");
+      try { nativePort.postMessage({ cmd: "shutdown" }); } catch {}
+      const portRef = nativePort;
+      nativePort = null;
+      setTimeout(() => { try { portRef.disconnect(); } catch {} }, 300);
+      RT.runtime.sendMessage({ cmd: "native_disconnect" }).catch(() => {});
+    }
   });
-}
-
-// Firefox background unload
-if (RT.runtime.onConnect) {
-  RT.runtime.onConnect.addListener(port => {
-    port.onDisconnect.addListener(() => {
-      console.log("[ext] UI disconnected → shutdown native");
-      try { nativePort?.postMessage({ cmd: "shutdown" }); } catch {}
-    });
-  });
-}
+});
 
 /* ===================== START ===================== */
 

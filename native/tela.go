@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -26,25 +25,6 @@ var (
 	entries  = map[string]string{}
 	sharded  = map[string]bool{}
 )
-
-// -------------------- UTIL --------------------
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}
 
 // -------------------- ENTRYPOINT --------------------
 
@@ -359,11 +339,9 @@ func startTELA() {
 
 // -------------------- CLEANUP --------------------
 
-func cleanupTelaCloneFromError(err error) bool {
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		return false
-	}
-	return true
+func ShutdownTELA() {
+	log.Printf("Shutting down TELA proxy...")
+	resetProxies()
 }
 
 func resetProxies() {

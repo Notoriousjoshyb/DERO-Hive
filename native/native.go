@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 var nativeStdout *os.File
@@ -36,6 +37,21 @@ func sendMsg(v any) {
 	binary.LittleEndian.PutUint32(h, uint32(len(b)))
 	nativeStdout.Write(h)
 	nativeStdout.Write(b)
+}
+
+func sendInitSCIDs() {
+	mu.RLock()
+	scids := make([]string, 0, len(proxies))
+	for scid := range proxies {
+		scids = append(scids, scid)
+	}
+	mu.RUnlock()
+
+	sendMsg(map[string]any{
+		"ok":     true,
+		"id":     "init_scids",
+		"result": map[string]any{"scids": scids},
+	})
 }
 
 // nativeLoop is the main command dispatcher. It reads messages from stdin
@@ -66,6 +82,7 @@ func nativeLoop() {
 
 			if node == currentNode {
 				sendMsg(map[string]any{"ok": true, "id": id})
+				sendInitSCIDs()
 				break
 			}
 
@@ -78,22 +95,11 @@ func nativeLoop() {
 			currentNode = node
 			nodeDisconnected = true
 			startTELA()
+			time.Sleep(100 * time.Millisecond)
 			go startSync(node)
 
 			sendMsg(map[string]any{"ok": true, "id": id})
-
-			mu.RLock()
-			initialSCIDs := make([]string, 0, len(proxies))
-			for scid := range proxies {
-				initialSCIDs = append(initialSCIDs, scid)
-			}
-			mu.RUnlock()
-
-			sendMsg(map[string]any{
-				"ok":     true,
-				"id":     "init_scids",
-				"result": map[string]any{"scids": initialSCIDs},
-			})
+			sendInitSCIDs()
 
 		case "disconnect_node":
 			nodeDisconnected = true
@@ -103,7 +109,6 @@ func nativeLoop() {
 			sendMsg(map[string]any{"ok": true, "id": id})
 				
 		case "load_scid":
-			// Ask the TELA proxy to load a SCID and return its URL
 			if currentNode == "" {
 				sendMsg(map[string]any{"ok": false, "id": id, "error": "node not set"})
 				break
@@ -123,6 +128,16 @@ func nativeLoop() {
 			json.NewDecoder(resp.Body).Decode(&res)
 
 			result, _ := res["result"].(map[string]any)
+
+			// Non-blocking: run indexer operation in background so the native
+			// message loop never stalls (multiple load_scid calls in sequence
+			// or AddSCIDToIndex lock contention would otherwise queue up).
+			if indexerRunning {
+				go indexSCIDNow(scid)
+			} else {
+				log.Printf("load_scid: indexer not ready yet, skipping SCID indexing for %s", scid)
+			}
+
 			sendMsg(map[string]any{
 				"ok": true,
 				"id": id,
@@ -153,26 +168,109 @@ func nativeLoop() {
 				gnomonOk = false
 			}
 
-			dbHeight, _ := boltDB.GetLastIndexHeight()
-			chainHeight := int64(0)
+			dbHeight := int64(0)
+			if myIndexer != nil {
+				dbHeight = myIndexer.LastIndexedHeight
+			} else {
+				dbHeight, _ = boltDB.GetLastIndexHeight()
+			}
+			scidCount := 0
+			var daemonInfo *DaemonInfo
 			if currentNode != "" {
-				chainHeight = getChainHeightFromDaemon(currentNode)
+				daemonInfo = getDaemonInfo(currentNode)
+			}
+			if myIndexer != nil {
+				myIndexer.Lock()
+				scidCount = len(myIndexer.ValidatedSCs)
+				myIndexer.Unlock()
+			}
+
+			state := loadScannerState()
+
+			chainHeight := int64(0)
+			stableHeight := int64(0)
+			difficulty := int64(0)
+			daemonVersion := ""
+			daemonNetwork := ""
+			mempoolSize := 0
+			if daemonInfo != nil {
+				chainHeight = daemonInfo.TopoHeight
+				stableHeight = daemonInfo.StableHeight
+				difficulty = daemonInfo.Difficulty
+				daemonVersion = daemonInfo.Version
+				daemonNetwork = daemonInfo.Network
+				mempoolSize = daemonInfo.MempoolSize
 			}
 
 			sendMsg(map[string]any{
 				"ok": true,
 				"id": id,
 				"result": map[string]any{
-					"tela":      telaOk,
-					"gnomon":    gnomonOk,
-					"connected": telaOk && gnomonOk,
-					"node":      currentNode,
+					"tela":               telaOk,
+					"gnomon":             gnomonOk,
+					"connected":          telaOk && gnomonOk,
+					"node":               currentNode,
+					"scid_count":         scidCount,
+					"scanner_live":       state.LastLiveHeight,
+					"scanner_historical": state.LastHistoricalHeight,
+					"daemon": map[string]any{
+						"version":      daemonVersion,
+						"network":      daemonNetwork,
+						"mempool_size": mempoolSize,
+					},
 					"heights": map[string]any{
-						"indexed": dbHeight,
-						"chain":   chainHeight,
+						"indexed":    dbHeight,
+						"chain":      chainHeight,
+						"stable":     stableHeight,
+						"difficulty": difficulty,
 					},
 				},
 			})
+
+		case "get_config":
+			sendMsg(map[string]any{
+				"ok": true,
+				"id": id,
+				"result": map[string]any{
+					"gnomon_api_port": *gnomonPort,
+					"tela_port":       *telaPort,
+				},
+			})
+
+		case "discover_tela":
+			if currentNode == "" {
+				sendMsg(map[string]any{"ok": false, "id": id, "error": "node not set"})
+				break
+			}
+			apps := discoverTelaApps(currentNode)
+			sendMsg(map[string]any{"ok": true, "id": id, "result": map[string]any{"apps": apps}})
+
+		case "get_scid_vars":
+			if currentNode == "" {
+				sendMsg(map[string]any{"ok": false, "id": id, "error": "node not set"})
+				break
+			}
+			params, _ := msg["params"].(map[string]any)
+			rawSCIDs, _ := params["scids"].([]any)
+			scids := make([]string, 0, len(rawSCIDs))
+			for _, s := range rawSCIDs {
+				if str, ok := s.(string); ok && len(str) == 64 {
+					scids = append(scids, str)
+				}
+			}
+			if len(scids) == 0 {
+				sendMsg(map[string]any{"ok": false, "id": id, "error": "no valid SCIDs"})
+				break
+			}
+			results := fetchSCIDVariables(currentNode, scids)
+			sendMsg(map[string]any{"ok": true, "id": id, "result": map[string]any{"vars": results}})
+
+		case "shutdown":
+			log.Printf("Shutdown requested")
+			closeStorage()
+			ShutdownTELA()
+			sendMsg(map[string]any{"ok": true, "id": id})
+			os.Exit(0)
 
 		case "list_scids":
 			// Return all currently proxied SCIDs
