@@ -50,10 +50,7 @@
   let suggestionIndex = -1;
 
   // -------------------- Suggestions Dropdown --------------------
-  const suggestionsEl = document.createElement("div");
-  suggestionsEl.id = "search-suggestions";
   searchBox.parentElement.style.position = "relative";
-  searchBox.parentElement.appendChild(suggestionsEl);
 
   // -------------------- Default Rating --------------------
   if (minRatingEl && minRatingVal) {
@@ -680,7 +677,7 @@
     }
 
     const suggestions =
-      suggestionsEl.querySelectorAll(
+      searchSuggestions.querySelectorAll(
         ".search-suggestion"
       );
 
@@ -756,6 +753,18 @@
         DERO_PREFIX.length
       );
     }
+  });
+
+  // -------------------- Click Outside to Close --------------------
+  document.addEventListener("click", (e) => {
+    if (!searchBox.contains(e.target) && !searchSuggestions.contains(e.target)) {
+      hideSuggestions();
+    }
+  });
+
+  // -------------------- Blur to Close --------------------
+  searchBox.addEventListener("blur", () => {
+    setTimeout(hideSuggestions, 150);
   });
 
   // -------------------- Filters --------------------

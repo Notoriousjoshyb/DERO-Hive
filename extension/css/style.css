@@ -1047,7 +1047,24 @@ button.success:hover {
 
 /* ===============================
    SEARCH DROPDOWN
-=============================== */
+   =============================== */
+
+.search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin-top: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.hidden { display: none !important; }
 
 .search-suggestion {
   padding: 14px 18px;
