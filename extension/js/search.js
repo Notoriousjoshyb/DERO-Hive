@@ -543,10 +543,15 @@
       const item = document.createElement("div");
       item.className = "search-suggestion";
 
-      item.innerHTML = `
-        <div class="durl">${r.dURL}</div>
-        <div class="meta">${r.nameHdr || r.scid}</div>
-      `;
+      const durlEl = document.createElement("div");
+      durlEl.className = "durl";
+      durlEl.textContent = r.dURL;
+
+      const metaEl = document.createElement("div");
+      metaEl.className = "meta";
+      metaEl.textContent = r.nameHdr || r.scid;
+
+      item.append(durlEl, metaEl);
 
       item.onclick = () => {
         handleSCIDClick(r.scid);

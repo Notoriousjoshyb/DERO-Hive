@@ -12,7 +12,10 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "purewolf@addon",
-      "strict_min_version": "140.0"
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "description": "PureWolf only connects to a user-installed local native process. No data is sent to third parties or external servers."
+      }
     }
   },
 
