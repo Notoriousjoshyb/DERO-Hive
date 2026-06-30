@@ -20,7 +20,6 @@
 
   // -------------------- Config --------------------
   let apiBase = "http://127.0.0.1:8099/api";
-  const DERO_PREFIX = "dero://";
 
   // Fetch the actual Gnomon API port from the native host
   (async function initApiBase() {
@@ -38,6 +37,7 @@
   let fuse       = null;
   let minRating  = 30;
   let loadToken  = 0;
+  let resultsLoaded = false;
 
   // Keyboard navigation
   let selectedIndex = -1;
@@ -70,139 +70,146 @@
   // -------------------- Fetch SCID Data --------------------
   async function fetchSCIDData(scid) {
     try {
-      const resp = await fetch(`${apiBase}/scvarsbyheight?scid=${scid}`);
+      const resp = await fetch(`${apiBase}/tela/${scid}/ratings`);
       if (!resp.ok) return null;
 
       const data = await resp.json();
-      if (!data.variables) return null;
+      if (!data.ratings || data.count === 0) return null;
 
-      let dURL = scid;
-      let nameHdr = scid;
-      let descrHdr = "";
-      let iconURL = "";
-      let createdHeight = Infinity;
+      const likes = data.summary?.likes ?? data.ratings.filter(r => r.score >= 50).length;
+      const dislikes = data.summary?.dislikes ?? data.ratings.filter(r => r.score < 50).length;
+      const average = Math.round(data.avg ?? 0);
+      const createdHeight = data.ratings.reduce((min, r) => Math.min(min, r.height), Infinity) || 0;
 
-      const ratings = [];
-
-      data.variables.forEach(v => {
-        const key = v.Key;
-        const val = v.Value;
-
-        if (key === "dURL" && val) dURL = val;
-        else if (key === "nameHdr" && val) nameHdr = val;
-        else if (key === "descrHdr" && val) descrHdr = val;
-        else if (key === "iconURLHdr" && val) iconURL = val;
-        else if (typeof key === "string" && key.startsWith("dero1")) {
-          const [rating, height] = String(val).split("_");
-
-          ratings.push({
-            rating: Number(rating),
-            height: Number(height)
-          });
-
-          if (Number(height) < createdHeight) {
-            createdHeight = Number(height);
-          }
-        }
-      });
-
-      const likes = ratings.filter(r => r.rating >= 50).length;
-      const dislikes = ratings.filter(r => r.rating < 50).length;
-
-      const average = ratings.length
-        ? Math.round(
-            ratings.reduce((a, r) => a + r.rating, 0) / ratings.length
-          )
-        : 0;
-
-      return {
-        scid,
-        dURL,
-        nameHdr,
-        descrHdr,
-        iconURL,
-        likes,
-        dislikes,
-        average,
-        createdHeight:
-          createdHeight === Infinity ? 0 : createdHeight
-      };
+      return { scid, likes, dislikes, average, createdHeight };
 
     } catch (err) {
-      console.error("SCID fetch error", err);
+      console.warn("SCID fetch error", err);
       return null;
     }
-  }
-
-  async function fetchAllSCIDs() {
-    const resp = await fetch(`${apiBase}/indexedscs`);
-
-    if (!resp.ok) {
-      throw new Error("Indexed SCID fetch failed");
-    }
-
-    const data = await resp.json();
-
-    return Object.keys(data.indexedscs || {});
   }
 
   // -------------------- Load SCIDs --------------------
   async function loadSearchSCIDs() {
     const token = ++loadToken;
+    resultsLoaded = false;
 
     try {
-      statusEl.textContent = "⏳ Fetching indexed SCIDs...";
+      statusEl.textContent = "⏳ Loading apps...";
       resultsEl.replaceChildren();
 
-      // 1. Try direct discovery first for instant results
+      // Phase 1: Direct discovery for instant results (names + dURLs, no ratings)
       try {
         const disc = await RT.runtime.sendMessage({ cmd: "discover_tela" });
         if (token !== loadToken) return;
         if (disc?.ok && disc?.result?.apps) {
-          const directApps = disc.result.apps.map(app => ({
+          allResults = disc.result.apps.map(app => ({
             scid: app.scid,
             dURL: app.durl,
             nameHdr: app.name,
-            descrHdr: "",
-            iconURL: "",
-            likes: 0,
-            dislikes: 0,
-            average: 0,
-            createdHeight: 0,
-            isDirect: true,
+            descrHdr: app.descrHdr || "",
+            iconURL: app.iconURL || "",
+            likes: 0, dislikes: 0, average: 0, createdHeight: 0,
+            ratingsLoaded: false,
             from_api: app.from_api
           }));
-          
-          if (directApps.length > 0) {
-            if (token === loadToken) allResults = directApps;
-            fuse = new Fuse(allResults, {
-              keys: ["scid", "dURL", "nameHdr", "descrHdr"],
-              threshold: 0.25,
-              ignoreLocation: true
-            });
-            renderResults(allResults);
-            statusEl.textContent = `✅ Loaded ${allResults.length} apps (direct)`;
-          }
+
+          fuse = new Fuse(allResults, {
+            keys: ["scid", "dURL", "nameHdr", "descrHdr"],
+            threshold: 0.25,
+            ignoreLocation: true
+          });
+          renderResults(allResults);
+          statusEl.textContent = `✅ Loaded ${allResults.length} apps (direct)`;
+
+          // Phase 1b: Fetch ratings from daemon immediately (concurrent with Phases 2-5)
+          (async () => {
+            try {
+              const resp = await RT.runtime.sendMessage({
+                cmd: "get_scid_vars",
+                params: { scids: allResults.map(r => r.scid) }
+              });
+              if (token !== loadToken) return;
+              if (resp?.ok && resp?.result?.vars) {
+                for (const v of resp.result.vars) {
+                  const idx = allResults.findIndex(r => r.scid === v.scid);
+                  if (idx >= 0 && (v.likes > 0 || v.dislikes > 0 || v.average > 0)) {
+                    Object.assign(allResults[idx], {
+                      likes: v.likes,
+                      dislikes: v.dislikes,
+                      average: v.average,
+                      createdHeight: v.createdHeight
+                    });
+                  }
+                }
+                for (const r of allResults) r.ratingsLoaded = true;
+                fuse.setCollection(allResults);
+                renderResults(allResults);
+                statusEl.textContent = `✅ Loaded ${allResults.length} apps`;
+              }
+            } catch (e) {
+              console.warn("Daemon rating fetch failed", e);
+            }
+          })();
         }
       } catch (e) {
-        console.warn("Direct discovery failed, falling back to Gnomon", e);
-      }
-
-      let scids;
-      try {
-        scids = await fetchAllSCIDs();
-      } catch (e) {
-        console.warn("fetchAllSCIDs failed, trying daemon RPC fallback", e);
-        scids = [];
+        console.warn("Direct discovery failed", e);
       }
 
       if (token !== loadToken) return;
 
-      const localResults = [];
+      // Phase 2: Fetch authoritative metadata from API
+      let telaApps = [];
+      try {
+        const resp = await fetch(`${apiBase}/tela`);
+        if (resp.ok) {
+          const data = await resp.json();
+          telaApps = data.tela_apps || [];
+        }
+      } catch (e) {
+        console.warn("API metadata fetch failed", e);
+      }
 
-      // Step 1: Fetch from local Gnomon API when available (lower priority).
-      // On local nodes this is the primary source; on remote nodes the API
-      // returns stale data for a subset of SCIDs.
+      if (token !== loadToken) return;
+
+      // Phase 3: Merge API metadata (name, description, dURL) into results
+      if (telaApps.length > 0) {
+        const metaMap = new Map(telaApps.map(a => [a.scid, a]));
+
+        allResults.forEach(r => {
+          const meta = metaMap.get(r.scid);
+          if (meta) {
+            r.nameHdr = meta.name || r.nameHdr;
+            r.descrHdr = meta.description || r.descrHdr;
+            r.dURL = meta.durl || r.dURL;
+            r.from_api = true;
+          }
+        });
+
+        for (const a of telaApps) {
+          if (!allResults.some(r => r.scid === a.scid)) {
+            allResults.push({
+              scid: a.scid,
+              dURL: a.durl,
+              nameHdr: a.name,
+              descrHdr: a.description || "",
+              iconURL: "",
+              likes: 0, dislikes: 0, average: 0, createdHeight: 0,
+              ratingsLoaded: false,
+              from_api: true
+            });
+          }
+        }
+
+        fuse.setCollection(allResults);
+        statusEl.textContent = `✅ Loaded ${allResults.length} apps`;
+        renderResults(allResults);
+      }
+
+      if (token !== loadToken) return;
+
+      // Phase 4: Fetch ratings concurrently from API
+      const scids = allResults.map(r => r.scid);
       if (scids.length > 0) {
         let index = 0;
         const concurrency = 5;
@@ -211,79 +218,71 @@
             const scid = scids[index++];
             if (token !== loadToken) return;
             const res = await fetchSCIDData(scid);
-            if (res) localResults.push(res);
+            if (res) {
+              const idx = allResults.findIndex(r => r.scid === scid);
+              if (idx >= 0) {
+                Object.assign(allResults[idx], res);
+                allResults[idx].ratingsLoaded = true;
+              }
+            }
             if (token === loadToken) {
-              statusEl.textContent = `Loaded ${localResults.length} / ${scids.length} SCIDs...`;
+              statusEl.textContent = `Ratings ${Math.min(index, scids.length)} / ${scids.length}...`;
             }
           }
         }
         await Promise.all(Array(concurrency).fill().map(worker));
+
+        fuse.setCollection(allResults);
+        statusEl.textContent = `✅ Loaded ${allResults.length} apps`;
+        renderResults(allResults);
       }
 
-      // Step 2: Fetch from daemon RPC for apps that came from bundled list
-      // or registry (not from Gnomon API). On remote nodes the local Gnomon
-      // API is stale/incomplete, so daemon RPC fills names, dURLs, and ratings
-      // for the full catalog. On local nodes all apps have from_api=true, so
-      // this step is skipped (Gnomon API already has complete data).
-      const hasBundledApps = allResults.some(r => r.isDirect && !r.from_api);
-      if (hasBundledApps) {
+      if (token !== loadToken) return;
+
+      // Phase 5: Daemon RPC fallback for apps still missing ratings.
+      // With PostScanVarsMode:"lazy" the API store has no variables, but
+      // the native host can query the daemon directly via get_scid_vars.
+      const missing = allResults.filter(r => r.likes === 0 && r.dislikes === 0 && r.average === 0);
+      if (missing.length > 0) {
+        statusEl.textContent = `Fallback ratings (daemon) ${missing.length} apps...`;
         try {
-          statusEl.textContent = "⏳ Querying daemon for SCID data...";
-          const discScids = allResults.map(r => r.scid);
-          const varsResp = await RT.runtime.sendMessage({
+          const resp = await RT.runtime.sendMessage({
             cmd: "get_scid_vars",
-            params: { scids: discScids }
+            params: { scids: missing.map(r => r.scid) }
           });
-          if (varsResp?.ok && varsResp?.result?.vars) {
-            for (const v of varsResp.result.vars) {
-              localResults.push(v);
+          if (resp?.ok && resp?.result?.vars) {
+            for (const v of resp.result.vars) {
+              const idx = allResults.findIndex(r => r.scid === v.scid);
+              if (idx >= 0 && (v.likes > 0 || v.dislikes > 0 || v.average > 0)) {
+                Object.assign(allResults[idx], {
+                  likes: v.likes,
+                  dislikes: v.dislikes,
+                  average: v.average,
+                  createdHeight: v.createdHeight
+                });
+              }
             }
+            for (const r of allResults) r.ratingsLoaded = true;
+            fuse.setCollection(allResults);
+            statusEl.textContent = `✅ Loaded ${allResults.length} apps`;
+            renderResults(allResults);
           }
         } catch (e) {
-          console.warn("get_scid_vars fallback failed:", e);
+          console.warn("Daemon RPC fallback failed", e);
         }
       }
 
-      // Merge fetched data with direct discovery results
-      const gnomonMap = new Map(localResults.map(r => [r.scid, r]));
-      
-      // Upgrade all items with Gnomon metadata where available
-      const mergedResults = allResults.map(direct => {
-        const gnomon = gnomonMap.get(direct.scid);
-        if (gnomon) {
-          return { ...direct, ...gnomon, isDirect: false };
-        }
-        return { ...direct };
-      });
-      
-      // Add any Gnomon results that weren't in direct discovery
-      for (const gnomon of localResults) {
-        if (!mergedResults.some(r => r.scid === gnomon.scid)) {
-          mergedResults.push({ ...gnomon, isDirect: false });
-        }
-      }
-
-      // Never shrink allResults — once we have N SCIDs, keep at least N
-      if (mergedResults.length >= allResults.length) allResults = mergedResults;
-
-      fuse = new Fuse(allResults, {
-        keys: ["scid", "dURL", "nameHdr", "descrHdr"],
-        threshold: 0.25,
-        ignoreLocation: true
-      });
-
-      statusEl.textContent =
-        `✅ Loaded ${allResults.length} SCIDs`;
-
-      renderResults(allResults);
+      resultsLoaded = true;
 
     } catch (err) {
       if (token !== loadToken) return;
-
       console.error("Error loading SCIDs:", err);
-
-      statusEl.textContent =
-        "❌ Failed loading SCIDs – is Gnomon indexer running?";
+      statusEl.textContent = "❌ Failed loading apps – is HyperGnomon running?";
+      const retry = document.createElement("button");
+      retry.className = "retry-btn";
+      retry.textContent = "↻ Retry";
+      retry.onclick = () => { retry.remove(); loadSearchSCIDs(); };
+      statusEl.appendChild(retry);
     }
   }
 
@@ -292,7 +291,7 @@
   // -------------------- Sort --------------------
   function getSortValue() {
     const sel = document.querySelector("#sortMode .selected");
-    return sel?.getAttribute("data-value") || "name_asc";
+    return sel?.getAttribute("data-value") || "top_rated";
   }
 
   function initSortDropdown() {
@@ -327,6 +326,12 @@
     const arr = [...list];
 
     switch (mode) {
+      case "top_rated":
+        return arr.sort((a, b) => {
+          if (b.average !== a.average) return b.average - a.average;
+          return b.likes - a.likes;
+        });
+
       case "name_asc":
         return arr.sort((a, b) =>
           a.nameHdr.localeCompare(
@@ -392,8 +397,8 @@
     results,
     getSortValue()
   ).filter(r => {
-    // Skip rating filter for direct discovery results (they have no ratings yet)
-    if (!r.isDirect && r.average < minRating) return false;
+    // Only filter by minRating once ratings have been loaded
+    if (r.ratingsLoaded && r.average < minRating) return false;
 
     if (!r.dURL) return true;
 
@@ -401,6 +406,13 @@
 
     return !hiddenExt.some(ext => url.endsWith(ext));
   });
+
+  // Update status with showing count
+  const totalCount = results.length;
+  const filteredCount = filtered.length;
+  if (filteredCount < totalCount) {
+    statusEl.textContent = `✅ ${totalCount} TELA apps · showing ${filteredCount}`;
+  }
 
   if (!filtered.length) {
     const msg = document.createElement("div");
@@ -413,7 +425,11 @@
   filtered.forEach(r => {
     const div = document.createElement("div");
     div.className = "result";
-    div.onclick = () => handleSCIDClick(r.scid);
+    div.onclick = (e) => {
+      div.classList.add("clicking");
+      setTimeout(() => div.classList.remove("clicking"), 500);
+      handleSCIDClick(r.scid);
+    };
 
     const iconSlot = document.createElement("div");
     iconSlot.className = "icon-slot";
@@ -453,8 +469,9 @@
 
     const ratingEl = document.createElement("div");
     ratingEl.className = "rating";
-    ratingEl.textContent =
-      `👍 ${r.likes} 👎 ${r.dislikes} ⭐ ${r.average}`;
+    ratingEl.textContent = r.ratingsLoaded
+      ? `👍 ${r.likes} 👎 ${r.dislikes} ⭐ ${r.average}`
+      : "—";
 
     [urlEl, nameEl, scidEl].forEach(el => {
       el.style.cursor = "pointer";
@@ -583,13 +600,13 @@
   });
 
     if (suggestionIndex >= 0 && suggestionResults[suggestionIndex]) {
-      searchBox.value = DERO_PREFIX + suggestionResults[suggestionIndex].dURL;
+      searchBox.value = suggestionResults[suggestionIndex].dURL;
     }
   }
 
   // -------------------- Search --------------------
   function runSearch(value) {
-    const query = value.replace(DERO_PREFIX, "").trim();
+    const query = value.trim();
 
     if (!query) {
       renderResults(allResults);
@@ -631,84 +648,36 @@
     });
   }
 
-  // -------------------- Init --------------------
-  searchBox.value = DERO_PREFIX;
-
   // -------------------- Input --------------------
   searchBox.addEventListener("input", e => {
-    let value = e.target.value;
-
-    if (!value.startsWith(DERO_PREFIX)) {
-      value =
-        DERO_PREFIX +
-        value.replace(/^dero:\/\//, "");
-
-      e.target.value = value;
-    }
-
-    if (
-      e.target.selectionStart <
-      DERO_PREFIX.length
-    ) {
-      e.target.setSelectionRange(
-        DERO_PREFIX.length,
-        DERO_PREFIX.length
-      );
-    }
-
     suggestionIndex = -1;
-
-    runSearch(value);
+    runSearch(e.target.value);
   });
 
   // -------------------- Keydown --------------------
   searchBox.addEventListener("keydown", e => {
-    const pos = searchBox.selectionStart;
-
-    // Protect prefix
-    if (
-      (e.key === "Backspace" &&
-        pos <= DERO_PREFIX.length) ||
-      (e.key === "Delete" &&
-        pos < DERO_PREFIX.length)
-    ) {
-      e.preventDefault();
-      return;
-    }
-
-    const suggestions =
-      searchSuggestions.querySelectorAll(
-        ".search-suggestion"
-      );
+    const items = searchSuggestions.querySelectorAll(".search-suggestion");
 
     // Arrow DOWN
     if (e.key === "ArrowDown") {
-      const items = searchSuggestions.querySelectorAll(".search-suggestion");
-
       if (items.length) {
         e.preventDefault();
-
         suggestionIndex =
           suggestionIndex < items.length - 1
             ? suggestionIndex + 1
             : 0;
-
         updateSuggestionSelection();
       }
     }
 
     // Arrow UP
     if (e.key === "ArrowUp") {
-      const items = searchSuggestions.querySelectorAll(".search-suggestion");
-
       if (items.length) {
         e.preventDefault();
-
         suggestionIndex =
           suggestionIndex > 0
             ? suggestionIndex - 1
             : items.length - 1;
-
         updateSuggestionSelection();
       }
     }
@@ -716,10 +685,8 @@
     // ENTER
     if (e.key === "Enter") {
       const selected = suggestionResults[suggestionIndex];
-
       if (selected) {
         e.preventDefault();
-
         handleSCIDClick(selected.scid);
         hideSuggestions();
         return;
@@ -740,19 +707,6 @@
     selectedIndex = -1;
 
     highlightSelected();
-  });
-
-  // -------------------- Prefix Protection --------------------
-  searchBox.addEventListener("click", () => {
-    if (
-      searchBox.selectionStart <
-      DERO_PREFIX.length
-    ) {
-      searchBox.setSelectionRange(
-        DERO_PREFIX.length,
-        DERO_PREFIX.length
-      );
-    }
   });
 
   // -------------------- Click Outside to Close --------------------
@@ -781,7 +735,12 @@
   // -------------------- Page Lifecycle --------------------
   document.addEventListener("pageChanged", async (e) => {
     if (e.detail.page === "search") {
-      await loadSearchSCIDs();
+      if (!resultsLoaded) {
+        await loadSearchSCIDs();
+      } else {
+        renderResults(allResults);
+        if (searchBox.value) runSearch(searchBox.value);
+      }
     }
   });
 
@@ -795,15 +754,60 @@
   // Catalog may have finished before this page loaded
   (async () => {
     try {
-      const resp = await fetch(`${apiBase}/indexedscs`);
+      const resp = await fetch(`${apiBase}/tela`);
       if (!resp.ok) return;
       const data = await resp.json();
-      const count = Object.keys(data.indexedscs || {}).length;
-      if (count > 0) {
+      if (data.count > 0) {
         searchBox.disabled = false;
         await loadSearchSCIDs();
       }
     } catch {}
   })();
+
+  // Listen for new SCIDs discovered during Gnomon sync
+  RT.runtime.onMessage.addListener(async (msg) => {
+    if (msg.event === "tip_synced") {
+      loadSearchSCIDs();
+      return;
+    }
+
+    if (msg.event === "new_tela_app" && msg.scid) {
+      // Fetch metadata from daemon via native host
+      try {
+        const disc = await RT.runtime.sendMessage({ cmd: "discover_tela" });
+        if (!disc?.ok || !disc?.result?.apps) return;
+        const match = disc.result.apps.find(a => a.scid === msg.scid);
+        if (!match) return;
+
+        const entry = {
+          scid: msg.scid,
+          dURL: match.durl || msg.scid,
+          nameHdr: match.name || msg.scid,
+          descrHdr: match.descrHdr || "",
+          iconURL: match.iconURL || "",
+          likes: 0,
+          dislikes: 0,
+          average: 0,
+          createdHeight: 0,
+          ratingsLoaded: false,
+          from_api: match.from_api
+        };
+
+        // Avoid duplicates
+        if (allResults.some(r => r.scid === msg.scid)) return;
+
+        allResults.push(entry);
+        fuse.setCollection(allResults);
+        renderResults(allResults);
+
+        if (statusEl) {
+          const cnt = allResults.length;
+          statusEl.textContent = `✅ Loaded ${cnt} app${cnt !== 1 ? "s" : ""} (direct)`;
+        }
+      } catch (e) {
+        console.warn("Failed to add newly discovered SCID:", e);
+      }
+    }
+  });
 
 })();

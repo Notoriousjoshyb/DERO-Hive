@@ -94,6 +94,7 @@ func nativeLoop() {
 
 			currentNode = node
 			nodeDisconnected = true
+			nodeConnectedAt = time.Now()
 			startTELA()
 			time.Sleep(100 * time.Millisecond)
 			go startSync(node)
@@ -103,6 +104,7 @@ func nativeLoop() {
 
 		case "disconnect_node":
 			nodeDisconnected = true
+			nodeConnectedAt = time.Time{}
 			stopSync()
 			resetProxies()
 			currentNode = ""
@@ -132,7 +134,7 @@ func nativeLoop() {
 			// Non-blocking: run indexer operation in background so the native
 			// message loop never stalls (multiple load_scid calls in sequence
 			// or AddSCIDToIndex lock contention would otherwise queue up).
-			if indexerRunning {
+			if myIndexer != nil {
 				go indexSCIDNow(scid)
 			} else {
 				log.Printf("load_scid: indexer not ready yet, skipping SCID indexing for %s", scid)
@@ -157,35 +159,18 @@ func nativeLoop() {
 				telaOk = false
 			}
 
-			// Check Gnomon API
-			gnomonOk := false
-			if resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/getinfo", *gnomonPort)); err == nil {
-				resp.Body.Close()
-				gnomonOk = true
-			}
-			// Override: API may be up but indexer not connected to any node
-			if !indexerRunning || nodeDisconnected {
-				gnomonOk = false
-			}
+			// Check HyperGnomon indexer
+			gnomonOk := myIndexer != nil && !nodeDisconnected
 
 			dbHeight := int64(0)
 			if myIndexer != nil {
-				dbHeight = myIndexer.LastIndexedHeight
-			} else {
-				dbHeight, _ = boltDB.GetLastIndexHeight()
+				dbHeight = myIndexer.LastIndexedHeight.Load()
 			}
-			scidCount := 0
+			telaAppsCount := int64(validatedSCIDCount())
 			var daemonInfo *DaemonInfo
 			if currentNode != "" {
 				daemonInfo = getDaemonInfo(currentNode)
 			}
-			if myIndexer != nil {
-				myIndexer.Lock()
-				scidCount = len(myIndexer.ValidatedSCs)
-				myIndexer.Unlock()
-			}
-
-			state := loadScannerState()
 
 			chainHeight := int64(0)
 			stableHeight := int64(0)
@@ -202,27 +187,31 @@ func nativeLoop() {
 				mempoolSize = daemonInfo.MempoolSize
 			}
 
+			var connectedAtMs int64
+			if !nodeConnectedAt.IsZero() {
+				connectedAtMs = nodeConnectedAt.UnixMilli()
+			}
+
 			sendMsg(map[string]any{
 				"ok": true,
 				"id": id,
 				"result": map[string]any{
-					"tela":               telaOk,
-					"gnomon":             gnomonOk,
-					"connected":          telaOk && gnomonOk,
-					"node":               currentNode,
-					"scid_count":         scidCount,
-					"scanner_live":       state.LastLiveHeight,
-					"scanner_historical": state.LastHistoricalHeight,
+					"tela":            telaOk,
+					"gnomon":          gnomonOk,
+					"connected":       telaOk && gnomonOk,
+					"node":            currentNode,
+					"connected_at":    connectedAtMs,
+					"tela_apps_count": telaAppsCount,
 					"daemon": map[string]any{
 						"version":      daemonVersion,
 						"network":      daemonNetwork,
+						"difficulty":   difficulty,
 						"mempool_size": mempoolSize,
 					},
 					"heights": map[string]any{
-						"indexed":    dbHeight,
-						"chain":      chainHeight,
-						"stable":     stableHeight,
-						"difficulty": difficulty,
+						"indexed": dbHeight,
+						"chain":   chainHeight,
+						"stable":  stableHeight,
 					},
 				},
 			})

@@ -8,6 +8,33 @@
   <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
+  <!-- SCID Loader (KITT night rider) -->
+  <div id="scid-loader"><div class="bar"></div></div>
+
+  <!-- Bookmark popover (direct child of body to keep position:fixed viewport-relative) -->
+  <div id="bookmark-popover" class="popover hidden">
+    <div class="popover-content">
+      <div class="popover-title" id="bookmark-popover-title">Bookmark</div>
+      <input id="bookmark-label-input" type="text" placeholder="Bookmark label" maxlength="48">
+      <div class="popover-actions">
+        <button id="bookmark-popover-save">Save</button>
+        <button id="bookmark-popover-cancel" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm popover (reusable for destructive actions) -->
+  <div id="confirm-popover" class="popover hidden">
+    <div class="popover-content" style="max-width: 360px;">
+      <div class="popover-title" id="confirm-popover-title">Confirm</div>
+      <p id="confirm-popover-message" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;"></p>
+      <div class="popover-actions">
+        <button id="confirm-popover-yes" class="danger">Confirm</button>
+        <button id="confirm-popover-no" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-header">
@@ -31,6 +58,7 @@
       <div class="nav-item" data-page="bookmarks">
         <span class="nav-icon">⭐</span>
         <span class="nav-text">Bookmarks</span>
+        <span class="nav-badge" id="bookmark-badge"></span>
       </div>
 
       <div class="nav-item" data-page="settings">
@@ -49,6 +77,14 @@
       </div>
     </div>
     <div id="sidebar-status">
+      <div class="sb-status-row">
+        <span class="sb-label">Native</span>
+        <span id="sidebar-native-status">
+          <span class="sb-icon">🔴</span>
+          <span class="sb-text">Not connected</span>
+        </span>
+      </div>
+
       <div class="sb-status-row">
         <span class="sb-label">TELA</span>
         <span id="sidebar-tela-status">
@@ -122,9 +158,9 @@
           <h2>Server Status</h2>
 
           <div class="status-grid">
-            <!-- Connection -->
+            <!-- Network -->
             <div class="status-card">
-              <div class="card-header">💻 Connection</div>
+              <div class="card-header">💻 Network</div>
               <div class="card-body">
                 <div class="card-row">
                   <span class="card-label">Node</span>
@@ -139,8 +175,37 @@
                   <span class="card-value" id="sv-network">—</span>
                 </div>
                 <div class="card-row">
-                  <span class="card-label">Uptime</span>
-                  <span class="card-value" id="sv-uptime">—</span>
+                  <span class="card-label">Tip Age</span>
+                  <span class="card-value" id="sv-tip-age">—</span>
+                </div>
+                <details class="card-expand">
+                  <summary>Daemon Info ▾</summary>
+                  <div class="card-row">
+                    <span class="card-label">Uptime</span>
+                    <span class="card-value" id="sv-uptime">—</span>
+                  </div>
+                  <div class="card-row">
+                    <span class="card-label">Difficulty</span>
+                    <span class="card-value" id="sv-difficulty">—</span>
+                  </div>
+                  <div class="card-row">
+                    <span class="card-label">Mempool</span>
+                    <span class="card-value" id="sv-mempool">—</span>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <!-- TELA Apps -->
+            <div class="status-card card-apps">
+              <div class="card-header">📦 TELA Apps</div>
+              <div class="card-body">
+                <div class="card-row" style="justify-content:center; gap:8px;">
+                  <span class="card-value-lg" id="sv-tela-count">—</span>
+                  <span class="card-value" style="font-size:14px; color:var(--text-secondary);">discovered</span>
+                </div>
+                <div class="card-row" style="justify-content:center;">
+                  <span class="card-value" id="sv-tela-status" style="font-size:12px;">—</span>
                 </div>
               </div>
             </div>
@@ -157,57 +222,12 @@
                   <span class="card-label">Chain</span>
                   <span class="card-value" id="daemon-height">—</span>
                 </div>
-                <div class="card-row">
-                  <span class="card-label">Difficulty</span>
-                  <span class="card-value" id="sv-difficulty">—</span>
-                </div>
-                <div class="card-row">
-                  <span class="card-label">Mempool</span>
-                  <span class="card-value" id="sv-mempool">—</span>
-                </div>
                 <div id="sync-info" style="margin-top: 10px;">
                   <div id="sync-label" class="sync-label">Waiting...</div>
                   <div class="progress-bar"><div id="sync-bar" class="progress-fill" style="width:0%"></div></div>
                   <div id="sync-eta" class="sync-label" style="margin-top: 4px;"></div>
                 </div>
               </div>
-            </div>
-
-            <!-- Scanner -->
-            <div class="status-card">
-              <div class="card-header">🔍 Scanner</div>
-              <div class="card-body">
-                <div class="card-row">
-                  <span class="card-label">Live</span>
-                  <span class="card-value" id="sv-scanner-live">—</span>
-                </div>
-                <div class="card-row">
-                  <span class="card-label">Historical</span>
-                  <span class="card-value" id="sv-scanner-hist">—</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Apps -->
-            <div class="status-card">
-              <div class="card-header">📊 Discovered Apps</div>
-              <div class="card-body">
-                <div class="card-row">
-                  <span class="card-label">Total SCIDs</span>
-                  <span class="card-value card-value-lg" id="sv-scid-count">—</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="servers-bar">
-            <div class="server-badge">
-              <strong>TELA:</strong>
-              <span id="page-tela-status" data-server="tela">🔴 Not connected</span>
-            </div>
-            <div class="server-badge">
-              <strong>Gnomon:</strong>
-              <span id="page-gnomon-status" data-server="gnomon">🔴 Not connected</span>
             </div>
           </div>
 
@@ -239,11 +259,12 @@
                 <label>Sort:</label>
                 <div class="custom-select" id="sortMode">
                   <button class="custom-select-trigger" type="button">
-                    <span class="custom-select-text">Name A → Z</span>
+                    <span class="custom-select-text">Top Rated</span>
                     <span class="custom-select-arrow">▼</span>
                   </button>
                   <ul class="custom-select-menu">
-                    <li data-value="name_asc" class="selected">Name A → Z</li>
+                    <li data-value="top_rated" class="selected">Top Rated</li>
+                    <li data-value="name_asc">Name A → Z</li>
                     <li data-value="name_desc">Name Z → A</li>
                     <li data-value="newest">Newest SCID</li>
                     <li data-value="oldest">Oldest SCID</li>
@@ -277,122 +298,185 @@
       <!-- Settings Page -->
       <div id="page-settings" class="page">
         <h2>Settings</h2>
-        <div class="setting-item">
-          <div class="setting-label">Default Node</div>
-          <input type="text" id="setting-default-node" placeholder="e.g. 127.0.0.1:10102">
-        </div>
-        <div class="setting-item">
-          <div class="setting-label">Direct Load SCIDs</div>
-          <label class="toggle" style="display: flex; align-items: center; gap: 8px;">
-            <span style="white-space: nowrap;">Automatically load SCID on click in search results</span>
-            <input type="checkbox" id="setting-direct-load" checked>
-          </label>
-        </div>
-        <div class="setting-item">
-          <div class="setting-label">Hidden dURL Extensions</div>
-          <input
-            type="text"
-            id="setting-hidden-exts"
-            placeholder=".jpg, .js, .shards"
-          >
-          <div class="setting-description">
-            Comma separated extensions hidden from search results
+
+        <!-- Connection -->
+        <div class="setting-section">
+          <h3 class="setting-section-title">Connection</h3>
+
+          <div class="setting-item">
+            <div class="setting-label">Default Node</div>
+            <input type="text" id="setting-default-node" placeholder="e.g. 127.0.0.1:10102" spellcheck="false">
+            <div class="setting-description">Auto-connected when the extension loads</div>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Auto-Connect</div>
+                <div class="setting-description" style="margin-bottom: 0;">Connect to the default node on startup</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-auto-connect">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
         </div>
-        <div class="controls">
-            <button id="save-settings">💾 Save Settings</button>
-            <button id="reset-settings" class="secondary">🔄 Reset to Defaults</button>
+
+        <!-- Search -->
+        <div class="setting-section">
+          <h3 class="setting-section-title">Search</h3>
+
+          <div class="setting-item">
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Direct Load SCIDs</div>
+                <div class="setting-description" style="margin-bottom: 0;">Automatically load SCID in a new tab when clicking a search result</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-direct-load" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
+
+          <div class="setting-item">
+            <div class="setting-label">Hidden Extensions</div>
+            <div class="tag-input" id="tag-input-container">
+              <div class="tag-list" id="tag-list"></div>
+              <input type="text" id="tag-input-field" placeholder="Type extension and press Enter" spellcheck="false">
+            </div>
+            <div class="setting-description">Extensions hidden from search results (e.g. .jpg, .js, .shards)</div>
+          </div>
+        </div>
+
+        <!-- Data -->
+        <div class="setting-section">
+          <h3 class="setting-section-title">Data</h3>
+
+          <div class="setting-item">
+            <button id="reset-settings-btn" class="danger" style="width: 100%;">🔄 Reset All Settings to Defaults</button>
+            <div class="setting-description">Resets every setting to its original value</div>
+          </div>
+        </div>
       </div>
 
-     <!-- Help Page -->
+    <!-- Help Page -->
     <div id="page-help" class="page">
-      <h2>Help</h2>               
+      <h2>Help</h2>
 
-  <div class="info-box">
-    <p>
-      <strong>PureWolf Native</strong> is required for this extension to connect to your computer
-      using Firefox Native Messaging.
-    </p>
-
-    <p>It allows PureWolf to:</p>
-    <ul>
-      <li>Start and control the local TELA server</li>
-      <li>Read your TELA folders</li>
-      <li>Serve TELA sites as real web pages</li>
-      <li>Search and resolve SCIDs via the indexer</li>
-    </ul>
-  </div>
-
-  <div class="info-box">
-    <h3>Install Native Helper (Linux/MacOS - Firefox)</h3>
-    <ol>
-      <li>Open your Terminal and Run: 
-        <pre><code>curl -fsSL https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases/download/v1.0.0/install.sh | bash</code></pre></li>        
-      <li><strong>Restart Firefox</strong> after installation.</l1>
-    </ol>    
-    <p>Visit the github releases page for more information on the <a href="https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases" target="_blank"><strong>PureWolf Native</strong></a> 
-    easy one-command package installer.</p>
-    
-  </div>
-
-      <div class="info-box">
-        <h3>Connect</h3>
-      <p>
-        It is recommended to use your own local node for the best performance and reliability.
-        Public nodes also work well — see the 
-        <a href="#" class="nav-link" data-target="bookmarks"><strong>Bookmarks</strong></a> 
-        page for preconfigured public nodes.
-      </p>
-
-      <p>
-        Load a node from the 
-        <a href="#" class="nav-link" data-target="bookmarks"><strong>Bookmarks</strong></a>
-        page and click <strong>Connect</strong>.
-      </p>
-
-      <p>
-        Expect from public nodes a first Gnomon sync to be 2 minutes and SCID loading times from public nodes to be around <strong>0–5 seconds</strong>,
-        while local nodes are quickly synced <strong>and scids load nearly instant</strong>.
-      </p>
-    </div>
-
-    <div class="info-box">
-      <h3>Status</h3>
-      <p><strong><span class="status-dot connected"></span>Native connected</strong>— everything is working.</p>
-      <p><strong><span class="status-dot error"></span>Native not found</strong>— native helper is not installed.</p>
-    </div>
-
-    <div class="info-box">
-      <h3>What gets installed</h3>
-      <ul>
-        <li><code>~/.purewolf/purewolf-native</code></li>
-        <li><code>~/.mozilla/native-messaging-hosts/com.purewolf.json</code></li>
-      </ul>
-      <p>No system files are modified.</p>
-    </div>
-  </div>
-
-      <!-- About Page -->
-      <div id="page-about" class="page">
-        <h2>About</h2>
+      <div class="setting-section">
+        <h3 class="setting-section-title">ℹ️ About PureWolf</h3>
         <div class="info-box">
-          <p><strong>Version:</strong> 1.0.1</p>
+          <p><strong>PureWolf Native</strong> is required for this extension to connect to your computer using Firefox Native Messaging.</p>
+          <p>It allows PureWolf to:</p>
+          <ul>
+            <li>Start and control the local TELA server</li>
+            <li>Read your TELA folders</li>
+            <li>Serve TELA sites as real web pages</li>
+            <li>Search and resolve SCIDs via the indexer</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">🛠 Installation</h3>
+        <div class="info-box">
+          <ol>
+            <li>Open your Terminal and Run:
+              <pre><code>curl -fsSL https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases/download/v1.0.0/install.sh | bash</code></pre>
+            </li>
+            <li><strong>Restart Firefox</strong> after installation.</li>
+          </ol>
+          <p>Visit the GitHub releases page for more information on the <a href="https://github.com/ArcaneSphere/PureWolf-Browser-Extension/releases" target="_blank"><strong>PureWolf Native</strong></a> easy one-command package installer.</p>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">🔗 Connect</h3>
+        <div class="info-box">
+          <ul>
+            <li>Use your <strong>own local node</strong> for best performance and reliability.</li>
+            <li>Public nodes also work well — find them on the <a href="#" class="nav-link" data-target="bookmarks"><strong>Bookmarks</strong></a> page.</li>
+            <li>Public nodes: first Gnomon sync ~<strong>17 seconds</strong>, SCID loading <strong>3–15 seconds or more</strong> depending on the application size.</li>
+            <li>Local nodes: sync quickly, SCIDs load <strong>nearly instantly</strong>.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">📊 Status</h3>
+        <div class="info-box">
+          <p><strong><span class="status-dot connected"></span>Native connected</strong> — everything is working.</p>
+          <p><strong><span class="status-dot error"></span>Native not found</strong> — native helper is not installed.</p>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">📁 Files</h3>
+        <div class="info-box">
+          <ul>
+            <li><code>~/.purewolf/purewolf-native</code></li>
+            <li><code>~/.mozilla/native-messaging-hosts/com.purewolf.json</code></li>
+          </ul>
+          <p>No system files are modified.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- About Page -->
+    <div id="page-about" class="page">
+      <h2>About</h2>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">ℹ️ About PureWolf</h3>
+        <div class="info-box">
+          <p><strong>Version:</strong> 2.0.0</p>
           <p><strong>Description:</strong> Browser extension to access TELA's decentralized applications and websites from the DERO blockchain.</p>
         </div>
+      </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">🛠 Built With</h3>
         <div class="info-box">
-          <p><strong>DERO</strong></p>
-          <p>Dero Foundation: <a href="https://www.derofoundation.org/" target="_blank"><strong>derofoundation.org</strong></a></p>
-          <p>Dero Reference Guide: <a href="https://derod.org/" target="_blank"><strong>derod.org</strong></a></p>
-          <p>Dero World: <a href="https://dero.world" target="_blank"><strong>dero.world</strong></a></p>
-          <p>Local Node: <a href="https://dero.world/anotherworld/how-and-why-would-you-run-a-full-node/" target="_blank"><strong>How to run your own node?</strong></a></p>
-          <p>Native Desktop Browser: <a href="https://hologram.derod.org/" target="_blank"><strong>Hologram Native Desktop Browser for DERO</strong></a></p>
-          <p>Wallet: <a href="https://github.com/moralpriest/Engram/releases" target="_blank"><strong>Engram GUI Wallet</strong></a></p>
-          <p>Wallet: <a href="https://github.com/moralpriest/derotui/releases" target="_blank"><strong>Engram TUI Wallet</strong></a></p>
-          <p>Github | Dero Project: <a href="https://github.com/deroproject" target="_blank"><strong>github.com/deroproject</strong></a></p>
-          <p>Github | PureWolf: <a href="https://github.com/ArcaneSphere/PureWolf-Browser-Extension" target="_blank"><strong>github.com/ArcaneSphere/PureWolf-Browser-Extension</strong></a></p>
+          <p>PureWolf is powered by:</p>
+          <ul>
+            <li><a href="https://github.com/civilware/tela" target="_blank"><strong>Civilware Tela</strong></a> — TELA server for serving decentralized applications</li>
+            <li><a href="https://github.com/Dirtybird99/HyperGnomon" target="_blank"><strong>HyperGnomon</strong></a> — blockchain indexer for SCID discovery and search</li>
+          </ul>
         </div>
       </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">🔗 Resources</h3>
+        <div class="info-box">
+          <p><strong>📖 Docs</strong></p>
+          <p>Dero Foundation: <a href="https://www.derofoundation.org/" target="_blank"><strong>derofoundation.org</strong></a></p>
+          <p>Dero Reference Guide: <a href="https://derod.org/" target="_blank"><strong>derod.org</strong></a></p>
+          <p>Local Node Guide: <a href="https://dero.world/anotherworld/how-and-why-would-you-run-a-full-node/" target="_blank"><strong>How to run your own node?</strong></a></p>
+
+          <p style="margin-top: 16px;"><strong>💼 Wallets</strong></p>
+          <p>Engram GUI: <a href="https://github.com/moralpriest/Engram/releases" target="_blank"><strong>github.com/moralpriest/Engram</strong></a></p>
+          <p>Engram TUI: <a href="https://github.com/moralpriest/derotui/releases" target="_blank"><strong>github.com/moralpriest/derotui</strong></a></p>
+
+          <p style="margin-top: 16px;"><strong>🌐 Ecosystem</strong></p>
+          <p>Dero World: <a href="https://dero.world" target="_blank"><strong>dero.world</strong></a></p>
+          <p>Hologram Browser: <a href="https://hologram.derod.org/" target="_blank"><strong>hologram.derod.org</strong></a></p>
+
+          <p style="margin-top: 16px;"><strong>📦 Github</strong></p>
+          <p>Dero Project: <a href="https://github.com/deroproject" target="_blank"><strong>github.com/deroproject</strong></a></p>
+          <p>PureWolf: <a href="https://github.com/ArcaneSphere/PureWolf-Browser-Extension" target="_blank"><strong>github.com/ArcaneSphere/PureWolf-Browser-Extension</strong></a></p>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h3 class="setting-section-title">❤️ Credits</h3>
+        <div class="info-box">
+          <p>Thank you to all the awesome DERO developers out there for building this incredible ecosystem.</p>
+          <p style="margin-top: 16px; font-size: 18px;">DERO for a better world ❤️</p>
+        </div>
+      </div>
+    </div>
     </div>
   </div>
 

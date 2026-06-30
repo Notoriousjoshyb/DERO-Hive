@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,194 +16,94 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/civilware/Gnomon/api"
-	"github.com/civilware/Gnomon/indexer"
-	"github.com/civilware/Gnomon/storage"
-	"github.com/civilware/Gnomon/structures"
+	"github.com/sirupsen/logrus"
+
+	hgapi "github.com/hypergnomon/hypergnomon/api"
+	hgindexer "github.com/hypergnomon/hypergnomon/indexer"
+	hgstructures "github.com/hypergnomon/hypergnomon/structures"
 )
 
 var (
-	gravDB    *storage.GravitonStore
-	boltDB    *storage.BboltStore
-	apiServer *api.ApiServer
-	myIndexer *indexer.Indexer
+	myAPIServer *hgapi.Server
+	myIndexer   *hgindexer.Indexer
 )
 
-var indexerRunning bool
+var (
+	hgDBDir string // set once in initStorage
+)
 
 var syncCancel chan struct{}
 
-var (
-	telaMetadataMu     sync.RWMutex
-	telaMetadataOnce   sync.Once
-	telaMetadataReady  = make(chan struct{})
-	telaMetadata       map[string]*TelaAppInfo
-)
-
-const telaFilter = `Function init() Uint64
-10 IF EXISTS("owner") == 0 THEN GOTO 30
-20 RETURN 1
-30 STORE("owner", address())
-50 STORE("telaVersion",`
+var tipSyncedSent bool // only send tip_synced once to avoid 2s re-render loop
 
 type TelaAppInfo struct {
-	SCID         string `json:"scid"`
-	DURL         string `json:"durl"`
-	Name         string `json:"name"`
+	SCID          string `json:"scid"`
+	DURL          string `json:"durl"`
+	Name          string `json:"name"`
+	DescrHdr      string `json:"descrHdr"`
+	IconURL       string `json:"iconURL"`
 	InstallHeight int64  `json:"install_height"`
-	FromAPI      bool   `json:"from_api"`
+	FromAPI       bool   `json:"from_api"`
 }
 
+// discoverTelaApps returns all known TELA apps from HyperGnomon's class
+// bucket.  Metadata (name, durl, description, icon) is read directly from
+// the Store's ClassMeta — written by IndexSingleSCID (preload) and
+// probeTELA (FastSync).  Bundled SCIDs missing from the class bucket are
+// returned as fallbacks so the UI always has something to show.
 func discoverTelaApps(node string) []TelaAppInfo {
-	// 1. Return from in-memory indexer SCIDs first (instant, matches server_status count)
-	if myIndexer != nil && len(myIndexer.ValidatedSCs) > 0 {
-		myIndexer.Lock()
-		scids := make([]string, len(myIndexer.ValidatedSCs))
-		copy(scids, myIndexer.ValidatedSCs)
-		myIndexer.Unlock()
-		log.Printf("TELA discovery: got %d SCIDs from indexer", len(scids))
+	if myIndexer == nil {
+		out := make([]TelaAppInfo, len(bundledTelaSCIDs))
+		for i, scid := range bundledTelaSCIDs {
+			out[i] = TelaAppInfo{SCID: scid, DURL: scid, Name: scid, FromAPI: false}
+		}
+		return out
+	}
 
-		apps := make([]TelaAppInfo, 0, len(scids))
-		for _, scid := range scids {
+	seen := make(map[string]bool, len(bundledTelaSCIDs))
+	var apps []TelaAppInfo
+
+	for _, class := range []string{"TELA-INDEX-1"} {
+		installs, err := myIndexer.Store.GetClassInstalls(class, 0)
+		if err != nil {
+			log.Printf("discoverTelaApps: GetClassInstalls(%s): %v", class, err)
+			continue
+		}
+		for _, inst := range installs {
+			seen[inst.SCID] = true
+			durl := inst.SCID
+			name := inst.SCID
+			desc := ""
+			icon := ""
+			installH := inst.InstallHeight
+			if meta := inst.Meta; meta != nil {
+				if meta.DURL != "" {
+					durl = meta.DURL
+				}
+				if meta.Name != "" {
+					name = meta.Name
+				}
+				desc = meta.Desc
+				icon = meta.IconURL
+			}
+			apps = append(apps, TelaAppInfo{
+				SCID: inst.SCID, DURL: durl, Name: name,
+				DescrHdr: desc, IconURL: icon,
+				InstallHeight: installH, FromAPI: true,
+			})
+		}
+	}
+	classBucketCount := len(apps)
+
+	for _, scid := range bundledTelaSCIDs {
+		if !seen[scid] {
+			seen[scid] = true
 			apps = append(apps, TelaAppInfo{SCID: scid, DURL: scid, Name: scid, InstallHeight: 0, FromAPI: false})
 		}
-		return apps
 	}
 
-	// 2. Fallback: bundled known TELA list (indexer not ready yet)
-	log.Printf("TELA discovery: falling back to bundled catalog (%d SCIDs)", len(bundledTelaSCIDs))
-	return discoverTelaAppsFromBundled(node)
-}
-
-func discoverTelaAppsFromBundled(node string) []TelaAppInfo {
-	// Kick off background metadata fetch once
-	telaMetadataOnce.Do(func() {
-		go func() {
-			fetchBundledMetadata(node)
-			close(telaMetadataReady)
-		}()
-	})
-
-	// Wait up to 5s for metadata to be ready
-	select {
-	case <-telaMetadataReady:
-	case <-time.After(5 * time.Second):
-	}
-
-	telaMetadataMu.RLock()
-	cached := telaMetadata
-	telaMetadataMu.RUnlock()
-
-	apps := make([]TelaAppInfo, 0, len(bundledTelaSCIDs))
-	for _, scid := range bundledTelaSCIDs {
-		if cached != nil {
-			if a, ok := cached[scid]; ok {
-				apps = append(apps, *a)
-				continue
-			}
-		}
-		apps = append(apps, TelaAppInfo{SCID: scid, DURL: scid, Name: scid, InstallHeight: 0})
-	}
-	if len(apps) == 0 {
-		log.Printf("TELA discovery: bundled catalog had 0 valid TELA contracts for node %s", node)
-	}
+	log.Printf("discoverTelaApps: %d apps (%d from class bucket)", len(apps), classBucketCount)
 	return apps
-}
-
-func extractString(code, prefix string) string {
-	idx := strings.Index(code, prefix)
-	if idx == -1 {
-		return ""
-	}
-	start := idx + len(prefix)
-	end := strings.Index(code[start:], `"`)
-	if end == -1 {
-		return ""
-	}
-	return code[start : start+end]
-}
-
-func fetchBundledMetadata(node string) {
-	log.Printf("Background: fetching metadata for %d bundled SCIDs", len(bundledTelaSCIDs))
-
-	type scJob struct {
-		scid string
-		durl string
-		name string
-	}
-
-	const workers = 8
-	jobs := make(chan string, len(bundledTelaSCIDs))
-	results := make(chan scJob, len(bundledTelaSCIDs))
-	var wg sync.WaitGroup
-
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for scid := range jobs {
-				reqBody := fmt.Sprintf(
-					`{"jsonrpc":"2.0","id":"1","method":"DERO.GetSC","params":{"scid":%q,"code":true,"variables":false}}`,
-					scid,
-				)
-				resp, err := client.Post(node+"/json_rpc", "application/json", strings.NewReader(reqBody))
-				if err != nil {
-					continue
-				}
-				body, err := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if err != nil {
-					continue
-				}
-
-				var rpc struct {
-					Result *struct {
-						Code string `json:"code"`
-					} `json:"result"`
-				}
-				if json.Unmarshal(body, &rpc) != nil || rpc.Result == nil {
-					continue
-				}
-
-				out := scJob{scid: scid}
-				if d := extractString(rpc.Result.Code, `STORE("dURL", "`); d != "" {
-					out.durl = d
-				}
-				if n := extractString(rpc.Result.Code, `STORE("nameHdr", "`); n != "" {
-					out.name = n
-				}
-				results <- out
-			}
-		}()
-	}
-
-	for _, scid := range bundledTelaSCIDs {
-		jobs <- scid
-	}
-	close(jobs)
-	wg.Wait()
-	close(results)
-
-	m := make(map[string]*TelaAppInfo, len(bundledTelaSCIDs))
-	for r := range results {
-		durl := r.durl
-		name := r.name
-		if durl == "" {
-			durl = r.scid
-		}
-		if name == "" {
-			name = r.scid
-		}
-		m[r.scid] = &TelaAppInfo{SCID: r.scid, DURL: durl, Name: name, InstallHeight: 0}
-	}
-
-	telaMetadataMu.Lock()
-	telaMetadata = m
-	telaMetadataMu.Unlock()
-
-	log.Printf("Background: metadata cached for %d/%d SCIDs", len(m), len(bundledTelaSCIDs))
 }
 
 func watchDaemonHealth(node string, cancel chan struct{}) {
@@ -239,54 +140,18 @@ func watchDaemonHealth(node string, cancel chan struct{}) {
 	}
 }
 
-func initDB() error {
+func initStorage() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("could not find home dir: %w", err)
 	}
-	db := filepath.Join(home, ".purewolf", "gnomondb")
-	os.MkdirAll(db, 0755)
-
-	boltDB, err = storage.NewBBoltDB(db, "GNOMON.db")
-	if err != nil {
-		return fmt.Errorf("boltdb: %w", err)
+	hgDBDir = filepath.Join(home, ".purewolf", "gnomondb")
+	if err := os.MkdirAll(hgDBDir, 0755); err != nil {
+		return fmt.Errorf("mkdir db dir: %w", err)
 	}
-
-	gravDB, err = storage.NewGravDB(db, "25ms")
-	if err != nil {
-		return fmt.Errorf("gravdb: %w", err)
-	}
-
-	log.Printf("DB handles reinitialized")
+	log.Printf("Storage ready: %s (HyperGnomon opens its own store)", hgDBDir)
 	return nil
 }
-
-func initStorage() error {
-	if err := initDB(); err != nil {
-		return err
-	}
-
-	apiCfg := &structures.APIConfig{
-		Enabled: true,
-		Listen:  fmt.Sprintf("127.0.0.1:%d", *gnomonPort),
-	}
-	apiServer = api.NewApiServer(apiCfg, gravDB, boltDB, "boltdb")
-	go apiServer.Start()
-
-	log.Printf("Storage + Gnomon API ready on :%d", *gnomonPort)
-	return nil
-}
-
-func updateAPIServerDB() {
-	if apiServer == nil {
-		return
-	}
-	apiServer.GravDBBackend = gravDB
-	apiServer.BBSBackend = boltDB
-	log.Printf("API server DB handles updated")
-}
-
-const fastSyncDiff = 100
 
 func startSync(node string) {
 	if !strings.HasPrefix(node, "http://") {
@@ -303,7 +168,6 @@ func startSync(node string) {
 	syncCancel = make(chan struct{})
 	cancel := syncCancel
 
-	// Start health watch to handle auto-reconnect
 	go watchDaemonHealth(node, cancel)
 
 	targetHeight := int64(0)
@@ -334,344 +198,214 @@ func startSync(node string) {
 	log.Printf("Sync: target locked at height %d", targetHeight)
 	nodeDisconnected = false
 
-	lastHeight, err := boltDB.GetLastIndexHeight()
-	log.Printf("Resuming from lastHeight=%d err=%v", lastHeight, err)
+	// Build HyperGnomon config (performance-tuned: RecentBlocks skips old history)
+	home, _ := os.UserHomeDir()
+	cfg := hgindexer.Config{
+		Endpoint:       nodeForIndexer,
+		DBDir:          filepath.Join(home, ".purewolf", "gnomondb"),
+		SearchFilter:   nil,
+		ParallelBlocks: 32,
+		BatchSize:         1000,
+		PoolSize:           16,
+		TurboMode:          true,
+		PostScanVarsMode:   "lazy",
+		AdaptBatchSize:     true,
+		RecentBlocks:       500,
+		CodePolicy:       "none",
+		FinalityDepth:    3,
+	}
+	log.Printf("HyperGnomon config: DBDir=%s Endpoint=%s", cfg.DBDir, cfg.Endpoint)
 
+	activeIndexer, err := hgindexer.New(cfg)
 	if err != nil {
-		log.Printf("DB read failed (%v). Resetting cache.", err)
-		home, _ := os.UserHomeDir()
-		dbPath := filepath.Join(home, ".purewolf", "gnomondb")
-		os.RemoveAll(dbPath)
-		os.MkdirAll(dbPath, 0755)
-		if err := initDB(); err != nil {
-			log.Printf("DB re-init after read failure: %v", err)
-		}
-		updateAPIServerDB()
-		lastHeight = 0
-	} else if lastHeight > 0 {
-		chainHeight := getChainTopoHeight(node)
-		if chainHeight > 0 && lastHeight > chainHeight {
-			log.Printf("Stored height %d exceeds chain %d — resetting DB", lastHeight, chainHeight)
-			home, _ := os.UserHomeDir()
-			dbPath := filepath.Join(home, ".purewolf", "gnomondb")
-			os.RemoveAll(dbPath)
-			os.MkdirAll(dbPath, 0755)
-			if err := initDB(); err != nil {
-				log.Printf("DB re-init after height mismatch: %v", err)
-			}
-			updateAPIServerDB()
-			lastHeight = 0
-		}
+		log.Printf("HyperGnomon indexer: %v", err)
+		return
 	}
-
-	gap := targetHeight - lastHeight
-	log.Printf("Chain height=%d | Indexed=%d | Gap=%d", targetHeight, lastHeight, gap)
-
-	// Preload TELA SCIDs before creating the indexer.
-	// Uses the bundled catalog (instant) for immediate startup.
-	// Registry SC query runs in background — no 30s delay on remote nodes.
-	preloadSCIDs := bundledTelaSCIDs
-	log.Printf("Discovering TELA catalog: using bundled catalog (%d SCIDs)", len(preloadSCIDs))
-
-	sf := []string{telaFilter}
-
-	fastSyncConfig := &structures.FastSyncConfig{
-		Enabled:           true,
-		ForceFastSync:     true,
-		ForceFastSyncDiff: fastSyncDiff,
-		SkipFSRecheck:     false,
-		NoCode:            false,
-	}
-
-	activeIndexer := indexer.NewIndexer(
-		gravDB,
-		boltDB,
-		"boltdb",
-		sf,
-		lastHeight,
-		nodeForIndexer,
-		"daemon",
-		false,
-		false,
-		fastSyncConfig,
-		[]string{},
-		false,
-	)
 	myIndexer = activeIndexer
 
-	// Feed pre-discovered SCIDs to the indexer BEFORE fastsync begins.
-	// The indexer writes them to the persistent store and marks them as validated.
-	// During fastsync, Gnomon scans historical blocks for these SCIDs and indexes
-	// their variable data (ratings, names, descriptions).
-	imports := make(map[string]*structures.FastSyncImport, len(preloadSCIDs))
-	for _, scid := range preloadSCIDs {
-		imports[scid] = &structures.FastSyncImport{}
-	}
-	if err := activeIndexer.AddSCIDToIndex(imports, false, false); err != nil {
-		log.Printf("Preload AddSCIDToIndex error: %v", err)
-	} else {
-		log.Printf("Preloaded %d SCIDs before fastsync", len(imports))
-	}
+	// Suppress HyperGnomon's chatty scan-loop logs so PureWolf's own
+	// log lines stay readable during fastsync.
+	hgstructures.Logger.SetLevel(logrus.WarnLevel)
 
-	indexerRunning = true
-	go activeIndexer.StartDaemonMode(5)
-
-	// Background: try the on-chain registry SC for additional SCIDs that
-	// aren't in the bundled catalog. This may take 30s on mainnet but
-	// doesn't block startup.
+	// Preload → FastSync → Scanner, sequential to avoid pool contention.
+	// FastSync discovers ALL TELA apps from the GnomonSC registry via batch
+	// RPC, so the scanner only needs to process new blocks after it.
 	go func() {
-		extraSCIDs, err := queryGnomonSCID(node)
-		if err != nil || len(extraSCIDs) == 0 {
-			return
+		// Phase 1: Preload bundled SCIDs (instant, ~5s)
+		{
+			sem := make(chan struct{}, 8)
+			var wg sync.WaitGroup
+			for _, scid := range bundledTelaSCIDs {
+				wg.Add(1)
+				sem <- struct{}{}
+				go func(s string) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					if _, err := activeIndexer.IndexSingleSCID(s, false, false); err != nil {
+						log.Printf("Preload SCID %s: %v", s, err)
+					}
+				}(scid)
+			}
+			wg.Wait()
+			log.Printf("Preloaded %d bundled SCIDs", len(bundledTelaSCIDs))
 		}
-		telaSCIDs := filterTelaSCIDs(node, extraSCIDs)
-		if len(telaSCIDs) > 0 {
-			log.Printf("Background registry: discovered %d additional TELA SCIDs", len(telaSCIDs))
-			addNewSCIDsToIndexer(telaSCIDs)
+
+		// Phase 2: FastSync — HyperGnomon queries the GnomonSC registry,
+		// stores all SCIDs in Turbo mode (~1s), then runs probeTELA async
+		// to classify TELA apps via jrpc2 batch.  No custom probing needed.
+		log.Println("TELA discovery: FastSync starting...")
+		if err := activeIndexer.FastSync(false); err != nil {
+			log.Printf("FastSync error: %v", err)
+		} else {
+			log.Println("TELA discovery: FastSync complete, probeTELA running in background")
 		}
+
+		// Phase 3: Block scanner — only processes blocks since FastSync set
+		// LastIndexedHeight to chain tip. Runs in a sub-goroutine.
+		go activeIndexer.StartDaemonMode()
 	}()
-	log.Printf("Fastsync indexer started from height %d", lastHeight)
 
+	lastHeight := activeIndexer.LastIndexedHeight.Load()
+	chainHeight := activeIndexer.ChainHeight.Load()
+	log.Printf("HyperGnomon started: chain=%d indexed=%d (fastsync running in background)", chainHeight, lastHeight)
+
+	// API server starts immediately.  With PostScanVarsMode:"lazy" there
+	// is no RPC pool contention from a post-scan sweep, so the server
+	// can safely read from the store while FastSync fills it.
+	{
+		myAPIServer = hgapi.NewServer(
+			activeIndexer.Store,
+			activeIndexer.RPCPool,
+			fmt.Sprintf("127.0.0.1:%d", *gnomonPort),
+			&activeIndexer.SafeHeight,
+			nil,
+			activeIndexer,
+			0,
+		)
+		go func() {
+			if err := myAPIServer.Start(); err != nil {
+				log.Printf("HyperGnomon API server exited: %v", err)
+			}
+		}()
+		log.Printf("HyperGnomon API listening on :%d", *gnomonPort)
+	}
+
+	// Progressive SCID discovery — sends new_tela_app events as FastSync
+	// populates ValidatedSCs.  The 2s ticker catches newly discovered SCIDs.
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		known := knownSCIDs()
+		if len(known) > 0 {
+			filtered := validatedSCIDCount()
+			sendMsg(map[string]any{
+				"event":    "catalog_progress",
+				"total":    len(known),
+				"filtered": filtered,
+			})
+		}
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-cancel:
 				return
 			case <-ticker.C:
-				log.Printf(
-					"[GNOMON] indexed=%d chain=%d scids=%d",
-					activeIndexer.LastIndexedHeight,
-					activeIndexer.ChainHeight,
-					len(activeIndexer.ValidatedSCs),
-				)
+				indexed := activeIndexer.LastIndexedHeight.Load()
+				chainH := activeIndexer.ChainHeight.Load()
+				if indexed > 0 && chainH > 0 {
+					sendMsg(map[string]any{
+						"event":   "sync_progress",
+						"indexed": indexed,
+						"chain":   chainH,
+					})
+					if indexed >= chainH-20 && !tipSyncedSent {
+						tipSyncedSent = true
+						sendMsg(map[string]any{
+							"event":  "tip_synced",
+							"height": indexed,
+						})
+					}
+				}
+
+				current := knownSCIDs()
+				filtered := validatedSCIDCount()
+				sendMsg(map[string]any{
+					"event":    "catalog_progress",
+					"total":    len(current),
+					"filtered": filtered,
+				})
+
+				if len(current) > len(known) {
+					existing := make(map[string]struct{}, len(known))
+					for _, scid := range known {
+						existing[scid] = struct{}{}
+					}
+					for _, scid := range current {
+						if _, ok := existing[scid]; !ok {
+							sendMsg(map[string]any{
+								"event": "new_tela_app",
+								"scid":  scid,
+							})
+						}
+					}
+					log.Printf("Progressive: %d SCIDs (%d new)", len(current), len(current)-len(known))
+					known = current
+				}
 			}
 		}
 	}()
-
-	go monitorIndexer(cancel, node, activeIndexer)
 }
 
-func monitorIndexer(
-	cancel chan struct{},
-	node string,
-	idx *indexer.Indexer,
-) {
-	targetHeight := getChainTopoHeight(node)
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-loop:
-	for {
-		select {
-		case <-cancel:
-			return
-
-		case <-ticker.C:
-			if h := getChainTopoHeight(node); h > targetHeight {
-				targetHeight = h
-			}
-
-			indexed := idx.LastIndexedHeight
-
-			sendMsg(map[string]any{
-				"event":   "sync_progress",
-				"indexed": indexed,
-				"chain":   targetHeight,
-			})
-
-			if indexed >= targetHeight-20 {
-				break loop
-			}
+// validatedSCIDCount returns the number of TELA-classified SCIDs in the Store.
+func validatedSCIDCount() int {
+	if myIndexer == nil {
+		return 0
+	}
+	n := 0
+	for _, class := range []string{"TELA-INDEX-1"} {
+		installs, err := myIndexer.Store.GetClassInstalls(class, 0)
+		if err == nil {
+			n += len(installs)
 		}
 	}
-
-	sendMsg(map[string]any{
-		"event":  "tip_synced",
-		"height": idx.LastIndexedHeight,
-	})
-
-	go startLivePoll(cancel, node, idx.LastIndexedHeight)
-	go scanNewBlocksForSCIDs(cancel, node)
-	go scanHistoricalSCIDs(cancel, node)
+	return n
 }
 
-// indexSCIDNow queues a single SCID for immediate Gnomon indexing.
+func knownSCIDs() []string {
+	if myIndexer == nil {
+		out := make([]string, len(bundledTelaSCIDs))
+		copy(out, bundledTelaSCIDs)
+		return out
+	}
+
+	seen := make(map[string]bool)
+	for _, class := range []string{"TELA-INDEX-1"} {
+		installs, err := myIndexer.Store.GetClassInstalls(class, 0)
+		if err != nil {
+			log.Printf("knownSCIDs: GetClassInstalls(%s): %v", class, err)
+			continue
+		}
+		for _, inst := range installs {
+			seen[inst.SCID] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for scid := range seen {
+		out = append(out, scid)
+	}
+	return out
+}
+// indexSCIDNow imports a single SCID for immediate indexing via HyperGnomon.
 func indexSCIDNow(scid string) {
 	scid = strings.TrimSpace(scid)
 	if myIndexer == nil || len(scid) != 64 {
 		return
 	}
-
-	scidsToAdd := map[string]*structures.FastSyncImport{
-		scid: {},
-	}
-	if err := myIndexer.AddSCIDToIndex(scidsToAdd, false, false); err != nil {
+	// IndexSingleSCID with skipfsrecheck=false forces a fresh daemon GetSC
+	if _, err := myIndexer.IndexSingleSCID(scid, false, false); err != nil {
 		log.Printf("indexSCIDNow: %v", err)
 		return
 	}
-	log.Printf("indexSCIDNow: queued %s", scid)
-}
-
-func cancelled(cancels ...chan struct{}) bool {
-	for _, c := range cancels {
-		select {
-		case <-c:
-			return true
-		default:
-		}
-	}
-	return false
-}
-
-func filterTelaSCIDs(node string, scids []string, cancels ...chan struct{}) []string {
-	const workers = 8
-	jobs := make(chan string, len(scids))
-	results := make(chan string, len(scids))
-
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for scid := range jobs {
-				if cancelled(cancels...) {
-					return
-				}
-				if matchesTelaContract(node, scid) {
-					results <- scid
-				}
-			}
-		}()
-	}
-
-	go func() {
-		for i, scid := range scids {
-			if cancelled(cancels...) {
-				break
-			}
-			jobs <- scid
-			if (i+1)%25 == 0 || i+1 == len(scids) {
-				sendMsg(map[string]any{
-					"event":    "catalog_progress",
-					"phase":    "filtering",
-					"filtered": i + 1,
-					"total":    len(scids),
-				})
-			}
-		}
-		close(jobs)
-		wg.Wait()
-		close(results)
-	}()
-
-	var tela []string
-	for scid := range results {
-		tela = append(tela, scid)
-	}
-	return tela
-}
-
-func hasTelaVersionKey(node, scid string) bool {
-	reqBody := fmt.Sprintf(
-		`{"jsonrpc":"2.0","id":"1","method":"DERO.GetSC","params":{"scid":%q,"code":false,"variables":true,"keystring":["telaVersion"]}}`,
-		scid,
-	)
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(node+"/json_rpc", "application/json", strings.NewReader(reqBody))
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false
-	}
-
-	var rpc struct {
-		Result *struct {
-			StringKeys map[string]any `json:"stringkeys"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(body, &rpc); err != nil || rpc.Result == nil {
-		return false
-	}
-
-	v, ok := rpc.Result.StringKeys["telaVersion"]
-	if !ok {
-		return false
-	}
-	val, _ := v.(string)
-	return strings.HasPrefix(val, "TELA-")
-}
-
-func matchesTelaContract(node, scid string) bool {
-	return hasTelaVersionKey(node, scid)
-}
-
-func queryGnomonSCID(node string) ([]string, error) {
-	return queryGnomonSCIDWithTimeout(node, 30*time.Second)
-}
-
-func queryGnomonSCIDWithTimeout(node string, timeout time.Duration) ([]string, error) {
-	const gnomonSCID = "a05395bb0cf77adc850928b0db00eb5ca7a9ccbafd9a38d021c8d299ad5ce1a4"
-
-	reqBody := fmt.Sprintf(
-		`{"jsonrpc":"2.0","id":"1","method":"DERO.GetSC","params":{"scid":%q,"code":false,"variables":true}}`,
-		gnomonSCID,
-	)
-
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Post(node+"/json_rpc", "application/json", strings.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("DERO.GetSC request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	// Check for JSON-RPC error first
-	var rpcResponse struct {
-		Error *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error,omitempty"`
-		Result *struct {
-			StringKeys map[string]any `json:"stringkeys"`
-		} `json:"result,omitempty"`
-	}
-	if err := json.Unmarshal(body, &rpcResponse); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	if rpcResponse.Error != nil {
-		log.Printf("queryGnomonSCID: daemon returned error code=%d message=%q (registry SC has >1024 variables?)", rpcResponse.Error.Code, rpcResponse.Error.Message)
-		return nil, fmt.Errorf("daemon RPC error: code=%d msg=%s", rpcResponse.Error.Code, rpcResponse.Error.Message)
-	}
-
-	if rpcResponse.Result == nil {
-		return nil, fmt.Errorf("daemon returned neither result nor error")
-	}
-
-	seen := make(map[string]struct{})
-	for key := range rpcResponse.Result.StringKeys {
-		if len(key) == 64 {
-			seen[key] = struct{}{}
-		}
-	}
-
-	scids := make([]string, 0, len(seen))
-	for scid := range seen {
-		scids = append(scids, scid)
-	}
-	return scids, nil
+	log.Printf("indexSCIDNow: indexed %s", scid)
 }
 
 type SCIDVarData struct {
@@ -714,8 +448,9 @@ func fetchSCIDVariables(node string, scids []string) []SCIDVarData {
 	jobs := make(chan string, len(scids))
 	results := make(chan *SCIDVarData, len(scids))
 	var wg sync.WaitGroup
+	var failCount atomic.Int64
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	for range workers {
 		wg.Add(1)
@@ -728,16 +463,26 @@ func fetchSCIDVariables(node string, scids []string) []SCIDVarData {
 				)
 				resp, err := client.Post(node+"/json_rpc", "application/json", strings.NewReader(reqBody))
 				if err != nil {
+					failCount.Add(1)
 					continue
 				}
 				body, err := io.ReadAll(resp.Body)
 				resp.Body.Close()
 				if err != nil {
+					failCount.Add(1)
 					continue
 				}
 
 				var rpc daemonResp
-				if err := json.Unmarshal(body, &rpc); err != nil || rpc.Result == nil || rpc.Error != nil {
+				if err := json.Unmarshal(body, &rpc); err != nil {
+					failCount.Add(1)
+					continue
+				}
+				if rpc.Result == nil {
+					if rpc.Error != nil {
+						log.Printf("fetchSCIDVariables daemon error for %.16s: code=%d msg=%s", scid, rpc.Error.Code, rpc.Error.Message)
+					}
+					failCount.Add(1)
 					continue
 				}
 
@@ -749,18 +494,22 @@ func fetchSCIDVariables(node string, scids []string) []SCIDVarData {
 
 				for key, raw := range rpc.Result.StringKeys {
 					val, _ := raw.(string)
+					// Daemon returns stringkey values hex-encoded; decode for plain-text parsing
+					if d, err := hex.DecodeString(val); err == nil {
+						val = string(d)
+					}
 
-					switch key {
-					case "dURL":
-						out.DURL = val
-					case "nameHdr":
-						out.NameHdr = val
-					case "descrHdr":
-						out.DescrHdr = val
-					case "iconURLHdr":
-						out.IconURL = val
-					default:
-						if len(key) == 64 && strings.HasPrefix(key, "dero1") {
+			switch key {
+			case "dURL":
+				out.DURL = val
+			case "nameHdr", "var_header_name":
+				out.NameHdr = val
+			case "descrHdr", "var_header_description":
+				out.DescrHdr = val
+			case "iconURLHdr", "var_header_icon":
+				out.IconURL = val
+			default:
+						if (strings.HasPrefix(key, "dero1") || strings.HasPrefix(key, "deto1")) && len(key) > 64 {
 							parts := strings.SplitN(val, "_", 2)
 							if len(parts) == 2 {
 								r, _ := strconv.ParseFloat(parts[0], 64)
@@ -815,383 +564,11 @@ func fetchSCIDVariables(node string, scids []string) []SCIDVarData {
 	for r := range results {
 		all = append(all, *r)
 	}
+	fails := failCount.Load()
+	if fails > 0 {
+		log.Printf("fetchSCIDVariables: %d/%d SCIDs failed", fails, len(scids))
+	}
 	return all
-}
-
-func startLivePoll(cancel chan struct{}, node string, fallbackHeight int64) {
-	for {
-		select {
-		case <-cancel:
-			return
-		case <-time.After(10 * time.Second):
-		}
-
-		if currentNode == "" {
-			return
-		}
-
-		chainHeight := getChainTopoHeight(node)
-
-		if myIndexer != nil && chainHeight > 0 {
-			myIndexer.Lock()
-			if chainHeight > myIndexer.ChainHeight {
-				myIndexer.ChainHeight = chainHeight
-			}
-			myIndexer.Unlock()
-		}
-
-		dbHeight := fallbackHeight
-		if myIndexer != nil && myIndexer.LastIndexedHeight > 0 {
-			dbHeight = myIndexer.LastIndexedHeight
-		} else if h, err := boltDB.GetLastIndexHeight(); err == nil && h > 0 {
-			dbHeight = h
-		}
-
-		log.Printf("Live poll: dbHeight=%d chainHeight=%d", dbHeight, chainHeight)
-		sendMsg(map[string]any{
-			"event":   "sync_progress",
-			"indexed": dbHeight,
-			"chain":   chainHeight,
-		})
-	}
-}
-
-// fetchBlockTxHashes returns non-coinbase transaction hashes for a block height.
-func fetchBlockTxHashes(node string, height int64) ([]string, error) {
-	body := fmt.Sprintf(
-		`{"jsonrpc":"2.0","id":"1","method":"DERO.GetBlock","params":{"height":%d}}`,
-		height,
-	)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(node+"/json_rpc", "application/json", strings.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var outer struct {
-		Result *struct {
-			BlockJSON   string `json:"json"`
-			BlockHeader *struct {
-				TxCount int `json:"txcount"`
-			} `json:"block_header"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&outer); err != nil {
-		return nil, err
-	}
-	if outer.Result == nil {
-		return nil, fmt.Errorf("no result")
-	}
-
-	// Skip parse of inner json when only coinbase TX exists
-	if outer.Result.BlockHeader != nil && outer.Result.BlockHeader.TxCount <= 1 {
-		return nil, nil
-	}
-
-	if outer.Result.BlockJSON == "" {
-		return nil, nil
-	}
-
-	var inner struct {
-		TxHashes []string `json:"tx_hashes"`
-	}
-	if err := json.Unmarshal([]byte(outer.Result.BlockJSON), &inner); err != nil {
-		return nil, err
-	}
-	return inner.TxHashes, nil
-}
-
-// addSCIDToIndexerSkipFetch adds a SCID to the indexer without fetching
-// SC variable data from the daemon (skipSCFetch=true). This avoids hanging
-// when the indexer WebSocket is half-open on remote nodes.
-func addSCIDToIndexerSkipFetch(scid string) {
-	if myIndexer == nil || len(scid) != 64 {
-		return
-	}
-	imports := map[string]*structures.FastSyncImport{
-		scid: {},
-	}
-	if err := myIndexer.AddSCIDToIndex(imports, true, false); err != nil {
-		log.Printf("Block scanner: AddSCIDToIndex error: %v", err)
-	} else {
-		log.Printf("Block scanner: indexed SCID %s (skip SC fetch)", scid)
-	}
-}
-
-type ScannerState struct {
-	LastHistoricalHeight int64 `json:"last_historical_height"`
-	LastLiveHeight       int64 `json:"last_live_height"`
-}
-
-var scannerStatePath string
-
-func init() {
-	home, _ := os.UserHomeDir()
-	scannerStatePath = filepath.Join(home, ".purewolf", "gnomondb", "scanner.json")
-}
-
-func loadScannerState() ScannerState {
-	raw, err := os.ReadFile(scannerStatePath)
-	if err != nil {
-		return ScannerState{}
-	}
-	var s ScannerState
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return ScannerState{}
-	}
-	return s
-}
-
-func saveScannerState(s ScannerState) {
-	raw, err := json.Marshal(s)
-	if err != nil {
-		return
-	}
-	os.WriteFile(scannerStatePath, raw, 0644)
-}
-
-// scanNewBlocksForSCIDs polls the chain for new blocks after tip_synced.
-// For each new block with non-coinbase transactions, it checks if any are
-// TELA contract installs. Discovered SCIDs are added to the indexer and
-// the frontend is notified via new_tela_app event.
-func scanNewBlocksForSCIDs(cancel chan struct{}, node string) {
-	select {
-	case <-cancel:
-		return
-	case <-time.After(10 * time.Second):
-	}
-
-	state := loadScannerState()
-	lastScanned := state.LastLiveHeight
-	if lastScanned <= 0 {
-		lastScanned = getChainTopoHeight(node)
-	}
-	log.Printf("Block scanner: starting from height %d", lastScanned)
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-cancel:
-			return
-		case <-ticker.C:
-		}
-
-		chainHeight := getChainTopoHeight(node)
-		if chainHeight <= lastScanned {
-			continue
-		}
-
-		for h := lastScanned + 1; h <= chainHeight; h++ {
-			select {
-			case <-cancel:
-				return
-			default:
-			}
-
-			txHashes, err := fetchBlockTxHashes(node, h)
-			if err != nil || len(txHashes) == 0 {
-				continue
-			}
-
-			for _, txHash := range txHashes {
-				if !hasTelaVersionKey(node, txHash) {
-					continue
-				}
-				addSCIDToIndexerSkipFetch(txHash)
-				sendMsg(map[string]any{
-					"event":  "new_tela_app",
-					"scid":   txHash,
-					"height": h,
-				})
-				log.Printf("Block scanner: discovered TELA app %s at height %d", txHash, h)
-			}
-		}
-
-		lastScanned = chainHeight
-		state.LastLiveHeight = chainHeight
-		saveScannerState(state)
-
-		scidCount := 0
-		if myIndexer != nil {
-			myIndexer.Lock()
-			scidCount = len(myIndexer.ValidatedSCs)
-			myIndexer.Unlock()
-		}
-		sendMsg(map[string]any{
-			"event":    "scanner_status",
-			"type":     "live",
-			"height":   chainHeight,
-			"scid_cnt": scidCount,
-		})
-	}
-}
-
-// scanHistoricalSCIDs scans blocks from chain height seeking TELA contract
-// installs. Uses an 8-worker pool for parallel block fetching. Persists
-// progress so reconnects resume where they left off. Sends scanner_status
-// events for the UI progress bar.
-func scanHistoricalSCIDs(cancel chan struct{}, node string) {
-	select {
-	case <-cancel:
-		return
-	case <-time.After(10 * time.Second):
-	}
-
-	const startHeight = 4100000
-	chainHeight := getChainTopoHeight(node)
-	if chainHeight <= startHeight {
-		return
-	}
-
-	state := loadScannerState()
-	scanFrom := state.LastHistoricalHeight
-	if scanFrom < startHeight || scanFrom >= chainHeight {
-		maxBlocks := int64(100000)
-		scanFrom = chainHeight - maxBlocks
-		if scanFrom < startHeight {
-			scanFrom = startHeight
-		}
-	}
-	if scanFrom > chainHeight {
-		return
-	}
-
-	total := chainHeight - scanFrom + 1
-	log.Printf("Historical scan: scanning %d blocks (%d to %d) with 8 workers",
-		total, scanFrom, chainHeight)
-
-	heights := make(chan int64, 100)
-	found := make(chan string, 100)
-	var wg sync.WaitGroup
-	var currentHeight atomic.Int64
-
-	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for h := range heights {
-				select {
-				case <-cancel:
-					return
-				default:
-				}
-				currentHeight.Store(h)
-				txHashes, err := fetchBlockTxHashes(node, h)
-				if err != nil || len(txHashes) == 0 {
-					continue
-				}
-				for _, txHash := range txHashes {
-					if hasTelaVersionKey(node, txHash) {
-						found <- txHash
-						log.Printf("Historical scan: found TELA SCID %s at height %d", txHash, h)
-					}
-				}
-			}
-		}()
-	}
-
-	// Consumer goroutine: add SCIDs as they're found
-	go func() {
-		for scid := range found {
-			addSCIDToIndexerSkipFetch(scid)
-		}
-	}()
-
-	// Progress ticker
-	progressDone := make(chan struct{})
-	go func() {
-		tick := time.NewTicker(10 * time.Second)
-		defer tick.Stop()
-		saveCounter := 0
-		for {
-			select {
-			case <-cancel:
-				return
-			case <-progressDone:
-				return
-			case <-tick.C:
-				cur := currentHeight.Load()
-				pct := float64(0)
-				if total > 0 {
-					pct = float64(cur-scanFrom) / float64(total) * 100
-				}
-				sendMsg(map[string]any{
-					"event":    "scanner_status",
-					"type":     "historical",
-					"progress": int64(math.Round(pct)),
-					"current":  cur,
-					"total":    total,
-				})
-				saveCounter++
-				if saveCounter%5 == 0 {
-					state.LastHistoricalHeight = cur
-					saveScannerState(state)
-				}
-			}
-		}
-	}()
-
-	// Feed heights to workers
-	for h := scanFrom; h <= chainHeight; h++ {
-		select {
-		case <-cancel:
-			close(progressDone)
-			return
-		case heights <- h:
-		}
-	}
-	close(heights)
-	wg.Wait()
-	close(found)
-	close(progressDone)
-
-	// Persist progress
-	state.LastHistoricalHeight = chainHeight
-	saveScannerState(state)
-
-	scidCount := 0
-	if myIndexer != nil {
-		myIndexer.Lock()
-		scidCount = len(myIndexer.ValidatedSCs)
-		myIndexer.Unlock()
-	}
-	sendMsg(map[string]any{
-		"event":    "scanner_status",
-		"type":     "historical",
-		"progress": 100,
-		"current":  chainHeight,
-		"total":    total,
-		"scid_cnt": scidCount,
-	})
-	log.Printf("Historical scan: completed (%d blocks scanned)", total)
-	}
-
-func addNewSCIDsToIndexer(scids []string) {
-	if myIndexer == nil || len(scids) == 0 {
-		return
-	}
-
-	imports := make(map[string]*structures.FastSyncImport)
-	for _, scid := range scids {
-		if len(scid) == 64 {
-			imports[scid] = &structures.FastSyncImport{}
-		}
-	}
-
-	if len(imports) == 0 {
-		return
-	}
-
-	// AddSCIDToIndex skips SCIDs already in the DB, so duplicates are safe
-	if err := myIndexer.AddSCIDToIndex(imports, false, false); err != nil {
-		log.Printf("Background discovery: AddSCIDToIndex error: %v", err)
-	} else {
-		log.Printf("Background discovery: added %d SCIDs to indexer", len(imports))
-	}
 }
 
 func stopSync() {
@@ -1200,11 +577,6 @@ func stopSync() {
 		syncCancel = nil
 	}
 	stopIndexer()
-	if err := initDB(); err != nil {
-		log.Printf("stopSync: reinit DB failed: %v", err)
-		return
-	}
-	updateAPIServerDB()
 }
 
 type DaemonInfo struct {
@@ -1227,6 +599,10 @@ func getChainTopoHeight(node string) int64 {
 }
 
 func getDaemonInfo(node string) *DaemonInfo {
+	return getDaemonInfoFromDaemon(node)
+}
+
+func getDaemonInfoFromDaemon(node string) *DaemonInfo {
 	client := &http.Client{Timeout: 5 * time.Second}
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":"1","method":"DERO.GetInfo"}`)
 	resp, err := client.Post(node+"/json_rpc", "application/json", body)
@@ -1244,31 +620,37 @@ func getDaemonInfo(node string) *DaemonInfo {
 		return nil
 	}
 
+	return parseGetInfo(raw.Result)
+}
+
+// parseGetInfo extracts DaemonInfo from a GetInfo JSON object.
+// Works with both the Gnomon API and daemon RPC response formats.
+func parseGetInfo(data map[string]any) *DaemonInfo {
 	info := &DaemonInfo{}
 
-	if h, ok := raw.Result["topoheight"].(float64); ok {
+	if h, ok := data["topoheight"].(float64); ok {
 		info.TopoHeight = int64(h)
 	}
-	if h, ok := raw.Result["stableheight"].(float64); ok {
+	if h, ok := data["stableheight"].(float64); ok {
 		info.StableHeight = int64(h)
 	}
-	if d, ok := raw.Result["difficulty"].(float64); ok {
+	if d, ok := data["difficulty"].(float64); ok {
 		info.Difficulty = int64(d)
 	}
-	if v, ok := raw.Result["version"].(string); ok {
+	if v, ok := data["version"].(string); ok {
 		info.Version = v
 	}
-	if n, ok := raw.Result["network"].(string); ok {
+	if n, ok := data["network"].(string); ok {
 		info.Network = n
 	}
 	if info.Network == "" {
-		if testnet, ok := raw.Result["testnet"].(bool); ok && testnet {
+		if testnet, ok := data["testnet"].(bool); ok && testnet {
 			info.Network = "Testnet"
 		} else {
 			info.Network = "Mainnet"
 		}
 	}
-	if m, ok := raw.Result["tx_pool_size"].(float64); ok {
+	if m, ok := data["tx_pool_size"].(float64); ok {
 		info.MempoolSize = int(m)
 	}
 
@@ -1280,12 +662,8 @@ func stopIndexer() {
 		myIndexer.Close()
 		myIndexer = nil
 	}
-	indexerRunning = false
 }
 
 func closeStorage() {
 	stopIndexer()
-	if gravDB != nil {
-		gravDB.Closing = true
-	}
 }

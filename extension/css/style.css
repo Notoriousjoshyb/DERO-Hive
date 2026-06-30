@@ -231,6 +231,32 @@ body {
   opacity: 0;
 }
 
+.nav-badge {
+  margin-left: auto;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+#sidebar.collapsed .nav-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 9px;
+  min-width: 14px;
+  padding: 0 4px;
+}
+
+#sidebar.collapsed .nav-item[data-page="bookmarks"] {
+  position: relative;
+}
+
 #sidebar.collapsed .nav-item.active {
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px var(--accent);
@@ -534,6 +560,29 @@ body {
   max-width: 80%;
 }
 
+#page-help pre {
+  position: relative;
+  background: var(--input);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+#page-help pre code {
+  display: block;
+  overflow-x: auto;
+}
+
+#page-help pre .copy-btn {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 8px;
+  white-space: nowrap;
+  padding: 6px 20px;
+}
+
 .page.active {
   display: block;
 }
@@ -662,13 +711,152 @@ pre {
 .setting-description {
   font-size: 13px;
   color: var(--text-secondary);
+  margin-top: 8px;
   margin-bottom: 12px;
   line-height: 1.6;
 }
 
+/* Settings sections */
+.setting-section {
+  margin-bottom: 32px;
+}
+
+.setting-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  width: 48px;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  transition: 0.25s ease;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: 0.25s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  background: white;
+  transform: translateX(22px);
+}
+
+/* Tag input */
+.tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  background: var(--input);
+  min-height: 42px;
+  align-items: center;
+  cursor: text;
+}
+
+.tag-input:focus-within {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.tag-chip .tag-remove {
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.tag-chip .tag-remove:hover {
+  color: var(--danger);
+}
+
+#tag-input-field {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  flex: 1;
+  min-width: 120px;
+  padding: 2px 0;
+}
+
+#tag-input-field::placeholder {
+  color: var(--text-secondary);
+}
+
 /* ===============================
    FORMS
-================================ */
+=============================== */
 
 input, textarea, select {
   width: 100%;
@@ -993,6 +1181,83 @@ button.success:hover {
   gap: 8px;
 }
 
+.bookmark-label[contenteditable="true"] {
+  background: var(--input);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+/* ===============================
+   POPOVER
+=============================== */
+
+.popover {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.4);
+}
+
+.popover-content {
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  min-width: 280px;
+  box-shadow: var(--shadow-lg);
+}
+
+.popover-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+
+.popover-content input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-2);
+  background: var(--input);
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.popover-content input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.popover-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.popover-actions button {
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  border: none;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.popover-actions .secondary {
+  background: var(--panel-2);
+  color: var(--text-secondary);
+}
+
 /* ===============================
    SEARCH PAGE
 ================================ */
@@ -1125,6 +1390,7 @@ button.success:hover {
   display: flex;
   gap: 16px;
   transition: var(--transition);
+  cursor: pointer;
 }
 
 /* Mouse hover only when NOT keyboard navigating */
@@ -1263,6 +1529,31 @@ body:not(.keyboard-nav) [data-theme="dark"] .result:hover,
 .result .scid-svg { --scid-size: 48px; }
 #sidebar .scid-svg { --scid-size: 32px; }
 
+@keyframes card-click-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.result.clicking {
+  animation: card-click-pulse 0.4s ease 1;
+}
+
+.retry-btn {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: var(--transition);
+}
+
+.retry-btn:hover {
+  background: var(--accent-soft);
+}
+
 /* ===============================
    INFO BOXES
 ================================ */
@@ -1342,6 +1633,8 @@ body:not(.keyboard-nav) [data-theme="dark"] .result:hover,
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 18px;
+  justify-content: center;
   cursor: pointer;
   background: none;
   border: none;
@@ -1358,6 +1651,8 @@ body:not(.keyboard-nav) [data-theme="dark"] .result:hover,
 
 .input-row .icon.saved {
   color: var(--accent);
+  text-shadow: 0 0 8px var(--accent);
+  transform: translateY(-50%) scale(1.1);
 }
 
 .input-row .icon svg {
@@ -1516,26 +1811,38 @@ body:not(.keyboard-nav) [data-theme="dark"] .result:hover,
   color: var(--accent);
 }
 
+.card-apps .card-value-lg {
+  font-size: 32px;
+}
+
+.card-expand {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.card-expand summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 12px;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.card-expand summary:hover {
+  opacity: 0.8;
+}
+
+.card-expand[open] .card-row {
+  font-size: 12px;
+}
+
 .sync-label {
   font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
   margin-bottom: 6px;
-}
-
-.servers-bar {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-  padding: 14px 16px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-
-.server-badge {
-  font-size: 13px;
-  color: var(--text-secondary);
 }
 
 /* ===============================
@@ -1587,4 +1894,50 @@ body:not(.keyboard-nav) [data-theme="dark"] .result:hover,
   h2 {
     font-size: 24px;
   }
+}
+
+/* ================= SCID LOADER ================= */
+#scid-loader {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: transparent;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  overflow: hidden;
+}
+#scid-loader.active {
+  opacity: 1;
+  background: #0a2a0a;
+}
+#scid-loader .bar {
+  position: absolute;
+  top: 0;
+  left: -30%;
+  width: 30%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, #00ff88, transparent);
+  animation: scid-scan 1.2s ease-in-out infinite alternate;
+}
+#scid-loader.failed {
+  background: transparent;
+  opacity: 1;
+  animation: scid-fade 0.6s 0.8s forwards;
+}
+#scid-loader.failed .bar {
+  background: linear-gradient(90deg, transparent, #ff3333, transparent);
+  animation: none;
+  left: 35%;
+  width: 30%;
+}
+@keyframes scid-scan {
+  0%   { left: -30%; }
+  100% { left: 100%; }
+}
+@keyframes scid-fade {
+  to { opacity: 0; }
 }

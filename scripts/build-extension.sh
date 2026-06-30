@@ -14,10 +14,11 @@ fi
 
 echo "Building PureWolf extension for: $BROWSER"
 
-# --- 2. Define paths ---
-EXT_DIR="./extension"              # Shared code (JS, CSS, dashboard, libs, popup, icons)
-BROWSER_DIR="./browsers/$BROWSER"  # Browser-specific manifest
-BUILD_DIR="./build/$BROWSER"       # Output folder
+# --- 2. Define paths (location-independent) ---
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+EXT_DIR="$SCRIPT_DIR/../extension"              # Shared code (JS, CSS, dashboard, libs, popup, icons)
+BROWSER_DIR="$SCRIPT_DIR/../browsers/$BROWSER"  # Browser-specific manifest
+BUILD_DIR="$SCRIPT_DIR/../build/$BROWSER"       # Output folder
 
 # --- 3. Clean previous build ---
 rm -rf "$BUILD_DIR"

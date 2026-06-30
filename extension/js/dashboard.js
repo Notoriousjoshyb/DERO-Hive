@@ -5,22 +5,24 @@ const statusEl = document.getElementById("status");
 const navItems = document.querySelectorAll(".nav-item");
 const pages = document.querySelectorAll(".page");
 
+const sidebarNativeStatus = document.getElementById("sidebar-native-status");
 const sidebarTelaStatus = document.getElementById("sidebar-tela-status");
 const sidebarGnomonStatus = document.getElementById("sidebar-gnomon-status");
-
-const pageTelaStatus = document.getElementById("page-tela-status");
-const pageGnomonStatus = document.getElementById("page-gnomon-status");
 
 const nodeInput = document.getElementById("node");
 const connectNodeBtn = document.getElementById("connectNodeBtn");
 const scidInput = document.getElementById("scid");
 const loadBtn = document.getElementById("load");
-const scidListEl = document.getElementById("scid-list");
 
 const bookmarkScidBtn = document.getElementById("bookmark-scid");
 const bookmarkNodeBtn = document.getElementById("bookmark-node");
 const bookmarkedScidsEl = document.getElementById("bookmarked-scids");
 const bookmarkedNodesEl = document.getElementById("bookmarked-nodes");
+const bookmarkPopover = document.getElementById("bookmark-popover");
+const bookmarkPopoverTitle = document.getElementById("bookmark-popover-title");
+const bookmarkLabelInput = document.getElementById("bookmark-label-input");
+const bookmarkPopoverSave = document.getElementById("bookmark-popover-save");
+const bookmarkPopoverCancel = document.getElementById("bookmark-popover-cancel");
 
 const themeToggle = document.getElementById("theme-toggle");
 
@@ -29,12 +31,14 @@ const RT = typeof browser !== "undefined" ? browser : chrome;
 
 // ================= STATE =================
 let bookmarks = { scids: {}, nodes: {} };
-let settings = { autostart: false, refreshInterval: 3, defaultNode: "", directLoad: true, hiddenExtensions: ""};
+let settings = { defaultNode: "", autoConnect: true, directLoad: true, hiddenExtensions: "" };
 let appConfig = { gnomon_api_port: 8099, tela_port: 4040 };
 let wasConnected = false;
 let connectTime = null;
+let bookmarkTarget = null; // { type:"node"|"scid", value, mode:"save"|"remove" } for popover
 let syncStartTime = null;
-let historicalScanComplete = false;
+let lastChainHeight = 0;
+let lastBlockTime = null;
 
 // Fetch dynamic configuration from native host
 (async function initConfig() {
@@ -124,17 +128,6 @@ function setStatus(el, running) {
   }
 }
 
-// ================= STAR SVG =================
-
-function createStarSVG() {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z");
-  svg.appendChild(path);
-  return svg;
-}
-
 function createNoResults(text) {
   const div = document.createElement("div");
   div.className = "no-results";
@@ -180,23 +173,6 @@ function dismissToast(toast) {
   clearTimeout(toast._timeout);
   toast.classList.add("removing");
   setTimeout(() => toast.remove(), 250);
-}
-
-// ================= SCID LIST =================
-function updateSCIDList(scids) {
-  if (!scidListEl) return;
-
-  scidListEl.replaceChildren();
-  if (!scids || !scids.length) {
-    scidListEl.appendChild(createNoResults("No SCIDs loaded"));
-    return;
-  }
-  scids.forEach(scid => {
-    const div = document.createElement("div");
-    div.className = "scid-item";
-    div.textContent = scid;
-    scidListEl.appendChild(div);
-  });
 }
 
 // ================= NODE CONNECT / DISCONNECT =================
@@ -260,6 +236,27 @@ connectNodeBtn.onclick = async () => {
 };
 
 
+// ================= SCID LOADER =================
+function scidLoaderShow() {
+  const el = document.getElementById("scid-loader");
+  if (!el) return;
+  el.classList.remove("failed");
+  el.classList.add("active");
+}
+function scidLoaderSuccess() {
+  const el = document.getElementById("scid-loader");
+  if (!el) return;
+  el.classList.remove("active");
+}
+function scidLoaderFail() {
+  const el = document.getElementById("scid-loader");
+  if (!el) return;
+  el.classList.add("failed");
+  el.addEventListener("animationend", () => {
+    el.classList.remove("active", "failed");
+  }, { once: true });
+}
+
 // ================= LOAD SCID =================
 loadBtn.onclick = async () => {
   const scid = scidInput.value.trim();
@@ -267,10 +264,12 @@ loadBtn.onclick = async () => {
   if (!nodeInput.value.trim()) return alert("Set node first");
 
   pushToast("pending", "Loading SCID...");
+  scidLoaderShow();
 
   try {
     const r = await send("load_scid", { scid });
     if (!r.ok) {
+      scidLoaderFail();
       pushToast("error", r.error || "Unknown error");
       alert("Failed to load SCID: " + (r.error || "Unknown error"));
       return;
@@ -278,17 +277,17 @@ loadBtn.onclick = async () => {
 
     const url = r.result?.url;
     if (!url) {
+      scidLoaderFail();
       pushToast("warning", "Loaded, but no URL returned");
       return;
     }
 
+    scidLoaderSuccess();
     pushToast("connected", "SCID loaded");
     window.open(url, "_blank");
 
-    const listResp = await send("list_scids");
-    if (listResp.ok) updateSCIDList(listResp.result.scids);
-
   } catch (e) {
+    scidLoaderFail();
     pushToast("error", "Error loading SCID");
     alert("Error: " + e.message);
   }
@@ -300,20 +299,26 @@ async function updateStatusIndicators() {
     const r = await send("server_status");
     if (!r?.ok || !r?.result) return;
 
-    const { tela, gnomon, connected, node, heights, scid_count, scanner_live, scanner_historical, daemon } = r.result;
+    const { tela, gnomon, connected, node, heights, tela_apps_count, connected_at, daemon } = r.result;
 
+    if (sidebarNativeStatus) setStatus(sidebarNativeStatus, true);
     if (sidebarTelaStatus) setStatus(sidebarTelaStatus, tela);
     if (sidebarGnomonStatus) setStatus(sidebarGnomonStatus, gnomon);
-    if (pageTelaStatus) setStatus(pageTelaStatus, tela);
-    if (pageGnomonStatus) setStatus(pageGnomonStatus, gnomon);
 
     // Sync button state from server truth — fixes kill/reconnect desyncs
     const hasNode = !!node && connected;
     setNodeConnected(hasNode, node);
 
-    if (heights) updateSyncProgress(heights.indexed, heights.chain);
+    if (heights) {
+      updateSyncProgress(heights.indexed, heights.chain);
+      // Track tip age: reset timer when chain height advances
+      if (heights.chain !== lastChainHeight && heights.chain > 0) {
+        lastChainHeight = heights.chain;
+        lastBlockTime = Date.now();
+      }
+    }
 
-    // Card: Connection
+    // Card: Network
     const nodeEl = document.getElementById("sv-node");
     if (nodeEl) nodeEl.textContent = node || "—";
 
@@ -323,45 +328,57 @@ async function updateStatusIndicators() {
     const networkEl = document.getElementById("sv-network");
     if (networkEl) networkEl.textContent = daemon?.network || "—";
 
-    const uptimeEl = document.getElementById("sv-uptime");
-    if (uptimeEl && connectTime) {
-      const secs = Math.floor((Date.now() - connectTime) / 1000);
-      const h = Math.floor(secs / 3600);
-      const m = Math.floor((secs % 3600) / 60);
-      const s = secs % 60;
-      uptimeEl.textContent = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+    // Tip age (updated every 5s by this poll, fine granularity)
+    const tipAgeEl = document.getElementById("sv-tip-age");
+    if (tipAgeEl && lastBlockTime) {
+      tipAgeEl.textContent = formatAge(Date.now() - lastBlockTime);
+    } else if (tipAgeEl) {
+      tipAgeEl.textContent = "—";
     }
 
-    // Card: Sync
+    // Daemon info (expand section)
+    const uptimeEl = document.getElementById("sv-uptime");
+    if (uptimeEl && connected_at > 0) {
+      const secs = Math.floor((Date.now() - connected_at) / 1000);
+      uptimeEl.textContent = formatDuration(secs);
+    }
+
     const diffEl = document.getElementById("sv-difficulty");
     if (diffEl && daemon) {
-      const diff = Number(heights?.difficulty || daemon.difficulty);
+      const diff = Number(daemon.difficulty);
       diffEl.textContent = diff > 0 ? formatHashrate(diff) : "—";
     }
 
     const mempoolEl = document.getElementById("sv-mempool");
     if (mempoolEl) mempoolEl.textContent = daemon?.mempool_size != null ? daemon.mempool_size + " txs" : "—";
 
-    // Card: Scanner
-    const scannerEl = document.getElementById("sv-scanner-live");
-    if (scannerEl && scanner_live > 0) scannerEl.textContent = scanner_live.toLocaleString();
-
-    const histEl = document.getElementById("sv-scanner-hist");
-    if (histEl && scanner_historical > 0) {
-      if (historicalScanComplete) {
-        histEl.textContent = "Complete ✓";
-      } else {
-        histEl.textContent = scanner_historical.toLocaleString();
-      }
+    // Card: TELA Apps
+    const telaCountEl = document.getElementById("sv-tela-count");
+    if (telaCountEl && tela_apps_count > 0) {
+      telaCountEl.textContent = tela_apps_count.toLocaleString();
     }
-
-    // Card: Apps
-    const scidCountEl = document.getElementById("sv-scid-count");
-    if (scidCountEl) scidCountEl.textContent = scid_count > 0 ? scid_count.toLocaleString() : "—";
 
   } catch (e) {
     console.warn("Status update failed:", e);
   }
+}
+
+function formatAge(ms) {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 5) return "just now";
+  if (secs < 60) return secs + "s ago";
+  const m = Math.floor(secs / 60);
+  if (m < 60) return m + "m ago";
+  return Math.floor(m / 60) + "h ago";
+}
+
+function formatDuration(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m " + s + "s";
+  return s + "s";
 }
 
 function formatHashrate(diff) {
@@ -377,7 +394,7 @@ updateStatusIndicators();
 
 async function autoConnect() {
   loadSettings();
-  if (!settings.defaultNode) return;
+  if (!settings.defaultNode || !settings.autoConnect) return;
 
   nodeInput.value = settings.defaultNode;
   updateBookmarkButtons();
@@ -403,6 +420,8 @@ async function autoConnect() {
 
 document.addEventListener("DOMContentLoaded", () => {
   initBookmarks();
+  loadSettings();
+  initSettingsUI();
   autoConnect();
 });
 
@@ -410,9 +429,8 @@ document.addEventListener("DOMContentLoaded", () => {
 const defaultBookmarks = {
   nodes: {
     "127.0.0.1:10102": { node: "127.0.0.1:10102", label: "Local Node (default)" },
-    "dero.geeko.cloud:10102": { node: "dero.geeko.cloud:10102", label: "Public Node" },
-    "node.derofoundation.org:11012": { node: "node.derofoundation.org:11012", label: "Public Node" },
-    "192.168.1.154:10102": { node: "192.168.1.154:10102", label: "PureWolf Devs" }
+    "dero.rabidmining.com:10102": { node: "dero.rabidmining.com:10102", label: "Public Node" },
+    "node.derofoundation.org:11012": { node: "node.derofoundation.org:11012", label: "Public Node" }
   },
   scids: {
     "a6832a5a09b82dc4b1034fd726b118da1df8ca9ad33e76bee4563e3f69d1d99a": {
@@ -430,37 +448,117 @@ function saveBookmarks() {
 }
 
 function updateBookmarkButtons() {
-  bookmarkScidBtn.replaceChildren(createStarSVG());
-  bookmarkNodeBtn.replaceChildren(createStarSVG());
+  const scid = scidInput.value.trim();
+  const node = nodeInput.value.trim();
+  const scidSaved = !!bookmarks.scids[scid];
+  const nodeSaved = !!bookmarks.nodes[node];
 
-  bookmarkScidBtn.classList.toggle("saved", !!bookmarks.scids[scidInput.value.trim()]);
-  bookmarkNodeBtn.classList.toggle("saved", !!bookmarks.nodes[nodeInput.value.trim()]);
+  bookmarkScidBtn.textContent = scidSaved ? "★" : "☆";
+  bookmarkScidBtn.classList.toggle("saved", scidSaved);
+
+  bookmarkNodeBtn.textContent = nodeSaved ? "★" : "☆";
+  bookmarkNodeBtn.classList.toggle("saved", nodeSaved);
 }
 
 scidInput.oninput = updateBookmarkButtons;
 nodeInput.oninput = updateBookmarkButtons;
 
+function showBookmarkPopover(type, value, mode) {
+  if (!bookmarkPopover || !bookmarkLabelInput) return;
+  mode = mode || "save";
+  bookmarkTarget = { type, value, mode };
+  const existing = type === "scid" ? bookmarks.scids[value] : bookmarks.nodes[value];
+  bookmarkLabelInput.value = existing?.label || "";
+  bookmarkLabelInput.placeholder = type === "scid" ? "Label (default: " + value.slice(0, 8) + ")" : "Label (default: " + value + ")";
+  if (mode === "remove") {
+    bookmarkPopoverTitle.textContent = "Remove bookmark?";
+    bookmarkLabelInput.style.display = "none";
+    bookmarkPopoverSave.textContent = "Yes";
+    bookmarkPopoverSave.className = "danger";
+    bookmarkPopoverCancel.textContent = "Cancel";
+  } else {
+    bookmarkPopoverTitle.textContent = "Bookmark";
+    bookmarkLabelInput.style.display = "";
+    bookmarkPopoverSave.textContent = "Save";
+    bookmarkPopoverSave.className = "";
+    bookmarkPopoverCancel.textContent = "Cancel";
+  }
+  bookmarkPopover.classList.remove("hidden");
+  if (mode !== "remove") {
+    bookmarkLabelInput.focus();
+    bookmarkLabelInput.select();
+  }
+}
+
+function hideBookmarkPopover() {
+  if (!bookmarkPopover) return;
+  bookmarkPopover.classList.add("hidden");
+  // Reset to save-mode defaults for next open
+  bookmarkPopoverTitle.textContent = "Bookmark";
+  bookmarkLabelInput.style.display = "";
+  bookmarkPopoverSave.textContent = "Save";
+  bookmarkPopoverSave.className = "";
+  bookmarkPopoverCancel.textContent = "Cancel";
+  bookmarkTarget = null;
+}
+
 bookmarkScidBtn.onclick = () => {
   const scid = scidInput.value.trim();
   if (!scid) return alert("Enter SCID first");
-
-  const label = prompt("Label:", bookmarks.scids[scid]?.label || "");
-  if (label === null) return;
-
-  bookmarks.scids[scid] = { scid, label: label || scid.slice(0, 8) };
-  saveBookmarks();
+  if (bookmarks.scids[scid]) {
+    showBookmarkPopover("scid", scid, "remove");
+    return;
+  }
+  showBookmarkPopover("scid", scid, "save");
 };
 
 bookmarkNodeBtn.onclick = () => {
   const node = nodeInput.value.trim();
   if (!node) return alert("Enter node first");
-
-  const label = prompt("Label:", bookmarks.nodes[node]?.label || "");
-  if (label === null) return;
-
-  bookmarks.nodes[node] = { node, label: label || node };
-  saveBookmarks();
+  if (bookmarks.nodes[node]) {
+    showBookmarkPopover("node", node, "remove");
+    return;
+  }
+  showBookmarkPopover("node", node, "save");
 };
+
+bookmarkPopoverSave.onclick = () => {
+  if (!bookmarkTarget) return;
+  if (bookmarkTarget.mode === "remove") {
+    if (bookmarkTarget.type === "scid") {
+      delete bookmarks.scids[bookmarkTarget.value];
+    } else {
+      delete bookmarks.nodes[bookmarkTarget.value];
+    }
+    saveBookmarks();
+    pushToast("warning", "Bookmark removed");
+    hideBookmarkPopover();
+    return;
+  }
+  const label = bookmarkLabelInput.value.trim() ||
+    (bookmarkTarget.type === "scid" ? bookmarkTarget.value.slice(0, 8) : bookmarkTarget.value);
+  if (bookmarkTarget.type === "scid") {
+    bookmarks.scids[bookmarkTarget.value] = { scid: bookmarkTarget.value, label };
+  } else {
+    bookmarks.nodes[bookmarkTarget.value] = { node: bookmarkTarget.value, label };
+  }
+  saveBookmarks();
+  pushToast("connected", "Bookmark saved");
+  hideBookmarkPopover();
+};
+
+bookmarkPopoverCancel.onclick = hideBookmarkPopover;
+
+// Click backdrop to close
+bookmarkPopover.addEventListener("click", (e) => {
+  if (e.target === bookmarkPopover) hideBookmarkPopover();
+});
+
+// Enter to save, Escape to cancel
+bookmarkLabelInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); bookmarkPopoverSave.click(); }
+  if (e.key === "Escape") { e.preventDefault(); bookmarkPopoverCancel.click(); }
+});
 
 function renderBookmarks() {
   if (!bookmarkedNodesEl || !bookmarkedScidsEl) return;
@@ -474,7 +572,11 @@ function renderBookmarks() {
   if (!nodes.length) bookmarkedNodesEl.appendChild(createNoResults("No bookmarked nodes"));
   else nodes.forEach(b => bookmarkedNodesEl.appendChild(createBookmarkItem(
     b.label, b.node,
-    () => { nodeInput.value = b.node; updateBookmarkButtons(); },
+    () => {
+      nodeInput.value = b.node;
+      updateBookmarkButtons();
+      if (connectNodeBtn.textContent === "Connect") connectNodeBtn.click();
+    },
     () => { delete bookmarks.nodes[b.node]; saveBookmarks(); }
   )));
 
@@ -484,6 +586,11 @@ function renderBookmarks() {
     () => { scidInput.value = b.scid; updateBookmarkButtons(); },
     () => { delete bookmarks.scids[b.scid]; saveBookmarks(); }
   )));
+
+  // Update sidebar badge
+  const badge = document.getElementById("bookmark-badge");
+  const total = nodes.length + scids.length;
+  if (badge) badge.textContent = total > 0 ? total : "";
 }
 
 function createBookmarkItem(label, value, onLoad, onRemove) {
@@ -509,13 +616,39 @@ function createBookmarkItem(label, value, onLoad, onRemove) {
   load.textContent = "Load";
   load.onclick = onLoad;
 
+  const edit = document.createElement("button");
+  edit.className = "small";
+  edit.textContent = "✏";
+  edit.title = "Edit label";
+  edit.onclick = (e) => {
+    e.stopPropagation();
+    l.contentEditable = "true";
+    l.focus();
+    const range = document.createRange();
+    range.selectNodeContents(l);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  l.addEventListener("blur", () => {
+    l.contentEditable = "false";
+    const target = value.length === 64 ? bookmarks.scids : bookmarks.nodes;
+    if (target[value]) {
+      target[value].label = l.textContent || value.slice(0, 8);
+      saveBookmarks();
+    }
+  });
+  l.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); l.blur(); }
+  });
+
   const remove = document.createElement("button");
   remove.className = "small danger";
   remove.textContent = "Remove";
   remove.onclick = onRemove;
 
   info.append(l, v);
-  actions.append(load, remove);
+  actions.append(load, edit, remove);
   root.append(info, actions);
   return root;
 }
@@ -535,79 +668,169 @@ function initBookmarks() {
 }
 
 // ================= SETTINGS =================
+
 function saveSettings() {
-  const directLoadInput = document.getElementById("setting-direct-load");
-  if (directLoadInput) settings.directLoad = directLoadInput.checked;
-  settings.defaultNode = document.getElementById("setting-default-node").value.trim();
-  const hiddenExtInput = document.getElementById("setting-hidden-exts");
-  if (hiddenExtInput) {settings.hiddenExtensions = hiddenExtInput.value.trim();}
   localStorage.setItem("purewolf_settings", JSON.stringify(settings));
 }
 
 function loadSettings() {
   const stored = localStorage.getItem("purewolf_settings");
-  if (stored) settings = JSON.parse(stored);
+  if (stored) {
+    const parsed = JSON.parse(stored);
+    // Merge with defaults so new fields get populated even for old saves
+    settings = { ...settings, ...parsed };
+  }
 
   const defaultNodeInput = document.getElementById("setting-default-node");
-  if (defaultNodeInput && settings.defaultNode) {
-    defaultNodeInput.value = settings.defaultNode;
-  }
+  if (defaultNodeInput) defaultNodeInput.value = settings.defaultNode || "";
 
   const directLoadInput = document.getElementById("setting-direct-load");
   if (directLoadInput) directLoadInput.checked = settings.directLoad !== false;
-  
-  const hiddenExtInput = document.getElementById("setting-hidden-exts");
-  if (hiddenExtInput) {hiddenExtInput.value = settings.hiddenExtensions || "";}
+
+  const autoConnectInput = document.getElementById("setting-auto-connect");
+  if (autoConnectInput) autoConnectInput.checked = settings.autoConnect !== false;
+
+  // Tag input
+  if (window.renderTags) window.renderTags();
 }
 
-const directLoadCheckbox = document.getElementById("setting-direct-load");
-if (directLoadCheckbox) {
-  directLoadCheckbox.onchange = () => {
-    settings.directLoad = directLoadCheckbox.checked;
-    localStorage.setItem("purewolf_settings", JSON.stringify(settings));
-    console.log("[settings] directLoad saved:", settings.directLoad);
-  };
-}
-
-const saveBtn = document.getElementById("save-settings");
-if (saveBtn) {
-  saveBtn.onclick = () => {
+function initToggleSwitch(id, settingKey) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.checked = settings[settingKey] !== false;
+  el.addEventListener("change", () => {
+    settings[settingKey] = el.checked;
     saveSettings();
-    alert("Settings saved");
-  };
+    pushToast("connected", "Setting saved");
+  });
 }
 
-const resetBtn = document.getElementById("reset-settings");
-if (resetBtn) {
-  resetBtn.onclick = () => {
-  settings = {
-    autostart: false,
-    refreshInterval: 3,
-    defaultNode: "",
-    directLoad: true,
-    hiddenExtensions: ""
+function initTagInput() {
+  const container = document.getElementById("tag-input-container");
+  const list = document.getElementById("tag-list");
+  const field = document.getElementById("tag-input-field");
+  if (!container || !list || !field) return;
+
+  window.renderTags = () => {
+    list.replaceChildren();
+    const exts = window.getHiddenExtensions();
+    exts.forEach(ext => {
+      const chip = document.createElement("span");
+      chip.className = "tag-chip";
+      chip.textContent = ext;
+      const remove = document.createElement("button");
+      remove.className = "tag-remove";
+      remove.textContent = "✕";
+      remove.onclick = () => {
+        settings.hiddenExtensions = exts.filter(e => e !== ext).join(", ");
+        saveSettings();
+        window.renderTags();
+      };
+      chip.appendChild(remove);
+      list.appendChild(chip);
+    });
   };
 
-  localStorage.removeItem("purewolf_settings");
-
-  const directLoadInput = document.getElementById("setting-direct-load");
-  if (directLoadInput) {
-    directLoadInput.checked = settings.directLoad;
+  function addTag(val) {
+    const v = val.trim().toLowerCase();
+    if (!v) return;
+    const exts = window.getHiddenExtensions();
+    if (!exts.includes(v)) {
+      settings.hiddenExtensions = [...exts, v].join(", ");
+      saveSettings();
+    }
   }
 
-  const defaultNodeInput = document.getElementById("setting-default-node");
-  if (defaultNodeInput) {
-    defaultNodeInput.value = settings.defaultNode;
-  }
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addTag(field.value);
+      field.value = "";
+      window.renderTags();
+    }
+  });
 
-  const hiddenExtInput = document.getElementById("setting-hidden-exts");
-  if (hiddenExtInput) {
-    hiddenExtInput.value = settings.hiddenExtensions;
-  }
+  container.addEventListener("click", (e) => {
+    if (e.target === container) field.focus();
+  });
 
-  alert("Settings reset to defaults");
-};
+  window.renderTags();
 }
+
+function initSettingsUI() {
+  // Auto-save toggles
+  initToggleSwitch("setting-direct-load", "directLoad");
+  initToggleSwitch("setting-auto-connect", "autoConnect");
+
+  // Auto-save default node on change
+  const nodeInput = document.getElementById("setting-default-node");
+  if (nodeInput) {
+    nodeInput.addEventListener("change", () => {
+      settings.defaultNode = nodeInput.value.trim();
+      saveSettings();
+      pushToast("connected", "Setting saved");
+    });
+  }
+
+  // Tag input
+  initTagInput();
+
+  // Reset with confirmation
+  const resetBtn = document.getElementById("reset-settings-btn");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      showConfirmPopover("Reset all settings?", "This will reset every setting to its original value.", () => {
+        settings = { defaultNode: "", autoConnect: true, directLoad: true, hiddenExtensions: "" };
+        localStorage.removeItem("purewolf_settings");
+        loadSettings();
+        pushToast("connected", "Settings reset to defaults");
+      });
+    });
+  }
+}
+
+// Confirm popover
+let confirmCallback = null;
+
+function showConfirmPopover(title, message, onConfirm) {
+  const popover = document.getElementById("confirm-popover");
+  const titleEl = document.getElementById("confirm-popover-title");
+  const msgEl = document.getElementById("confirm-popover-message");
+  if (!popover || !titleEl || !msgEl) return;
+  titleEl.textContent = title;
+  msgEl.textContent = message;
+  confirmCallback = onConfirm;
+  popover.classList.remove("hidden");
+}
+
+const confirmYesBtn = document.getElementById("confirm-popover-yes");
+if (confirmYesBtn) {
+  confirmYesBtn.addEventListener("click", () => {
+    if (confirmCallback) confirmCallback();
+    document.getElementById("confirm-popover").classList.add("hidden");
+    confirmCallback = null;
+  });
+}
+
+const confirmNoBtn = document.getElementById("confirm-popover-no");
+if (confirmNoBtn) {
+  confirmNoBtn.addEventListener("click", () => {
+    document.getElementById("confirm-popover").classList.add("hidden");
+    confirmCallback = null;
+  });
+}
+
+const confirmPopover = document.getElementById("confirm-popover");
+if (confirmPopover) {
+  confirmPopover.addEventListener("click", (e) => {
+    if (e.target === confirmPopover) {
+      confirmPopover.classList.add("hidden");
+      confirmCallback = null;
+    }
+  });
+}
+
+
 
 function addCopyButtons() {
   document.querySelectorAll("pre").forEach(pre => {
@@ -725,7 +948,8 @@ function markTipSynced() {
 function resetSyncProgress() {
   syncStartHeight = null;
   chainSynced = false;
-  historicalScanComplete = false;
+  lastChainHeight = 0;
+  lastBlockTime = null;
   const syncInfo  = document.getElementById("sync-info");
   const syncBar   = document.getElementById("sync-bar");
   const syncLabel = document.getElementById("sync-label");
@@ -744,18 +968,18 @@ function resetSyncProgress() {
   if (svVersion) svVersion.textContent = "—";
   const svNetwork = document.getElementById("sv-network");
   if (svNetwork) svNetwork.textContent = "—";
+  const svTipAge = document.getElementById("sv-tip-age");
+  if (svTipAge) svTipAge.textContent = "—";
   const svUptime = document.getElementById("sv-uptime");
   if (svUptime) svUptime.textContent = "—";
   const svDifficulty = document.getElementById("sv-difficulty");
   if (svDifficulty) svDifficulty.textContent = "—";
   const svMempool = document.getElementById("sv-mempool");
   if (svMempool) svMempool.textContent = "—";
-  const svScannerLive = document.getElementById("sv-scanner-live");
-  if (svScannerLive) svScannerLive.textContent = "—";
-  const svScannerHist = document.getElementById("sv-scanner-hist");
-  if (svScannerHist) svScannerHist.textContent = "—";
-  const svScidCount = document.getElementById("sv-scid-count");
-  if (svScidCount) svScidCount.textContent = "—";
+  const svTelaCount = document.getElementById("sv-tela-count");
+  if (svTelaCount) svTelaCount.textContent = "—";
+  const svTelaStatus = document.getElementById("sv-tela-status");
+  if (svTelaStatus) svTelaStatus.textContent = "—";
 }
 
 // ================= MESSAGE LISTENER =================
@@ -766,30 +990,19 @@ RT.runtime.onMessage.addListener((msg) => {
   } else if (msg.event === "tip_synced") {
     markTipSynced();
 
-  } else if (msg.event === "scanner_status") {
-    if (msg.type === "live") {
-      const el = document.getElementById("sv-scanner-live");
-      if (el && msg.height > 0) el.textContent = msg.height.toLocaleString();
-
-    } else if (msg.type === "historical") {
-      const histEl = document.getElementById("sv-scanner-hist");
-      if (histEl && msg.progress !== undefined) {
-        if (msg.progress >= 100) {
-          historicalScanComplete = true;
-          histEl.textContent = "Complete ✓";
-        } else {
-          histEl.textContent = msg.progress + "%";
-        }
+  } else if (msg.event === "catalog_progress") {
+      const statusEl = document.getElementById("sv-tela-status");
+      if (statusEl && msg.filtered > 0 && msg.filtered < msg.total) {
+        statusEl.textContent = "Scanning: " + msg.filtered.toLocaleString() + " / " + msg.total.toLocaleString();
+      } else if (statusEl && msg.total > 0) {
+        statusEl.textContent = "All discovered";
       }
-    }
 
   } else if (msg.event === "node_unreachable") {
     const nodeStr = typeof msg.node === "string" ? msg.node.replace("http://", "") : "";
     pushToast("warning", "Node unreachable: " + nodeStr);
     if (sidebarTelaStatus) setStatus(sidebarTelaStatus, false);
     if (sidebarGnomonStatus) setStatus(sidebarGnomonStatus, false);
-    if (pageTelaStatus) setStatus(pageTelaStatus, false);
-    if (pageGnomonStatus) setStatus(pageGnomonStatus, false);
     resetSyncProgress();
 
   } else if (msg.event === "node_recovered") {
@@ -797,10 +1010,9 @@ RT.runtime.onMessage.addListener((msg) => {
     updateStatusIndicators();
 
   } else if (msg.cmd === "native_disconnect") {
+    if (sidebarNativeStatus) setStatus(sidebarNativeStatus, false);
     if (sidebarTelaStatus) setStatus(sidebarTelaStatus, false);
     if (sidebarGnomonStatus) setStatus(sidebarGnomonStatus, false);
-    if (pageTelaStatus) setStatus(pageTelaStatus, false);
-    if (pageGnomonStatus) setStatus(pageGnomonStatus, false);
     if (statusEl) pushToast("error", "Disconnected");
     resetSyncProgress();
 
