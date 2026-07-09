@@ -91,7 +91,10 @@ function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: (
       if (k) env[k.trim()] = rest.join('=').trim();
     });
     const args = argsText.split(/\s+/).filter(Boolean);
-    await window.hive.mcpSave({ ...c, env, args });
+    // Launching a server needs confirmation in a native dialog. If the user
+    // declines, nothing was saved — leave the editor open rather than pretend.
+    const res = await window.hive.mcpSave({ ...c, env, args });
+    if (!res.ok) return;
     onSaved();
   };
 

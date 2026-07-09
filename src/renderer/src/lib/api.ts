@@ -46,7 +46,7 @@ declare global {
         Promise<{ ok: boolean; error?: string; models?: string[] }>;
 
       mcpList: () => Promise<McpServerConfig[]>;
-      mcpSave: (cfg: McpServerConfig) => Promise<{ ok: boolean }>;
+      mcpSave: (cfg: McpServerConfig) => Promise<{ ok: boolean; cancelled?: boolean }>;
       mcpDelete: (id: string) => Promise<{ ok: boolean }>;
       mcpConnect: (id: string) => Promise<{ ok: boolean }>;
       mcpDisconnect: (id: string) => Promise<{ ok: boolean }>;
