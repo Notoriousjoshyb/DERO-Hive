@@ -10,15 +10,21 @@ export function SkillsPanel(): JSX.Element {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Skills</h3>
-          <p className="text-xs text-fg-muted mt-1">Reusable prompt templates invoked with slash commands.</p>
+          <p className="text-xs text-fg-muted mt-1">
+            Reusable prompt templates invoked with slash commands. Drop Agent Skills folders (SKILL.md) into the skills folder and rescan.
+          </p>
         </div>
-        <button onClick={() => setEditing({
-          id: `skill-${Date.now()}`, name: '', description: '',
-          slashCommand: '/', prompt: '', enabled: true, category: 'custom'
-        })} className="btn-primary">+ New skill</button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => void window.hive.skillOpenDir()} className="btn-secondary">Open skills folder</button>
+          <button onClick={() => { void window.hive.skillRescan().then(() => useAppStore.getState().loadSkills()); }} className="btn-secondary">Rescan</button>
+          <button onClick={() => setEditing({
+            id: `skill-${Date.now()}`, name: '', description: '',
+            slashCommand: '/', prompt: '', enabled: true, category: 'custom'
+          })} className="btn-primary">+ New skill</button>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -30,6 +36,7 @@ export function SkillsPanel(): JSX.Element {
                   <span className="font-mono text-accent text-sm">{s.slashCommand}</span>
                   <span className="font-medium">{s.name}</span>
                   {s.builtin && <span className="text-[10px] uppercase text-fg-subtle">built-in</span>}
+                  {s.category === 'user' && <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-accent-soft text-accent">folder</span>}
                   {!s.enabled && <span className="text-[10px] uppercase text-danger">disabled</span>}
                 </div>
                 <div className="text-xs text-fg-muted mt-0.5">{s.description}</div>

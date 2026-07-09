@@ -58,6 +58,8 @@ declare global {
       skillList: () => Promise<Skill[]>;
       skillSave: (s: Skill) => Promise<Skill>;
       skillDelete: (id: string) => Promise<{ ok: boolean }>;
+      skillRescan: () => Promise<Skill[]>;
+      skillOpenDir: () => Promise<{ ok: boolean; error?: string }>;
 
       projectList: () => Promise<Project[]>;
       projectSave: (p: Project) => Promise<Project>;

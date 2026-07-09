@@ -1,6 +1,9 @@
 import { app } from 'electron';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { load as parseYaml } from 'js-yaml';
+import { paths } from '../utils/paths';
+import { logger } from '../utils/logger';
 
 export interface ParsedSkill {
   name: string;
@@ -9,16 +12,28 @@ export interface ParsedSkill {
   license?: string;
 }
 
-export interface BundledSkillSeed extends ParsedSkill {
+export interface SkillSeed extends ParsedSkill {
   id: string;
   slashCommand: string;
-  category: 'DERO';
+  category: string;
+  builtin: boolean;
+  sourceDir: string;
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
+// Agent Skills spec (agentskills.io): name is lowercase kebab-case, max 64 chars,
+// and must match the directory name; description is required, max 1024 chars.
+const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const NAME_MAX = 64;
+const DESCRIPTION_MAX = 1024;
+
 export function bundledSkillsDir(): string {
   return join(app.getAppPath(), 'resources', 'skills');
+}
+
+export function userSkillsDir(): string {
+  return paths.skills;
 }
 
 export function parseSkillMarkdown(raw: string): ParsedSkill | null {
@@ -26,36 +41,39 @@ export function parseSkillMarkdown(raw: string): ParsedSkill | null {
   if (!match) return null;
 
   const [, fmBlock, body] = match;
-  const meta: Record<string, string> = {};
-  for (const line of fmBlock.split(/\r?\n/)) {
-    const m = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line);
-    if (!m) continue;
-    let value = m[2].trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    meta[m[1].toLowerCase()] = value;
+  let meta: Record<string, unknown>;
+  try {
+    const parsed = parseYaml(fmBlock);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    meta = parsed as Record<string, unknown>;
+  } catch {
+    return null;
   }
 
-  const name = meta.name;
-  if (!name || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return null;
+  const name = typeof meta.name === 'string' ? meta.name.trim() : '';
+  const description = typeof meta.description === 'string' ? meta.description.trim() : '';
+  if (!name || name.length > NAME_MAX || !NAME_RE.test(name)) return null;
+  if (!description || description.length > DESCRIPTION_MAX) return null;
 
   return {
     name,
-    description: meta.description ?? '',
-    license: meta.license,
+    description,
+    license: typeof meta.license === 'string' ? meta.license : undefined,
     prompt: body.trim()
   };
 }
 
-export function loadBundledSkills(): BundledSkillSeed[] {
-  const root = bundledSkillsDir();
+export function loadSkillsFrom(
+  root: string,
+  opts: { builtin: boolean; category: string; idPrefix: string }
+): SkillSeed[] {
   if (!existsSync(root)) return [];
 
-  const out: BundledSkillSeed[] = [];
+  const out: SkillSeed[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const skillPath = join(root, entry.name, 'SKILL.md');
+    const dir = join(root, entry.name);
+    const skillPath = join(dir, 'SKILL.md');
     if (!existsSync(skillPath)) continue;
 
     let raw: string;
@@ -66,16 +84,32 @@ export function loadBundledSkills(): BundledSkillSeed[] {
     }
 
     const parsed = parseSkillMarkdown(raw);
-    if (!parsed) continue;
-    if (parsed.name !== entry.name) continue;
+    if (!parsed) {
+      logger.warn('skills', `invalid SKILL.md skipped (needs name + description frontmatter): ${skillPath}`);
+      continue;
+    }
+    if (parsed.name !== entry.name) {
+      logger.warn('skills', `skill name "${parsed.name}" does not match directory "${entry.name}" — skipped: ${skillPath}`);
+      continue;
+    }
 
     out.push({
       ...parsed,
-      id: `bundled-${parsed.name}`,
+      id: `${opts.idPrefix}-${parsed.name}`,
       slashCommand: `/${parsed.name}`,
-      category: 'DERO'
+      category: opts.category,
+      builtin: opts.builtin,
+      sourceDir: dir
     });
   }
 
   return out;
+}
+
+export function loadBundledSkills(): SkillSeed[] {
+  return loadSkillsFrom(bundledSkillsDir(), { builtin: true, category: 'DERO', idPrefix: 'bundled' });
+}
+
+export function loadUserSkills(): SkillSeed[] {
+  return loadSkillsFrom(userSkillsDir(), { builtin: false, category: 'user', idPrefix: 'user' });
 }

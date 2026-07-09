@@ -58,6 +58,8 @@ const api = {
   skillList: () => ipcRenderer.invoke(IPC.SKILL_LIST),
   skillSave: (s: Skill) => ipcRenderer.invoke(IPC.SKILL_SAVE, s),
   skillDelete: (id: string) => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
+  skillRescan: (): Promise<Skill[]> => ipcRenderer.invoke(IPC.SKILL_RESCAN),
+  skillOpenDir: () => ipcRenderer.invoke(IPC.SKILL_OPEN_DIR),
 
   // Projects
   projectList: () => ipcRenderer.invoke(IPC.PROJECT_LIST),

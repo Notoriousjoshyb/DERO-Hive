@@ -1,9 +1,63 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
+import { existsSync } from 'node:fs';
 import { IPC, type Skill } from '@shared/types';
 import { getDb } from '../db/client';
 import { BUILTIN_SKILLS } from '@shared/defaults';
-import { loadBundledSkills } from '../skills/loader';
+import { loadBundledSkills, loadUserSkills, userSkillsDir } from '../skills/loader';
 import { logger } from '../utils/logger';
+
+/**
+ * Sync file-based skills (bundled resources/skills + drop-in userData/skills,
+ * both following the Agent Skills folder/SKILL.md standard) into the DB.
+ * Idempotent: upserts by id, preserving the user's `enabled` choice, and
+ * removes rows whose source folder has disappeared from disk.
+ */
+function syncFileSkills(): void {
+  const db = getDb();
+  const fileSkills = [...loadBundledSkills(), ...loadUserSkills()];
+
+  const upsert = db.prepare(`
+    INSERT INTO skills (id, name, description, slash_command, prompt, enabled, builtin, category, source_dir, updated_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name, description = excluded.description,
+      slash_command = excluded.slash_command, prompt = excluded.prompt,
+      builtin = excluded.builtin, category = excluded.category,
+      source_dir = excluded.source_dir, updated_at = excluded.updated_at
+  `);
+  for (const s of fileSkills) {
+    upsert.run(s.id, s.name, s.description, s.slashCommand, s.prompt, s.builtin ? 1 : 0, s.category, s.sourceDir, Date.now());
+  }
+
+  // A file-synced skill whose folder vanished is gone; one whose folder still
+  // exists but failed validation is kept as-is (only a warning was logged).
+  const rows = db.prepare('SELECT id, source_dir FROM skills WHERE source_dir IS NOT NULL').all() as Array<{ id: string; source_dir: string }>;
+  const liveIds = new Set(fileSkills.map((s) => s.id));
+  let removed = 0;
+  for (const row of rows) {
+    if (!liveIds.has(row.id) && !existsSync(row.source_dir)) {
+      db.prepare('DELETE FROM skills WHERE id = ?').run(row.id);
+      removed++;
+    }
+  }
+
+  logger.info('skills', `synced ${fileSkills.length} file-based skills${removed ? `, removed ${removed} stale` : ''}`);
+}
+
+function listSkills(): Skill[] {
+  const rows = getDb().prepare('SELECT * FROM skills ORDER BY builtin DESC, name').all() as Array<{
+    id: string; name: string; description: string; slash_command: string;
+    prompt: string; enabled: number; builtin: number; category: string | null;
+    source_dir: string | null;
+  }>;
+  return rows.map((r) => ({
+    id: r.id, name: r.name, description: r.description,
+    slashCommand: r.slash_command, prompt: r.prompt,
+    enabled: r.enabled === 1, builtin: r.builtin === 1,
+    category: r.category || undefined,
+    sourceDir: r.source_dir || undefined
+  } satisfies Skill));
+}
 
 export function registerSkillHandlers(): void {
   // Seed built-in skills on first run
@@ -19,33 +73,19 @@ export function registerSkillHandlers(): void {
     logger.info('skills', `seeded ${BUILTIN_SKILLS.length} built-in skills`);
   }
 
-  // Seed bundled skills (DERO ecosystem skills shipped in resources/skills/)
-  const bundledCount = (getDb().prepare("SELECT COUNT(*) AS c FROM skills WHERE category = 'DERO'").get() as { c: number }).c;
-  if (bundledCount === 0) {
-    const bundled = loadBundledSkills();
-    if (bundled.length > 0) {
-      const insert = getDb().prepare(`
-        INSERT INTO skills (id, name, description, slash_command, prompt, enabled, builtin, category, updated_at)
-        VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)
-      `);
-      for (const s of bundled) {
-        insert.run(s.id, s.name, s.description, s.slashCommand, s.prompt, s.category, Date.now());
-      }
-      logger.info('skills', `seeded ${bundled.length} bundled DERO skills`);
-    }
-  }
+  // Sync bundled + drop-in skill folders on every startup
+  syncFileSkills();
 
-  ipcMain.handle(IPC.SKILL_LIST, () => {
-    const rows = getDb().prepare('SELECT * FROM skills ORDER BY builtin DESC, name').all() as Array<{
-      id: string; name: string; description: string; slash_command: string;
-      prompt: string; enabled: number; builtin: number; category: string | null;
-    }>;
-    return rows.map((r) => ({
-      id: r.id, name: r.name, description: r.description,
-      slashCommand: r.slash_command, prompt: r.prompt,
-      enabled: r.enabled === 1, builtin: r.builtin === 1,
-      category: r.category || undefined
-    } satisfies Skill));
+  ipcMain.handle(IPC.SKILL_LIST, () => listSkills());
+
+  ipcMain.handle(IPC.SKILL_RESCAN, () => {
+    syncFileSkills();
+    return listSkills();
+  });
+
+  ipcMain.handle(IPC.SKILL_OPEN_DIR, async () => {
+    const error = await shell.openPath(userSkillsDir());
+    return { ok: !error, error: error || undefined };
   });
 
   ipcMain.handle(IPC.SKILL_SAVE, (_e, skill: Skill) => {

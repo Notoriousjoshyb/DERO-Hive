@@ -173,6 +173,7 @@ export interface Skill {
   enabled: boolean;
   builtin?: boolean;
   category?: string;
+  sourceDir?: string; // set for skills synced from a SKILL.md folder
 }
 
 export interface Project {
@@ -323,6 +324,8 @@ export const IPC = {
   SKILL_LIST: 'skill:list',
   SKILL_SAVE: 'skill:save',
   SKILL_DELETE: 'skill:delete',
+  SKILL_RESCAN: 'skill:rescan',
+  SKILL_OPEN_DIR: 'skill:open-dir',
 
   // Projects
   PROJECT_LIST: 'project:list',

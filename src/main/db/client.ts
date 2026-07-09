@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS skills (
   enabled INTEGER DEFAULT 1,
   builtin INTEGER DEFAULT 0,
   category TEXT,
+  source_dir TEXT,
   updated_at INTEGER NOT NULL
 );
 
@@ -138,7 +139,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifact_conv ON artifacts(conversation_id);
 `;
 
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -196,6 +197,13 @@ const MIGRATIONS: Migration[] = [
       database.exec(`ALTER TABLE conversations ADD COLUMN compaction_count INTEGER DEFAULT 0`);
       database.exec(`ALTER TABLE conversations ADD COLUMN last_compaction_at INTEGER`);
       database.exec(`ALTER TABLE conversations ADD COLUMN tokens_saved_by_compaction INTEGER DEFAULT 0`);
+    }
+  },
+  {
+    version: 6,
+    description: 'Add skills.source_dir for file-synced skills',
+    up: (database) => {
+      database.exec(`ALTER TABLE skills ADD COLUMN source_dir TEXT`);
     }
   }
 ];
