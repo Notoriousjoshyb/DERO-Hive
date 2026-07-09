@@ -1,0 +1,24 @@
+node_modules/
+out/
+release/
+dist/
+*.log
+.DS_Store
+.vscode/
+.idea/
+.env
+.env.local
+*.tsbuildinfo
+
+# Local/generated tooling state
+.claude/
+graphify-out/
+.cursorrules
+
+# Bundled MCP server build artifacts (rebuilt by scripts/setup-mcp.mjs)
+resources/mcp/*/node_modules/
+resources/mcp/*/dist/
+
+# Whisper model is downloaded on postinstall (see scripts/setup-whisper.mjs),
+# not committed — it's large (~140MB+). Binaries are kept for reproducibility.
+resources/whisper/models/*.bin
