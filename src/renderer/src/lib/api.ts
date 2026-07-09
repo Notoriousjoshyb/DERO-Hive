@@ -14,7 +14,9 @@ import type {
   Artifact,
   ToolDefinition,
   StreamEvent,
-  WhisperStatus
+  WhisperStatus,
+  SimulatorStatus,
+  SimulatorStartOptions
 } from '@shared/types';
 
 declare global {
@@ -98,6 +100,13 @@ declare global {
       whisperStop: () => Promise<WhisperStatus>;
       whisperTranscribe: (wav: string, model?: string) => Promise<{ text: string } | { error: string }>;
       onWhisperStatus: (cb: (status: WhisperStatus) => void) => () => void;
+
+      simulatorStatus: () => Promise<SimulatorStatus>;
+      simulatorStart: (opts?: SimulatorStartOptions) => Promise<SimulatorStatus>;
+      simulatorStop: () => Promise<SimulatorStatus>;
+      simulatorRestart: (opts?: SimulatorStartOptions) => Promise<SimulatorStatus>;
+      onSimulatorOutput: (cb: (e: { stream: 'stdout' | 'stderr'; data: string }) => void) => () => void;
+      onSimulatorStatus: (cb: (status: SimulatorStatus) => void) => () => void;
 
       openExternal: (url: string) => Promise<void>;
       platform: () => Promise<NodeJS.Platform>;

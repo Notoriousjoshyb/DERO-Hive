@@ -75,10 +75,11 @@ function ArtifactPreview({ artifact }: { artifact: Artifact }): JSX.Element {
       />
     );
   }
-  if (artifact.type === 'react' || artifact.type === 'mermaid') {
-    // Render React with esm.sh CDN; mermaid could be lazy loaded
-    const html = wrapReactInHtml(artifact.content);
-    return <iframe srcDoc={html} sandbox="allow-scripts" className="w-full h-full border-0 bg-white" title={artifact.title || 'preview'} />;
+  if (artifact.type === 'mermaid') {
+    return <iframe srcDoc={wrapMermaidInHtml(artifact.content)} sandbox="allow-scripts" className="w-full h-full border-0 bg-white" title={artifact.title || 'diagram'} />;
+  }
+  if (artifact.type === 'react') {
+    return <iframe srcDoc={wrapReactInHtml(artifact.content)} sandbox="allow-scripts" className="w-full h-full border-0 bg-white" title={artifact.title || 'preview'} />;
   }
   return (
     <pre className="p-4 text-xs font-mono text-fg bg-bg overflow-auto h-full">
@@ -87,28 +88,56 @@ function ArtifactPreview({ artifact }: { artifact: Artifact }): JSX.Element {
   );
 }
 
-function wrapReactInHtml(code: string): string {
+function wrapMermaidInHtml(diagram: string): string {
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui;background:white;color:#222;padding:12px;}</style>
+<html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui;background:white;color:#222;padding:12px;display:flex;justify-content:center;}</style></head>
+<body>
+<pre class="mermaid">${escapeHtml(diagram)}</pre>
 <script type="module">
-import React, { useState } from 'https://esm.sh/react@18';
-import { createRoot } from 'https://esm.sh/react-dom@18/client';
-window.React = React; window.useState = useState;
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, securityLevel: 'strict' });
 </script>
-<script type="module">
-const { useState } = window.React;
-const e = React.createElement;
-${transformReact(code)}
-const root = createRoot(document.getElementById('root'));
-root.render(e(App));
-</script>
-</head><body><div id="root"></div></body></html>`;
+</body></html>`;
 }
 
-// Naive: strip "import" lines and replace JSX-free patterns. For full safety
-// users should preview raw code via the toolbar.
+// React previews run in a sandboxed iframe: React UMD + babel-standalone
+// transpile the JSX in-browser. Requires internet access for the CDN scripts.
+function wrapReactInHtml(code: string): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui;background:white;color:#222;padding:12px;}#err{color:#b91c1c;font:12px ui-monospace,monospace;white-space:pre-wrap;}</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head><body><div id="root"></div><div id="err"></div>
+<script>
+window.addEventListener('error', (e) => { document.getElementById('err').textContent = String(e.message || e.error); });
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback, useReducer, Fragment } = React;
+${transformReact(code)}
+const __Component =
+  (typeof __export !== 'undefined' && __export) ||
+  (typeof App !== 'undefined' && App) ||
+  (typeof Component !== 'undefined' && Component) ||
+  null;
+const __root = ReactDOM.createRoot(document.getElementById('root'));
+if (__Component) __root.render(React.createElement(__Component));
+else document.getElementById('err').textContent = 'No component found — export default a component or name it App.';
+</script>
+</body></html>`;
+}
+
+// Strip module syntax so the code runs as a plain babel script: imports are
+// satisfied by the UMD globals above; the default export becomes __export.
 function transformReact(code: string): string {
   return code
-    .replace(/^import\s+.*?from\s+['"][^'"]+['"];?$/gm, '')
-    .replace(/^export\s+default\s+/m, 'const __export = ');
+    .replace(/^import\s+[^;]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
+    .replace(/^import\s+['"][^'"]+['"];?\s*$/gm, '')
+    .replace(/^export\s+default\s+function\s+(\w+)/m, 'function $1')
+    .replace(/^export\s+default\s+/m, 'const __export = ')
+    .replace(/^export\s+(const|let|var|function|class)\s+/gm, '$1 ');
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

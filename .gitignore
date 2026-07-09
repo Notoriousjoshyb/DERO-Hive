@@ -15,6 +15,10 @@ dist/
 graphify-out/
 .cursorrules
 
+# Icon preview is a throwaway artifact of resources/make-icon.cjs
+# (the real output, resources/icon.ico, is committed)
+resources/icon-preview.png
+
 # Bundled MCP server build artifacts (rebuilt by scripts/setup-mcp.mjs)
 resources/mcp/*/node_modules/
 resources/mcp/*/dist/
@@ -22,3 +26,11 @@ resources/mcp/*/dist/
 # Whisper model is downloaded on postinstall (see scripts/setup-whisper.mjs),
 # not committed — it's large (~140MB+). Binaries are kept for reproducibility.
 resources/whisper/models/*.bin
+
+# Binary MCP servers are downloaded on postinstall (see scripts/setup-mcp.mjs);
+# the manifest is platform-specific and written alongside the binary
+resources/mcp/*/bin/
+resources/mcp/*/hive-mcp.json
+
+# DERO simulator is built from DEROFDN/derohe on postinstall (see scripts/setup-simulator.mjs)
+resources/simulator/bin/

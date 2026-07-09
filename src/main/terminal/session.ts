@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { logger } from '../utils/logger';
-import { resolveAndValidate, getWorkspaceRoot } from '../utils/pathPolicy';
+import { resolveWithinAllowed } from '../utils/pathPolicy';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -16,7 +16,7 @@ function shellEscapePath(p: string): string {
 function validateTerminalCwd(cwd: string | undefined): string | undefined {
   if (!cwd) return cwd;
   try {
-    return resolveAndValidate(cwd, getWorkspaceRoot());
+    return resolveWithinAllowed(cwd);
   } catch {
     throw new Error(`Terminal cwd outside workspace: ${cwd}`);
   }

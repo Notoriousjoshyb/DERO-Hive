@@ -187,7 +187,6 @@ async function runChat(
       let currentMessages = messages;
 
       // Multi-turn tool loop. Up to 20 rounds.
-      let totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       const availableTools = tools.listTools();
 
       for (let round = 0; round < 20; round++) {
@@ -197,6 +196,7 @@ async function runChat(
         const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
         let assistantContent = '';
         let assistantReasoning = '';
+        const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         for await (const evt of adapter.stream({
           model: req.model,
@@ -220,9 +220,9 @@ async function runChat(
             toolCalls.push(...evt.toolCalls);
             send({ type: 'tool_calls', conversationId: req.conversationId, messageId: turnId, toolCalls: [] });
           } else if (evt.type === 'usage' && evt.usage) {
-            totalUsage.promptTokens += evt.usage.promptTokens;
-            totalUsage.completionTokens += evt.usage.completionTokens;
-            totalUsage.totalTokens += evt.usage.totalTokens;
+            roundUsage.promptTokens += evt.usage.promptTokens;
+            roundUsage.completionTokens += evt.usage.completionTokens;
+            roundUsage.totalTokens += evt.usage.totalTokens;
             send({ type: 'usage', conversationId: req.conversationId, messageId: turnId, usage: evt.usage });
           } else if (evt.type === 'error' && evt.error) {
             send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: evt.error });
@@ -243,13 +243,14 @@ async function runChat(
           createdAt: Date.now(),
           model: req.model,
           provider: req.providerId,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+          usage: roundUsage.totalTokens > 0 ? { ...roundUsage } : undefined
         };
         persistMessage(req.conversationId, assistantMsg);
-        updateConversationTokens(req.conversationId, totalUsage.totalTokens);
+        updateConversationTokens(req.conversationId, roundUsage.totalTokens);
 
-        // If no tool calls, we're done
-        if (toolCalls.length === 0) {
+        // If aborted mid-stream, keep the partial message but don't execute
+        // tools or start another round.
+        if (abort.signal.aborted || toolCalls.length === 0) {
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
           return;
         }
@@ -453,15 +454,16 @@ async function compactConversationInPlace(
       if ((m.role === 'tool' || m.role === 'assistant') && content && content.length > config.truncateToolOutputChars) {
         content = content.slice(0, config.truncateToolOutputChars) + `\n... [truncated during compaction]`;
       }
+      const newId = randomUUID();
       insert.run(
-        randomUUID(), conversationId, m.role as string, content,
+        newId, conversationId, m.role as string, content,
         m.reasoning as string || null, m.tool_calls as string || null,
         m.tool_call_id as string || null, m.name as string || null,
         m.model as string || null, m.provider as string || null,
         m.usage as string || null, m.error as string || null,
         m.created_at as number || now, i++
       );
-      if (typeof content === 'string') insertFts.run(content, conversationId, m.id as string);
+      if (typeof content === 'string') insertFts.run(content, conversationId, newId);
     }
 
     db.prepare(`

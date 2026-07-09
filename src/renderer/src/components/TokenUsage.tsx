@@ -3,7 +3,6 @@ import { useAppStore } from '../stores/app';
 import {
   formatTokenCount,
   pressureColor,
-  estimateTokens,
   estimateAttachmentsTokens,
   breakdownByRole,
   calculatePressure,
@@ -73,13 +72,9 @@ export function TokenUsageBar(): JSX.Element {
     };
   }, [messages, providers, selectedProviderId, selectedModel]);
 
-  if (!settings.showTokenUsage) return <></>;
-
-  // Aggregate compaction telemetry for current session/conversation
-  const sessionSavedTokens = compactionHistory.reduce((sum, e) => sum + e.tokensSaved, 0);
-  const sessionCompactions = compactionHistory.length;
-
-  // Aggregate file changes for current session (GitHub commit-style +/-)
+  // Aggregate file changes for current session (GitHub commit-style +/-).
+  // NOTE: all hooks must run before the visibility early-return below, or
+  // toggling showTokenUsage changes the hook count and crashes React.
   const fileSummary = useMemo(() => {
     const filesTouched = new Set<string>();
     let totalAdded = 0;
@@ -91,6 +86,12 @@ export function TokenUsageBar(): JSX.Element {
     }
     return { filesTouched, totalAdded, totalRemoved };
   }, [fileChanges]);
+
+  if (!settings.showTokenUsage) return <></>;
+
+  // Aggregate compaction telemetry for current session/conversation
+  const sessionSavedTokens = compactionHistory.reduce((sum, e) => sum + e.tokensSaved, 0);
+  const sessionCompactions = compactionHistory.length;
 
   return (
     <div className="flex items-center gap-3 text-[10px] text-fg-subtle font-mono">
@@ -149,7 +150,7 @@ export function ContextIndicator({ promptChars = 0 }: { promptChars?: number }):
 
   const info = useMemo(() => {
     const breakdown = breakdownByRole(messages);
-    const promptTokens = estimateTokens(promptChars.toString());
+    const promptTokens = Math.ceil(promptChars / 4);
     const attachTokens = estimateAttachmentsTokens(pendingAttachments);
     // Use the latest reported context size from the model when available
     // (avoids double-counting assistant prompt tokens across turns).

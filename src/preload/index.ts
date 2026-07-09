@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type WhisperStatus } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -123,6 +123,22 @@ const api = {
     const l = (_: IpcRendererEvent, d: WhisperStatus) => cb(d);
     ipcRenderer.on(IPC.WHISPER_STATUS_CHANGED, l);
     return () => ipcRenderer.off(IPC.WHISPER_STATUS_CHANGED, l);
+  },
+
+  // Simulator (DERO blockchain simulator)
+  simulatorStatus: () => ipcRenderer.invoke(IPC.SIMULATOR_STATUS),
+  simulatorStart: (opts?: SimulatorStartOptions) => ipcRenderer.invoke(IPC.SIMULATOR_START, opts),
+  simulatorStop: () => ipcRenderer.invoke(IPC.SIMULATOR_STOP),
+  simulatorRestart: (opts?: SimulatorStartOptions) => ipcRenderer.invoke(IPC.SIMULATOR_RESTART, opts),
+  onSimulatorOutput: (cb: (e: { stream: 'stdout' | 'stderr'; data: string }) => void) => {
+    const l = (_: IpcRendererEvent, d: { stream: 'stdout' | 'stderr'; data: string }) => cb(d);
+    ipcRenderer.on(IPC.SIMULATOR_OUTPUT, l);
+    return () => ipcRenderer.off(IPC.SIMULATOR_OUTPUT, l);
+  },
+  onSimulatorStatus: (cb: (status: SimulatorStatus) => void) => {
+    const l = (_: IpcRendererEvent, d: SimulatorStatus) => cb(d);
+    ipcRenderer.on(IPC.SIMULATOR_STATUS_CHANGED, l);
+    return () => ipcRenderer.off(IPC.SIMULATOR_STATUS_CHANGED, l);
   },
 
   // Window

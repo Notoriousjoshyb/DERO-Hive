@@ -127,11 +127,12 @@ export function Message({ message }: Props): JSX.Element {
                 </a>
               ),
               pre: ({ children }) => {
-                const codeChild = (children as { props?: { className?: string; children?: string } }[])?.[0]?.props
-                  ?? (children as { props?: { className?: string; children?: string } })?.props;
+                const codeChild = (children as { props?: { className?: string; children?: React.ReactNode } }[])?.[0]?.props
+                  ?? (children as { props?: { className?: string; children?: React.ReactNode } })?.props;
                 const lang = (codeChild?.className || '').replace('language-', '') || 'text';
-                const text = codeChild?.children || '';
-                return <CodeBlock language={lang} code={typeof text === 'string' ? text : ''} />;
+                // With rehype-highlight the code's children are element arrays,
+                // not a plain string — extract text recursively.
+                return <CodeBlock language={lang} code={reactNodeToText(codeChild?.children)} />;
               }
             }}
           >
@@ -219,6 +220,16 @@ function RevertIcon(): JSX.Element {
       <path d="M2 6h8M5 3L2 6l3 3" />
     </svg>
   );
+}
+
+function reactNodeToText(node: React.ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(reactNodeToText).join('');
+  if (typeof node === 'object' && 'props' in node) {
+    return reactNodeToText((node as { props: { children?: React.ReactNode } }).props.children);
+  }
+  return '';
 }
 
 function messageContentToText(content: Msg['content']): string {

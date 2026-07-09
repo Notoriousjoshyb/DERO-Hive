@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../stores/app';
+import { SimulatorPanel } from './SimulatorPanel';
 import type { Conversation, Project, Message } from '@shared/types';
 
 export function Sidebar(): JSX.Element {
@@ -303,6 +304,7 @@ export function Sidebar(): JSX.Element {
       </div>
 
       {/* Footer */}
+      <SimulatorPanel />
       <div className="border-t border-border p-3">
         <button
           onClick={() => setSettingsOpen(true)}

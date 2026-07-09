@@ -162,11 +162,13 @@ export class AnthropicAdapter implements ProviderAdapter {
           toolAcc.delete(String(data.index));
         }
       } else if (type === 'message_delta') {
+        // message_delta usage carries output_tokens only — merge so we keep
+        // the input_tokens reported in message_start.
         const u = (data as { usage?: typeof usage }).usage;
-        if (u) usage = u;
+        if (u) usage = { ...usage, ...u };
       } else if (type === 'message_start') {
         const m = data.message as { usage?: typeof usage };
-        if (m?.usage) usage = m.usage;
+        if (m?.usage) usage = { ...usage, ...m.usage };
       } else if (type === 'error') {
         const e = data.error as { message?: string };
         yield { type: 'error', error: e.message || JSON.stringify(data) };

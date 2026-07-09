@@ -38,6 +38,18 @@ import {
   traceTransactionWithContext,
   traceTransactionWithContextInputSchema,
 } from './composites/trace-transaction-with-context.js'
+import { capRawScVariables } from './composites/_shared.js'
+import { telaInspect, telaInspectInputSchema } from './composites/tela-inspect.js'
+import {
+  telaGetDocContent,
+  telaGetDocContentInputSchema,
+} from './composites/tela-get-doc-content.js'
+import {
+  deroDurlToScid,
+  deroDurlToScidInputSchema,
+  deroTelaListApps,
+  deroTelaListAppsInputSchema,
+} from './composites/tela-discovery.js'
 
 const scRpcArgSchema = z.object({
   name: z.string(),
@@ -55,14 +67,14 @@ const deroAddressSchema = z
 
 const NAME_REGISTRY_SCID = '0000000000000000000000000000000000000000000000000000000000000001'
 
-const DERO_RESOURCE_URIS = [
+export const DERO_RESOURCE_URIS = [
   'dero://mcp/server-info',
   'dero://mcp/safety-boundary',
   'dero://mcp/example-flows',
   'dero://mcp/composites',
 ] as const
 
-const DERO_PROMPT_NAMES = [
+export const DERO_PROMPT_NAMES = [
   'network_health_check',
   'inspect_smart_contract',
   'trace_transaction',
@@ -239,16 +251,23 @@ function classifyToolError(error: unknown): StructuredToolError {
 function toolError(tool: string, error: unknown) {
   const structured = classifyToolError(error)
   const raw = error instanceof Error ? error.message : String(error)
-  return toolText({
-    ok: false,
-    tool,
-    _meta: {
-      error: {
-        ...structured,
-        raw,
+  // `isError: true` flags the failure at the protocol level so MCP hosts and
+  // agent frameworks that branch on the flag (before parsing content) see the
+  // call as failed. The ok:false/_meta.error JSON body is unchanged and
+  // remains the source of the structured error code/hint.
+  return {
+    ...toolText({
+      ok: false,
+      tool,
+      _meta: {
+        error: {
+          ...structured,
+          raw,
+        },
       },
-    },
-  })
+    }),
+    isError: true as const,
+  }
 }
 
 function withStructuredErrors<TArgs extends Record<string, unknown> | undefined>(
@@ -303,7 +322,7 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
     deroJsonRpc<T>(endpoint, method, params)
   const server = new McpServer({
     name: 'dero-daemon-mcp',
-    version: '0.4.1',
+    version: '0.4.8',
   })
 
   server.registerTool(
@@ -535,6 +554,11 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
       }
       if (topoheight !== undefined) params.topoheight = topoheight
       const result = (await rpc<Record<string, unknown>>('DERO.GetSC', params)) ?? {}
+      // Large registries (e.g. the name service's 22k+ stringkeys) would
+      // overflow host token limits if returned verbatim; cap the raw maps and
+      // mark what was elided. See capRawScVariables / SURFACE_KEY_CAP.
+      capRawScVariables(result, 'stringkeys')
+      capRawScVariables(result, 'uint64keys')
       const related_docs = relatedDocsFor('dero_get_sc')
       return { ...result, ...(related_docs ? { related_docs } : {}) }
     }),
@@ -702,10 +726,18 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
         product: deroDocProductSchema
           .optional()
           .describe('Optional product scope to disambiguate duplicate slugs'),
+        offset: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe(
+            'Byte offset into the page plaintext. Use 0 (or omit) for the first chunk; pass next_offset from a prior response to continue reading a long page.',
+          ),
       },
     }),
-    withStructuredErrors('dero_docs_get_page', async ({ slug, product }) =>
-      getDeroDocPage({ slug, product })),
+    withStructuredErrors('dero_docs_get_page', async ({ slug, product, offset }) =>
+      getDeroDocPage({ slug, product, offset })),
   )
 
   server.registerTool(
@@ -761,6 +793,42 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
     withStructuredErrors('explain_smart_contract', async (args) =>
       explainSmartContract(rpc, args),
     ),
+  )
+
+  server.registerTool(
+    'tela_inspect',
+    readOnly({
+      description: TOOL_DESCRIPTIONS.tela_inspect,
+      inputSchema: telaInspectInputSchema,
+    }),
+    withStructuredErrors('tela_inspect', async (args) => telaInspect(rpc, args)),
+  )
+
+  server.registerTool(
+    'tela_get_doc_content',
+    readOnly({
+      description: TOOL_DESCRIPTIONS.tela_get_doc_content,
+      inputSchema: telaGetDocContentInputSchema,
+    }),
+    withStructuredErrors('tela_get_doc_content', async (args) => telaGetDocContent(rpc, args)),
+  )
+
+  server.registerTool(
+    'dero_durl_to_scid',
+    readOnly({
+      description: TOOL_DESCRIPTIONS.dero_durl_to_scid,
+      inputSchema: deroDurlToScidInputSchema,
+    }),
+    withStructuredErrors('dero_durl_to_scid', async (args) => deroDurlToScid(rpc, args)),
+  )
+
+  server.registerTool(
+    'dero_tela_list_apps',
+    readOnly({
+      description: TOOL_DESCRIPTIONS.dero_tela_list_apps,
+      inputSchema: deroTelaListAppsInputSchema,
+    }),
+    withStructuredErrors('dero_tela_list_apps', async (args) => deroTelaListApps(rpc, args)),
   )
 
   server.registerTool(
@@ -829,7 +897,7 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
           text: JSON.stringify(
             {
               name: 'dero-daemon-mcp',
-              version: '0.4.1',
+              version: '0.4.8',
               mode: 'read-only',
               endpoint: endpoint,
               docs_products: DERO_DOC_PRODUCTS,
@@ -934,7 +1002,7 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
     'dero_mcp_composites',
     'dero://mcp/composites',
     {
-      description: 'Catalog of the 5 composite tools — what each replaces, when to call it, what it returns, and which structured _meta.error codes it can emit. Read this when picking between a composite and a primitive.',
+      description: 'Catalog of the 11 composite tools — what each replaces, when to call it, what it returns, and which structured _meta.error codes it can emit. Read this when picking between a composite and a primitive.',
       mimeType: 'application/json',
     },
     async (uri) => ({
@@ -960,7 +1028,7 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
                   replaces: ['dero_get_sc + manual parsing + dero_docs_search'],
                   when_to_call: 'User wants to UNDERSTAND a contract (functions, state shape, what DVM concept to read about). NOT for raw variable inspection — use dero_get_sc for that.',
                   inputs: { scid: '64-char hex SCID', topoheight: 'optional number' },
-                  output_highlights: ['kind (token | registry | minimal | generic)', 'surface (functions, stringkeys, uint64keys, balances)', 'narrative', '1-4 curated DVM docs citations re-ranked for the contract pattern'],
+                  output_highlights: ['kind (tela_index | tela_doc | token | registry | minimal | generic)', 'surface (functions, stringkeys, uint64keys, balances)', 'narrative', '1-4 curated docs citations re-ranked for the contract pattern (TELA contracts cite the TELA spec)'],
                   error_codes: ['RPC_UNREACHABLE', 'RPC_INVALID_PARAMS'],
                 },
                 {
@@ -988,6 +1056,56 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
                   scope_note: 'SC invocation arg decoding is NOT performed (would require the binary tx codec). SC INSTALL surface extraction IS performed inline because the source is embedded in the tx record.',
                   error_codes: ['TX_NOT_FOUND (retryable=true; daemon returns empty record on unknown hashes)', 'RPC_UNREACHABLE'],
                 },
+                {
+                  name: 'audit_chain_artifact_claim',
+                  replaces: ['dero_get_info / dero_get_last_block_header / dero_decode_proof_string + manual claim verification'],
+                  when_to_call: 'User asks to verify a chain-related claim end-to-end (e.g. the 2022 inflation claim) with cited daemon state and docs.',
+                  inputs: { claim: 'claim text', include_forge_demo: 'optional boolean' },
+                  output_highlights: ['verdict', 'cited daemon state', 'optional forged demo proof', 'related_docs'],
+                  error_codes: ['INVALID_INPUT', 'RPC_UNREACHABLE'],
+                },
+                {
+                  name: 'dero_forge_demo_proof',
+                  replaces: ['manual bn254 + CBOR + bech32 proof-string construction'],
+                  when_to_call: 'Generate a demo (display-layer) deroproof string for testing/teaching; never broadcasts or touches a wallet.',
+                  inputs: { target_amount: 'optional', tx_hex: 'optional (max 100k)' },
+                  output_highlights: ['forged_proof_string', 'self_check (verified)', 'context_note', 'related_docs'],
+                  error_codes: ['INVALID_INPUT'],
+                },
+                {
+                  name: 'tela_inspect',
+                  replaces: ['dero_get_sc + manual TELA-INDEX-1/DOC-1 schema parsing'],
+                  when_to_call: 'User references a TELA SCID or .tela app: "what is this TELA contract/app", "what files does it have", "is it an INDEX or DOC". Auto-detects the standard; reads RAW stringkeys so all DOCn enumerate (bypasses the 50-key surface cap).',
+                  inputs: { scid: '64-char hex SCID', topoheight: 'optional number' },
+                  output_highlights: ['kind (tela_index | tela_doc | not_tela)', 'index { name, durl, mods[], docs[], commit, version_history[] } | doc { filename, doc_type, signature, content_embedded }', 'narrative', 'related_docs'],
+                  scope_note: 'Updateability/ringsize is NOT in DERO.GetSC, so it is honestly reported as unknown. not_tela is a SUCCESS (not an error) for non-TELA SCIDs.',
+                  error_codes: ['RPC_UNREACHABLE', 'RPC_INVALID_PARAMS'],
+                },
+                {
+                  name: 'tela_get_doc_content',
+                  replaces: ['dero_get_sc + manual comment-block extraction from the contract code'],
+                  when_to_call: 'User wants the actual file content (HTML/CSS/JS) a TELA-DOC-1 stores. Get DOC SCIDs from tela_inspect on an INDEX first.',
+                  inputs: { scid: '64-char hex DOC SCID', offset: 'optional number (paginate large files)', topoheight: 'optional number' },
+                  output_highlights: ['content (60k-char chunk; paginate via next_offset; .gz transparently decompressed)', 'filename, doc_type, sub_dir', 'compressed/decompressed flags', 'signature (presence only, not verified)', 'related_docs'],
+                  error_codes: ['INVALID_INPUT (SCID is not a TELA-DOC-1; hint points to tela_inspect)', 'RPC_UNREACHABLE'],
+                },
+                {
+                  name: 'dero_durl_to_scid',
+                  replaces: ['running a separate Gnomon indexer to resolve a dURL to a SCID'],
+                  when_to_call: 'User asks "what is the SCID for vault.tela" or gives a .tela dURL. For a registered NAME like "quickbrownfox" (no dot) use dero_name_to_address instead.',
+                  inputs: { durl: 'TELA dURL e.g. "vault.tela" or "dero://feed.tela"' },
+                  output_highlights: ['scid + primary { durl, name, install_height, doc_count }', 'collision + other_candidates[] when a dURL is non-unique (newest = primary)', 'found:false + hint on miss'],
+                  scope_note: 'First call runs a ~10s in-process discovery scan of the newest chain contracts (cached after). dURLs are NOT unique — newest is primary, others disclosed.',
+                  error_codes: ['RPC_UNREACHABLE'],
+                },
+                {
+                  name: 'dero_tela_list_apps',
+                  replaces: ['running a separate Gnomon indexer to browse TELA apps'],
+                  when_to_call: 'User wants to explore/search what TELA apps exist on-chain, or find a SCID without knowing the exact dURL.',
+                  inputs: { query: 'optional case-insensitive filter on durl/name', limit: 'optional number, default 50, max 200' },
+                  output_highlights: ['apps[] { scid, durl, name, install_height, doc_count }', 'index_meta (apps_indexed, scanned_scids, registry_total, newest_height) for coverage transparency'],
+                  error_codes: ['RPC_UNREACHABLE'],
+                },
               ],
             },
             null,
@@ -1003,7 +1121,10 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
     {
       description: 'Guide the model through a DERO daemon sync and health check using the diagnose_chain_health composite.',
       argsSchema: {
-        reference_topoheight: z
+        // MCP prompt arguments arrive as strings (the SDK validates raw
+        // string values against this schema with no coercion), so a plain
+        // z.number() can never validate. Coerce the string to a number here.
+        reference_topoheight: z.coerce
           .number()
           .int()
           .positive()
@@ -1137,7 +1258,9 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
       description: 'Run gas pre-flight for a DVM-BASIC contract source via the estimate_deploy_cost composite (numeric estimate + plain-text breakdown + parsed surface).',
       argsSchema: {
         sc_source: z.string().min(20, 'Provide DVM-BASIC contract source (at minimum: a Function/End Function block)'),
-        include_breakdown: z.boolean().optional(),
+        // Prompt arguments are always strings, so a z.boolean() can never
+        // validate. Accept the string 'true' | 'false' and interpret below.
+        include_breakdown: z.enum(['true', 'false']).optional(),
       },
     },
     async ({ sc_source, include_breakdown }) => ({
@@ -1150,7 +1273,7 @@ export function createDeroMcpServer(daemonBaseUrl: string): McpServer {
             text: [
               'Run a deploy pre-flight (gas estimate) for the DVM-BASIC source the user supplied. This is read-only; nothing is submitted to chain.',
               '',
-              `1) Call estimate_deploy_cost with the contract source as sc${include_breakdown === false ? ' and include_breakdown=false (caller does NOT want the plain-text gas notes)' : ' (include_breakdown defaults to true)'}.`,
+              `1) Call estimate_deploy_cost with the contract source as sc${include_breakdown === 'false' ? ' and include_breakdown=false (caller does NOT want the plain-text gas notes)' : ' (include_breakdown defaults to true)'}.`,
               '2) Quote estimate.gascompute, estimate.gasstorage, estimate.total, and the daemon\'s status string.',
               '3) If include_breakdown is true, read the breakdown.compute_note and breakdown.storage_note as plain-language explanations.',
               '4) Quote the parsed function surface (functions[].name) so the user can sanity-check the contract.',

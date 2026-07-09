@@ -141,13 +141,17 @@ export function registerConvHandlers(): void {
 
   ipcMain.handle(IPC.CONV_SEARCH, (_e, q: string) => {
     if (!q.trim()) return [];
+    // Quote each term so FTS5 operators/punctuation in user input ("-", '"',
+    // parens…) can't cause a MATCH syntax error; last term is a prefix match.
+    const terms = q.trim().split(/\s+/).map((t) => `"${t.replace(/"/g, '""')}"`);
+    const match = terms.map((t, i) => (i === terms.length - 1 ? `${t}*` : t)).join(' ');
     const rows = getDb().prepare(`
       SELECT m.conversation_id, m.id AS message_id, m.role, snippet(messages_fts, 0, '<mark>', '</mark>', '…', 12) AS snippet
       FROM messages_fts
       JOIN messages m ON m.id = messages_fts.message_id
       WHERE messages_fts MATCH ?
       ORDER BY rank LIMIT 100
-    `).all(q + '*') as Array<{ conversation_id: string; message_id: string; role: string; snippet: string }>;
+    `).all(match) as Array<{ conversation_id: string; message_id: string; role: string; snippet: string }>;
     return rows.map((r) => ({
       conversationId: r.conversation_id,
       messageId: r.message_id,
@@ -300,15 +304,16 @@ export function registerConvHandlers(): void {
         if ((m.role === 'tool' || m.role === 'assistant') && content && content.length > config.truncateToolOutputChars) {
           content = content.slice(0, config.truncateToolOutputChars) + `\n... [truncated to ${config.truncateToolOutputChars} chars during compaction]`;
         }
+        const newId = randomUUID();
         insert.run(
-          randomUUID(), conversationId, m.role as string, content,
+          newId, conversationId, m.role as string, content,
           m.reasoning as string || null, m.tool_calls as string || null,
           m.tool_call_id as string || null, m.name as string || null,
           m.model as string || null, m.provider as string || null,
           m.usage as string || null, m.error as string || null,
           m.created_at as number || now, i++
         );
-        if (typeof content === 'string') insertFts.run(content, conversationId, m.id as string);
+        if (typeof content === 'string') insertFts.run(content, conversationId, newId);
       }
 
 // Update conversation metadata with telemetry

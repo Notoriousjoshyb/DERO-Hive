@@ -62,18 +62,30 @@ export class ToolRegistry extends EventEmitter {
       catch (err) { return { content: `Error: ${err instanceof Error ? err.message : String(err)}`, isError: true }; }
     }
 
-    // MCP
-    if (name.startsWith('mcp:')) {
-      const [, serverId, ...rest] = name.split(':');
-      const toolName = rest.join(':');
-      try {
-        const result = await this.mcpManager!.callTool(serverId, toolName, args);
-        const content = Array.isArray(result.content)
-          ? (result.content as Array<{ type: string; text?: string }>).map((c) => c.text || JSON.stringify(c)).join('\n')
-          : String(result.content);
-        return { content, isError: result.isError };
-      } catch (err) {
-        return { content: `MCP tool error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    // MCP — models call MCP tools by their raw advertised name, so resolve the
+    // owning server from the tool definition's source. Also accept the
+    // explicit "mcp:<serverId>:<tool>" form.
+    if (this.mcpManager) {
+      let serverId: string | undefined;
+      let toolName = name;
+      if (name.startsWith('mcp:')) {
+        const [, sid, ...rest] = name.split(':');
+        serverId = sid;
+        toolName = rest.join(':');
+      } else {
+        const def = this.mcpManager.getAllTools().find((t) => t.name === name);
+        if (def?.source?.startsWith('mcp:')) serverId = def.source.slice(4);
+      }
+      if (serverId) {
+        try {
+          const result = await this.mcpManager.callTool(serverId, toolName, args);
+          const content = Array.isArray(result.content)
+            ? (result.content as Array<{ type: string; text?: string }>).map((c) => c.text || JSON.stringify(c)).join('\n')
+            : String(result.content);
+          return { content, isError: result.isError };
+        } catch (err) {
+          return { content: `MCP tool error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+        }
       }
     }
 

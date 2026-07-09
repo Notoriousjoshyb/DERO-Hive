@@ -128,6 +128,10 @@ interface AppState {
   pendingPermissions: PendingPermission[];
   addPendingPermission: (p: PendingPermission) => void;
   removePendingPermission: (requestId: string) => void;
+  // Session-only "don't ask again" — auto-allows tool calls until the app
+  // restarts, without touching the persisted toolApprovalMode setting.
+  sessionAutoAllowTools: boolean;
+  setSessionAutoAllowTools: (v: boolean) => void;
 
   // MCP
   mcpStatuses: McpServerStatus[];
@@ -399,6 +403,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   addPendingPermission: (p) => set((s) => ({ pendingPermissions: [...s.pendingPermissions, p] })),
   removePendingPermission: (requestId) =>
     set((s) => ({ pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== requestId) })),
+  sessionAutoAllowTools: false,
+  setSessionAutoAllowTools: (v) => set({ sessionAutoAllowTools: v }),
 
   mcpStatuses: [],
   loadMcpStatuses: async () => {

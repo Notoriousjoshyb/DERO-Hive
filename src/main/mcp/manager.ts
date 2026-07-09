@@ -44,6 +44,35 @@ export class McpManager extends EventEmitter {
     for (const name of readdirSync(mcpDir)) {
       const serverDir = join(mcpDir, name);
       if (!statSync(serverDir).isDirectory()) continue;
+
+      // Binary bundled server: described by a hive-mcp.json manifest
+      // (written by scripts/setup-mcp.mjs) pointing at a native executable.
+      const manifestPath = join(serverDir, 'hive-mcp.json');
+      if (statSync(manifestPath, { throwIfNoEntry: false })?.isFile()) {
+        try {
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { name?: string; command?: string; args?: string[] };
+          const mcpName = manifest.name || name;
+          const binPath = manifest.command ? join(serverDir, manifest.command) : '';
+          if (!binPath || !statSync(binPath, { throwIfNoEntry: false })?.isFile()) {
+            logger.warn('mcp', `bundled server ${mcpName} missing binary: ${binPath || '(no command in manifest)'}`);
+            continue;
+          }
+          await this.registerBundled({
+            id: `bundled-${sanitizeId(mcpName)}`,
+            name: mcpName,
+            enabled: true,
+            command: binPath,
+            args: manifest.args || [],
+            cwd: serverDir,
+            timeoutMs: 30_000,
+            trust: true
+          }, []);
+        } catch (err) {
+          logger.warn('mcp', `invalid manifest for bundled server ${name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        continue;
+      }
+
       const pkgPath = join(serverDir, 'package.json');
       if (!statSync(pkgPath, { throwIfNoEntry: false })?.isFile()) continue;
 
@@ -54,32 +83,69 @@ export class McpManager extends EventEmitter {
         continue;
       }
 
-      const mcpName = (pkg.mcpName as string) || (pkg.name as string) || name;
-      const id = `bundled-${mcpName.replace(/[^a-zA-Z0-9_.-]/g, '-')}`;
-      const existing = getDb().prepare('SELECT id FROM mcp_servers WHERE id = ?').get(id) as { id: string } | undefined;
-      if (existing) continue;
+      // Display under the plain package name; earlier versions registered
+      // under the MCP-registry mcpName (e.g. "io.github.DHEBP/dero-mcp-server"),
+      // which reads poorly in the UI — drop those legacy rows.
+      const pkgName = (pkg.name as string) || name;
+      const legacyIds: string[] = [];
+      if (typeof pkg.mcpName === 'string' && pkg.mcpName && pkg.mcpName !== pkgName) {
+        legacyIds.push(`bundled-${sanitizeId(pkg.mcpName)}`);
+      }
 
       const mainEntry = (pkg.main as string) || './dist/index.js';
       const entryFile = mainEntry.startsWith('./') ? mainEntry.slice(2) : mainEntry;
       const entryPath = join(serverDir, entryFile);
       if (!statSync(entryPath, { throwIfNoEntry: false })?.isFile()) {
-        logger.warn('mcp', `bundled server ${mcpName} missing entry: ${entryPath}`);
+        logger.warn('mcp', `bundled server ${pkgName} missing entry: ${entryPath}`);
         continue;
       }
 
-      const cfg: McpServerConfig = {
-        id,
-        name: mcpName,
+      await this.registerBundled({
+        id: `bundled-${sanitizeId(pkgName)}`,
+        name: pkgName,
         enabled: true,
         command: process.execPath,
         args: [entryPath],
         cwd: serverDir,
         timeoutMs: 30_000,
-        trust: true
-      };
+        trust: true,
+        // Without this the child boots as a second Electron app instead of
+        // Node running the server script, and the MCP handshake never happens.
+        env: { ELECTRON_RUN_AS_NODE: '1' }
+      }, legacyIds);
+    }
+  }
 
+  /**
+   * Insert a bundled server registration, or refresh an existing one whose
+   * command/args/cwd/env drifted (paths move between dev and packaged
+   * installs). Preserves the user's enabled/trust choices on update and
+   * removes superseded legacy registrations.
+   */
+  private async registerBundled(cfg: McpServerConfig, legacyIds: string[]): Promise<void> {
+    for (const legacyId of legacyIds) {
+      const legacy = getDb().prepare('SELECT id FROM mcp_servers WHERE id = ?').get(legacyId) as { id: string } | undefined;
+      if (legacy) {
+        await this.deleteConfig(legacyId);
+        logger.info('mcp', `removed legacy bundled registration ${legacyId}`);
+      }
+    }
+
+    const row = getDb().prepare('SELECT * FROM mcp_servers WHERE id = ?').get(cfg.id) as Record<string, unknown> | undefined;
+    if (!row) {
       await this.saveConfig(cfg);
-      logger.info('mcp', `registered bundled server ${mcpName} (${id})`);
+      logger.info('mcp', `registered bundled server ${cfg.name} (${cfg.id})`);
+      return;
+    }
+
+    const cur = rowToConfig(row);
+    const drifted = cur.command !== cfg.command
+      || JSON.stringify(cur.args || []) !== JSON.stringify(cfg.args || [])
+      || cur.cwd !== cfg.cwd
+      || JSON.stringify(cur.env || {}) !== JSON.stringify(cfg.env || {});
+    if (drifted) {
+      await this.saveConfig({ ...cfg, enabled: cur.enabled, trust: cur.trust });
+      logger.info('mcp', `refreshed bundled server ${cfg.name} (${cfg.id})`);
     }
   }
 
@@ -217,6 +283,7 @@ export class McpManager extends EventEmitter {
       transport.onerror = (err) => logger.warn('mcp', `${cfg.name} transport error: ${err instanceof Error ? err.message : String(err)}`);
 
       logger.info('mcp', `connected ${cfg.name} (${instance.tools.length} tools, ${instance.resources.length} resources, ${instance.prompts.length} prompts)`);
+      this.emitChange();
     } catch (err) {
       instance.status = 'error';
       instance.error = err instanceof Error ? err.message : String(err);
@@ -227,12 +294,16 @@ export class McpManager extends EventEmitter {
   }
 
   async disconnect(id: string): Promise<void> {
-    const inst = this.servers.get(id);
-    if (!inst) return;
     const timer = this.pendingReconnects.get(id);
     if (timer) { clearTimeout(timer); this.pendingReconnects.delete(id); }
+    const inst = this.servers.get(id);
+    if (!inst) return;
+    // Intentional disconnect — detach the auto-reconnect handler so closing
+    // the transport doesn't schedule a reconnect that resurrects the server.
+    inst.transport.onclose = undefined;
     try { await inst.transport.close(); } catch { /* ignore */ }
     this.servers.delete(id);
+    this.emitChange();
   }
 
   async shutdownAll(): Promise<void> {
@@ -310,4 +381,8 @@ function rowToConfig(row: Record<string, unknown>): McpServerConfig {
 function safeJson<T>(s: string | null | undefined, fallback: T): T {
   if (!s) return fallback;
   try { return JSON.parse(s) as T; } catch { return fallback; }
+}
+
+function sanitizeId(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_.-]/g, '-');
 }

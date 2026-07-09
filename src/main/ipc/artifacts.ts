@@ -4,7 +4,29 @@ import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client';
 
 export function registerArtifactHandlers(): void {
+  // One-time cleanup: earlier builds re-inserted the same artifact every time a
+  // conversation was opened. Keep the oldest row per (message, type, content).
+  try {
+    getDb().prepare(`
+      DELETE FROM artifacts WHERE id NOT IN (
+        SELECT id FROM artifacts a
+        WHERE a.created_at = (
+          SELECT MIN(b.created_at) FROM artifacts b
+          WHERE b.message_id = a.message_id AND b.type = a.type AND b.content = a.content
+        )
+        GROUP BY a.message_id, a.type, a.content
+      )
+    `).run();
+  } catch { /* best-effort */ }
+
   ipcMain.handle(IPC.ARTIFACT_SAVE, (_e, a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) => {
+    // Idempotent: re-rendering a message re-extracts its artifacts, so an
+    // identical artifact for the same message returns the existing row.
+    const existing = getDb().prepare(
+      'SELECT id FROM artifacts WHERE message_id = ? AND type = ? AND content = ?'
+    ).get(a.messageId, a.type, a.content) as { id: string } | undefined;
+    if (existing) return { id: existing.id };
+
     const id = randomUUID();
     getDb().prepare(`
       INSERT INTO artifacts (id, conversation_id, message_id, type, language, title, content, created_at)

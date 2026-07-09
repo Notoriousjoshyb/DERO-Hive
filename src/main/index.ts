@@ -17,12 +17,14 @@ import { registerToolHandlers } from './ipc/tools';
 import { registerGithubHandlers } from './ipc/github';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerWhisperHandlers } from './ipc/whisper';
+import { registerSimulatorHandlers } from './ipc/simulator';
 import { initDb, closeDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
 import { ensureDirs } from './utils/paths';
 import { McpManager } from './mcp/manager';
 import { WhisperManager } from './whisper/manager';
+import { SimulatorManager } from './simulator/manager';
 import { terminalDisposeAll } from './terminal/session';
 import type { AppSettings } from '../shared/types';
 
@@ -31,6 +33,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let mcpManager: McpManager | null = null;
 let whisperManager: WhisperManager | null = null;
+let simulatorManager: SimulatorManager | null = null;
 
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -235,6 +238,11 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send(IPC.WHISPER_STATUS_CHANGED, status);
   });
 
+  // Init DERO blockchain simulator manager. Pushes status changes to the renderer.
+  simulatorManager = new SimulatorManager((status) => {
+    mainWindow?.webContents.send(IPC.SIMULATOR_STATUS_CHANGED, status);
+  });
+
   // Register IPC handlers
   registerChatHandlers(() => mainWindow, mcpManager);
   registerProviderHandlers();
@@ -250,6 +258,7 @@ app.whenReady().then(async () => {
   registerGithubHandlers();
   registerProjectHandlers();
   registerWhisperHandlers(whisperManager);
+  registerSimulatorHandlers(simulatorManager);
 
   // Window controls (custom titlebar)
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
@@ -291,6 +300,7 @@ app.on('before-quit', async (event) => {
   isQuitting = true;
   event.preventDefault();
   try { terminalDisposeAll(); } catch { /* ignore */ }
+  try { await simulatorManager?.stop(); } catch { /* ignore */ }
   try { await whisperManager?.stop(); } catch { /* ignore */ }
   try { await mcpManager?.shutdownAll(); } catch { /* ignore */ }
   closeDb();

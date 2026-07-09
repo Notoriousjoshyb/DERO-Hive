@@ -126,14 +126,15 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       if (skill) { prompt = `${skill.prompt}\n\n${rest}`; skillName = skill.name; }
     }
 
-    // Run shell command prefixed with !cmd
-    const shellMatch = content.match(/^!(\S+)\s*([\s\S]*)/);
+    // Run shell command prefixed with !cmd — the whole line after "!" is the command
+    const shellMatch = content.match(/^!(\S[\s\S]*)/);
     if (shellMatch) {
+      const shellCmd = shellMatch[1].trim();
       try {
-        const r = await window.hive.shellRun(shellMatch[1]);
+        const r = await window.hive.shellRun(shellCmd);
         const out = (r.ok ? r.stdout : r.error || r.stderr) || '(no output)';
         extractedText = out;
-        prompt = `Shell command output for "${shellMatch[1]}":\n${out}\n\nExplain what this output shows.`;
+        prompt = `Shell command output for "${shellCmd}":\n${out}\n\nExplain what this output shows.`;
       } catch (err) {
         prompt = `Shell command failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -156,7 +157,13 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
         projectId
       });
     } else {
-      await useAppStore.getState().updateConversation(convId, { title: content.slice(0, 60) });
+      // Only auto-title untouched conversations — never clobber a name the
+      // user chose (or one already derived from the first message).
+      const conv = useAppStore.getState().conversations.find((c) => c.id === convId);
+      const isDefaultTitle = !conv?.title || conv.title === 'New chat' || conv.title === 'New conversation';
+      if (isDefaultTitle) {
+        await useAppStore.getState().updateConversation(convId, { title: content.slice(0, 60) });
+      }
     }
 
     const userMsg = {
@@ -177,7 +184,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     void extractedText;
 
     useAppStore.setState((s) => ({ currentMessages: [...s.currentMessages, userMsg as never] }));
-    const messagesToSend = [...useAppStore.getState().currentMessages, userMsg as never];
+    const messagesToSend = useAppStore.getState().currentMessages;
 
     try {
       const reasoning = composerReasoning === 'off' ? undefined : { effort: composerReasoning };

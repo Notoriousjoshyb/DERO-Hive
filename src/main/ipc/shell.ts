@@ -3,14 +3,14 @@ import { IPC } from '@shared/types';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { terminalExec, terminalDispose } from '../terminal/session';
-import { resolveAndValidate, getWorkspaceRoot } from '../utils/pathPolicy';
+import { resolveWithinAllowed } from '../utils/pathPolicy';
 
 const execAsync = promisify(exec);
 
 function validateCwd(cwd: string | undefined): string | undefined {
   if (!cwd) return cwd;
   try {
-    return resolveAndValidate(cwd, getWorkspaceRoot());
+    return resolveWithinAllowed(cwd);
   } catch {
     throw new Error(`Shell cwd outside workspace: ${cwd}`);
   }

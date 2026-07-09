@@ -222,7 +222,8 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
     const occurrences = text.split(old_text).length - 1;
     if (occurrences === 0) return { content: `Error: old_text not found in ${abs}`, isError: true };
     if (occurrences > 1) return { content: `Error: old_text matches ${occurrences} locations; make it unique.`, isError: true };
-    const updated = text.replace(old_text, new_text);
+    // Function replacement so `$&`/`$'` patterns in new_text are written literally
+    const updated = text.replace(old_text, () => new_text);
     const stats = diffStats(old_text, new_text);
     await writeFile(abs, updated, 'utf-8');
     return {

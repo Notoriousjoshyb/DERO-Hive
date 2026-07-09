@@ -9,10 +9,11 @@
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "postinstall": "electron-rebuild -f -w better-sqlite3 && node scripts/setup-whisper.mjs && node scripts/setup-mcp.mjs",
+    "postinstall": "electron-rebuild -f -w better-sqlite3 && node scripts/setup-whisper.mjs && node scripts/setup-mcp.mjs && node scripts/setup-simulator.mjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "setup:whisper": "node scripts/setup-whisper.mjs",
     "setup:mcp": "node scripts/setup-mcp.mjs",
+    "setup:simulator": "node scripts/setup-simulator.mjs",
     "build": "electron-vite build",
     "build:win": "electron-vite build && electron-builder --win --x64",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -68,6 +69,8 @@
       "out/**/*",
       "resources/**/*",
       "!resources/whisper/**",
+      "!resources/simulator/**",
+      "!resources/mcp/**",
       "package.json"
     ],
     "extraResources": [
@@ -77,12 +80,25 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/simulator",
+        "to": "simulator",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/mcp",
+        "to": "mcp",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**",
-      "**/node_modules/shiki/**",
-      "resources/mcp/**"
+      "**/node_modules/shiki/**"
     ],
     "win": {
       "target": [

@@ -56,12 +56,15 @@ export function GitPanel(): JSX.Element {
       const modified: string[] = [];
       const untracked: string[] = [];
 
-      for (const line of statusResult.stdout.trim().split('\n')) {
-        if (!line) continue;
-        const idx = line.slice(2);
-        if (line.startsWith('??')) untracked.push(idx);
-        else if (line.startsWith(' M') || line.startsWith('M ')) modified.push(idx);
-        else if (line.startsWith('M') || line.startsWith('A')) staged.push(idx);
+      for (const line of statusResult.stdout.split('\n')) {
+        if (!line.trim()) continue;
+        // Porcelain format: X = index (staged) status, Y = worktree status.
+        const x = line[0];
+        const y = line[1];
+        const file = line.slice(3).trim() || line.slice(2).trim();
+        if (x === '?' && y === '?') { untracked.push(file); continue; }
+        if (x && x !== ' ' && x !== '?') staged.push(file);
+        if (y && y !== ' ' && y !== '?') modified.push(file);
       }
 
       const commitList: GitCommit[] = [];

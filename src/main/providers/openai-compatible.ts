@@ -246,18 +246,26 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
               if (fn?.arguments) acc.arguments += fn.arguments;
             }
           }
+        }
 
-          // Stop reason
-          if (choice.finish_reason === 'tool_calls' && toolAcc.size > 0) {
-            yield { type: 'tool_calls', toolCalls: Array.from(toolAcc.values()) };
-            toolAcc.clear();
-          }
+        // Stop reason — checked outside the delta block: many providers send
+        // finish_reason in a chunk with no (or an empty) delta.
+        if (choice.finish_reason === 'tool_calls' && toolAcc.size > 0) {
+          yield { type: 'tool_calls', toolCalls: Array.from(toolAcc.values()) };
+          toolAcc.clear();
         }
       }
 
       // Usage comes in final chunk when stream_options.include_usage = true
       const u = data.usage as typeof usage;
       if (u) usage = u;
+    }
+
+    // Some providers close the stream without a finish_reason 'tool_calls'
+    // chunk — don't drop tool calls that were accumulated but never flushed.
+    if (toolAcc.size > 0) {
+      yield { type: 'tool_calls', toolCalls: Array.from(toolAcc.values()) };
+      toolAcc.clear();
     }
 
     if (usage) {

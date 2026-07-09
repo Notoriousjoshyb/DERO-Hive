@@ -70,6 +70,11 @@ export function useChat(): void {
     });
 
     const offPermission = window.hive.onToolPermissionRequest((req) => {
+      // Session-scoped "don't ask again": approve silently without a dialog.
+      if (useAppStore.getState().sessionAutoAllowTools) {
+        void window.hive.toolPermissionDecide({ requestId: req.requestId, decision: 'allow' });
+        return;
+      }
       addPendingPermission(req);
     });
 

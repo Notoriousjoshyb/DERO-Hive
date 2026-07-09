@@ -12,7 +12,9 @@ export function PermissionDialog(): JSX.Element | null {
   const decide = async (decision: 'allow' | 'deny', rememberDecision = false): Promise<void> => {
     await window.hive.toolPermissionDecide({ requestId: req.requestId, decision });
     if (rememberDecision) {
-      await window.hive.settingsSet({ toolApprovalMode: 'never' });
+      // Session-only: auto-allow until the app restarts. Does NOT persist —
+      // the saved toolApprovalMode setting is left untouched.
+      useAppStore.getState().setSessionAutoAllowTools(true);
     }
     remove(req.requestId);
     setRemember(false);

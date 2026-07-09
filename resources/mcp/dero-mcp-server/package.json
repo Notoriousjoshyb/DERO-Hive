@@ -1,7 +1,7 @@
 {
   "name": "dero-mcp-server",
   "mcpName": "io.github.DHEBP/dero-mcp-server",
-  "version": "0.4.1",
+  "version": "0.4.8",
   "description": "Model Context Protocol (MCP) server exposing DERO Stargate daemon JSON-RPC and bundled documentation to MCP clients. Vendored copy: builds automatically via scripts/setup-mcp.mjs on `npm install` in DERO Hive.",
   "type": "module",
   "license": "MIT",
