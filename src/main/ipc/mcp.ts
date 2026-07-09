@@ -1,6 +1,25 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron';
-import { IPC, type McpServerConfig } from '@shared/types';
+import { app, ipcMain, BrowserWindow, dialog } from 'electron';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { IPC, type McpServerConfig, type McpRegistry } from '@shared/types';
 import type { McpManager } from '../mcp/manager';
+import { logger } from '../utils/logger';
+
+// Bundled Discover registry. Ships inside the asar (it is not an extraResource),
+// so it must be resolved from app.getAppPath(), not process.resourcesPath.
+let registryCache: McpRegistry | null = null;
+
+function loadRegistry(): McpRegistry {
+  if (registryCache) return registryCache;
+  try {
+    const raw = readFileSync(join(app.getAppPath(), 'resources', 'mcp-registry.json'), 'utf-8');
+    registryCache = JSON.parse(raw) as McpRegistry;
+    return registryCache;
+  } catch (err) {
+    logger.warn('mcp', 'failed to load bundled server registry', err);
+    return { version: 0, updatedAt: '', servers: [] };
+  }
+}
 
 /**
  * Registering an MCP server means launching a program with the user's
@@ -84,4 +103,5 @@ export function registerMcpHandlers(manager: McpManager): void {
     return { ok: true };
   });
   ipcMain.handle(IPC.MCP_STATUS, () => manager.getStatuses());
+  ipcMain.handle(IPC.MCP_REGISTRY, () => loadRegistry());
 }

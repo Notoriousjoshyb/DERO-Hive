@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GeneralPanel } from './GeneralPanel';
 import { ProvidersPanel } from './ProvidersPanel';
 import { McpPanel } from './McpPanel';
+import { DiscoverPanel } from './DiscoverPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { ToolsPanel } from './ToolsPanel';
 import { ProjectsPanel } from './ProjectsPanel';
@@ -10,13 +11,14 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'general' | 'providers' | 'mcp' | 'skills' | 'tools' | 'projects';
+type Tab = 'general' | 'providers' | 'mcp' | 'discover' | 'skills' | 'tools' | 'projects';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'providers', label: 'Providers' },
   { id: 'projects', label: 'Projects' },
   { id: 'mcp', label: 'MCP Servers' },
+  { id: 'discover', label: 'Discover' },
   { id: 'skills', label: 'Skills' },
   { id: 'tools', label: 'Tools & Permissions' }
 ];
@@ -64,6 +66,7 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
             {tab === 'providers' && <ProvidersPanel />}
             {tab === 'projects' && <ProjectsPanel />}
             {tab === 'mcp' && <McpPanel />}
+            {tab === 'discover' && <DiscoverPanel />}
             {tab === 'skills' && <SkillsPanel />}
             {tab === 'tools' && <ToolsPanel />}
           </div>

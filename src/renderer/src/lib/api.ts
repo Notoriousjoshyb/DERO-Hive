@@ -4,6 +4,7 @@ import type {
   Message,
   McpServerConfig,
   McpServerStatus,
+  McpRegistry,
   ProviderConfig,
   ProviderModel,
   ProviderPreset,
@@ -51,6 +52,7 @@ declare global {
       mcpConnect: (id: string) => Promise<{ ok: boolean }>;
       mcpDisconnect: (id: string) => Promise<{ ok: boolean }>;
       mcpStatus: () => Promise<McpServerStatus[]>;
+      mcpRegistry: () => Promise<McpRegistry>;
       onMcpChanged: (cb: (s: McpServerStatus[]) => void) => () => void;
 
       skillList: () => Promise<Skill[]>;

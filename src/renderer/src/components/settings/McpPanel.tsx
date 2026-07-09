@@ -79,7 +79,7 @@ export function McpPanel(): JSX.Element {
   );
 }
 
-function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: () => void; onSaved: () => void }): JSX.Element {
+export function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: () => void; onSaved: () => void }): JSX.Element {
   const [c, setC] = useState<McpServerConfig>(cfg);
   const [envText, setEnvText] = useState(Object.entries(c.env || {}).map(([k, v]) => `${k}=${v}`).join('\n'));
   const [argsText, setArgsText] = useState((c.args || []).join(' '));

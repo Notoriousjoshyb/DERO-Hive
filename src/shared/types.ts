@@ -138,6 +138,32 @@ export interface McpServerStatus {
   prompts: { name: string; description?: string; arguments?: unknown[] }[];
 }
 
+// Bundled server registry (resources/mcp-registry.json) shown in the Discover tab
+export interface McpRegistryEntry {
+  id: string;
+  name: string;
+  description: string;
+  repo: string;
+  license: string;
+  runtime: 'node' | 'python';
+  install: { command: string; args: string[] };
+  requiresConfig?: string;
+  category: string;
+  local: boolean;
+  windows: boolean;
+  stars?: number;
+  verified?: string;
+  tags?: string[];
+}
+
+export interface McpRegistry {
+  version: number;
+  updatedAt: string;
+  description?: string;
+  notes?: string[];
+  servers: McpRegistryEntry[];
+}
+
 export interface Skill {
   id: string;
   name: string;
@@ -291,6 +317,7 @@ export const IPC = {
   MCP_DISCONNECT: 'mcp:disconnect',
   MCP_STATUS: 'mcp:status',
   MCP_CHANGED: 'mcp:changed', // event
+  MCP_REGISTRY: 'mcp:registry',
 
   // Skills
   SKILL_LIST: 'skill:list',

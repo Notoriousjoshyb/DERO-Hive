@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -47,6 +47,7 @@ const api = {
   mcpConnect: (id: string) => ipcRenderer.invoke(IPC.MCP_CONNECT, id),
   mcpDisconnect: (id: string) => ipcRenderer.invoke(IPC.MCP_DISCONNECT, id),
   mcpStatus: () => ipcRenderer.invoke(IPC.MCP_STATUS),
+  mcpRegistry: (): Promise<McpRegistry> => ipcRenderer.invoke(IPC.MCP_REGISTRY),
   onMcpChanged: (cb: (statuses: McpServerStatus[]) => void) => {
     const l = (_: IpcRendererEvent, d: McpServerStatus[]) => cb(d);
     ipcRenderer.on(IPC.MCP_CHANGED, l);
