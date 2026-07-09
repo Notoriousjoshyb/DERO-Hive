@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import type { McpServerInstance } from './client';
 
 const RECONNECT_DELAY_MS = 2000;
+const RECONNECT_MAX_DELAY_MS = 60_000;
+const RECONNECT_MAX_ATTEMPTS = 8;
 
 function validateMcpConfig(cfg: McpServerConfig): void {
   if (!cfg.command || typeof cfg.command !== 'string') {
@@ -36,6 +38,7 @@ function validateMcpConfig(cfg: McpServerConfig): void {
 export class McpManager extends EventEmitter {
   private servers = new Map<string, McpServerInstance>();
   private pendingReconnects = new Map<string, NodeJS.Timeout>();
+  private reconnectAttempts = new Map<string, number>();
 
   async ensureBundledServers(): Promise<void> {
     const mcpDir = join(resourcesRoot, 'mcp');
@@ -234,6 +237,7 @@ export class McpManager extends EventEmitter {
       client,
       transport,
       status: 'connecting',
+      trust: cfg.trust,
       tools: [], resources: [], prompts: []
     };
     this.servers.set(cfg.id, instance);
@@ -278,6 +282,9 @@ export class McpManager extends EventEmitter {
         }));
       }
 
+      // A healthy connection resets the backoff ladder.
+      this.reconnectAttempts.delete(cfg.id);
+
       // Auto-reconnect on disconnect
       transport.onclose = () => this.handleDisconnect(cfg.id, cfg);
       transport.onerror = (err) => logger.warn('mcp', `${cfg.name} transport error: ${err instanceof Error ? err.message : String(err)}`);
@@ -296,6 +303,7 @@ export class McpManager extends EventEmitter {
   async disconnect(id: string): Promise<void> {
     const timer = this.pendingReconnects.get(id);
     if (timer) { clearTimeout(timer); this.pendingReconnects.delete(id); }
+    this.reconnectAttempts.delete(id);
     const inst = this.servers.get(id);
     if (!inst) return;
     // Intentional disconnect — detach the auto-reconnect handler so closing
@@ -319,6 +327,27 @@ export class McpManager extends EventEmitter {
     const out: ToolDefinition[] = [];
     for (const inst of this.servers.values()) out.push(...inst.tools);
     return out;
+  }
+
+  /**
+   * Resolve a tool name — either the raw name advertised to the model, or the
+   * explicit `mcp:<serverId>:<tool>` form — to its owning server, along with
+   * whether that server is trusted. The caller needs the trust bit *before*
+   * running the tool, so resolution cannot happen at dispatch time.
+   */
+  resolveTool(name: string): { serverId: string; toolName: string; trusted: boolean } | null {
+    if (name.startsWith('mcp:')) {
+      const [, serverId, ...rest] = name.split(':');
+      const inst = this.servers.get(serverId);
+      if (!inst) return null;
+      return { serverId, toolName: rest.join(':'), trusted: !!inst.trust };
+    }
+    for (const inst of this.servers.values()) {
+      if (inst.tools.some((t) => t.name === name)) {
+        return { serverId: inst.id, toolName: name, trusted: !!inst.trust };
+      }
+    }
+    return null;
   }
 
   async callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<{ content: unknown; isError?: boolean }> {
@@ -346,15 +375,30 @@ export class McpManager extends EventEmitter {
   }
 
   private handleDisconnect(id: string, cfg: McpServerConfig): void {
-    logger.warn('mcp', `${cfg.name} disconnected, attempting reconnect in ${RECONNECT_DELAY_MS}ms`);
+    // Back off exponentially and eventually give up. A server that fails on
+    // every start — a bad command, a crash, a missing binary — would otherwise
+    // respawn a child process every two seconds for the lifetime of the app.
+    const attempt = (this.reconnectAttempts.get(id) ?? 0) + 1;
     this.servers.delete(id);
+
+    if (attempt > RECONNECT_MAX_ATTEMPTS) {
+      this.reconnectAttempts.delete(id);
+      logger.error('mcp', `${cfg.name} gave up after ${RECONNECT_MAX_ATTEMPTS} reconnect attempts`);
+      this.emitChange();
+      return;
+    }
+
+    this.reconnectAttempts.set(id, attempt);
+    const delay = Math.min(RECONNECT_DELAY_MS * 2 ** (attempt - 1), RECONNECT_MAX_DELAY_MS);
+    logger.warn('mcp', `${cfg.name} disconnected, reconnect attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS} in ${delay}ms`);
+
     const t = setTimeout(() => {
       this.pendingReconnects.delete(id);
       this.connect(cfg).catch((err) => {
         logger.error('mcp', `reconnect ${cfg.name} failed`, err);
         this.handleDisconnect(id, cfg);
       });
-    }, RECONNECT_DELAY_MS);
+    }, delay);
     this.pendingReconnects.set(id, t);
     this.emitChange();
   }

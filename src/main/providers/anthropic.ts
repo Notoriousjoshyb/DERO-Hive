@@ -37,7 +37,16 @@ export class AnthropicAdapter implements ProviderAdapter {
   private toAnthropicMessages(messages: { role: string; content: string | ContentPart[]; toolCalls?: unknown; toolCallId?: string }[]): unknown[] {
     const out: unknown[] = [];
     for (const m of messages) {
-      if (m.role === 'user') {
+      if (m.role === 'system') {
+        // Anthropic carries the system prompt in the top-level `system` field
+        // and rejects a system role inside `messages`. Dropping these outright
+        // would discard the <context_compaction> summary, which compaction
+        // writes as a system message after deleting the history it replaces —
+        // so the conversation would lose that context entirely. Carry it
+        // through as a marked user turn instead.
+        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        if (text) out.push({ role: 'user', content: [{ type: 'text', text: `[system note]\n${text}` }] });
+      } else if (m.role === 'user') {
         out.push({ role: 'user', content: this.toAnthropicContent(m.content) });
       } else if (m.role === 'assistant') {
         const blocks: unknown[] = [];

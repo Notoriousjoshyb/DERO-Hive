@@ -8,6 +8,8 @@ export interface McpServerInstance {
   transport: StdioClientTransport;
   status: 'connecting' | 'connected' | 'error' | 'disconnected';
   error?: string;
+  /** Mirrors McpServerConfig.trust — tools from an untrusted server need approval. */
+  trust?: boolean;
   tools: ToolDefinition[];
   resources: { name: string; uri: string; description?: string; mimeType?: string }[];
   prompts: { name: string; description?: string; arguments?: unknown[] }[];

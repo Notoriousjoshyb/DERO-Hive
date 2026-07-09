@@ -189,8 +189,10 @@ async function runChat(
       // Multi-turn tool loop. Up to 20 rounds.
       const availableTools = tools.listTools();
 
+      let lastTurnId = messageId;
       for (let round = 0; round < 20; round++) {
         const turnId = round === 0 ? messageId : randomUUID();
+        lastTurnId = turnId;
         if (round > 0) send({ type: 'start', conversationId: req.conversationId, messageId: turnId });
 
         const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
@@ -295,7 +297,9 @@ async function runChat(
         // Loop continues — next iteration will call model again with tool results
       }
 
-      send({ type: 'done', conversationId: req.conversationId, messageId });
+      // Tool-round budget exhausted. Close the turn that is actually streaming
+      // in the renderer, which after round 0 is no longer the original message.
+      send({ type: 'done', conversationId: req.conversationId, messageId: lastTurnId });
     } catch (err) {
       logger.error('chat', 'runChat failed', err);
       send({ type: 'error', conversationId: req.conversationId, messageId, error: err instanceof Error ? err.message : String(err) });

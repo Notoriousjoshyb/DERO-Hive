@@ -52,7 +52,9 @@ async function createMainWindow(): Promise<void> {
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true
+      // No <webview> is used anywhere in the renderer; leaving the tag enabled
+      // only widens the attack surface.
+      webviewTag: false
     }
   });
 

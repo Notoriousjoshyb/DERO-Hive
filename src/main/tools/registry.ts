@@ -45,12 +45,21 @@ export class ToolRegistry extends EventEmitter {
   }
 
   async execute(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+    // MCP — models call MCP tools by their raw advertised name, so resolve the
+    // owning server up front. It is needed before the permission check, because
+    // whether the tool needs approval depends on that server's trust flag.
+    const mcp = this.executors.has(name) ? null : (this.mcpManager?.resolveTool(name) ?? null);
+
     // Check permissions
     const rule = this.matchRule(name, args);
     if (rule?.action === 'deny') {
       return { content: `Denied by permission rule: ${name}`, isError: true };
     }
-    if (rule?.action === 'ask' || (!rule && this.requiresApproval(name))) {
+    // An explicit `ask` rule always prompts. With no rule, sensitive built-ins
+    // prompt, and so does any tool from an MCP server the user has not trusted.
+    const needsApproval = rule?.action === 'ask'
+      || (!rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted)));
+    if (needsApproval) {
       const allowed = await this.requestPermission({ requestId: cryptoRandom(), toolName: name, args });
       if (!allowed) return { content: `User denied: ${name}`, isError: true };
     }
@@ -62,30 +71,15 @@ export class ToolRegistry extends EventEmitter {
       catch (err) { return { content: `Error: ${err instanceof Error ? err.message : String(err)}`, isError: true }; }
     }
 
-    // MCP — models call MCP tools by their raw advertised name, so resolve the
-    // owning server from the tool definition's source. Also accept the
-    // explicit "mcp:<serverId>:<tool>" form.
-    if (this.mcpManager) {
-      let serverId: string | undefined;
-      let toolName = name;
-      if (name.startsWith('mcp:')) {
-        const [, sid, ...rest] = name.split(':');
-        serverId = sid;
-        toolName = rest.join(':');
-      } else {
-        const def = this.mcpManager.getAllTools().find((t) => t.name === name);
-        if (def?.source?.startsWith('mcp:')) serverId = def.source.slice(4);
-      }
-      if (serverId) {
-        try {
-          const result = await this.mcpManager.callTool(serverId, toolName, args);
-          const content = Array.isArray(result.content)
-            ? (result.content as Array<{ type: string; text?: string }>).map((c) => c.text || JSON.stringify(c)).join('\n')
-            : String(result.content);
-          return { content, isError: result.isError };
-        } catch (err) {
-          return { content: `MCP tool error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
-        }
+    if (mcp) {
+      try {
+        const result = await this.mcpManager!.callTool(mcp.serverId, mcp.toolName, args);
+        const content = Array.isArray(result.content)
+          ? (result.content as Array<{ type: string; text?: string }>).map((c) => c.text || JSON.stringify(c)).join('\n')
+          : String(result.content);
+        return { content, isError: result.isError };
+      } catch (err) {
+        return { content: `MCP tool error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
       }
     }
 
