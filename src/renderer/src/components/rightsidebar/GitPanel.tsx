@@ -137,7 +137,7 @@ export function GitPanel(): JSX.Element {
             <div>
               <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Modified</div>
               {status.modified.map((f) => (
-                <div key={f} className="text-xs text-warning truncate">{f}</div>
+                <div key={f} className="text-xs text-warn truncate">{f}</div>
               ))}
             </div>
           )}
