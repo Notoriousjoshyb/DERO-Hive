@@ -1,5 +1,3 @@
-import type { ToolDefinition } from './types';
-
 export const BUILTIN_SKILLS = [
   {
     id: 'skill-commit',
@@ -110,15 +108,3 @@ Guidelines:
 - If you're unsure, say so rather than guessing.
 - Answer the user's actual question. Do not proactively invoke blockchain, daemon, wallet, or other DERO-specific tools unless the user explicitly asks about DERO or related infrastructure. Tool availability is not an invitation to use it.
 `;
-
-export const BUILTIN_TOOL_NAMES = [
-  'read_file',
-  'write_file',
-  'edit_file',
-  'list_directory',
-  'glob_files',
-  'grep_files',
-  'run_shell',
-  'web_fetch',
-  'todo_write'
-] as const;
