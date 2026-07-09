@@ -234,6 +234,7 @@ export class McpManager extends EventEmitter {
       client,
       transport,
       status: 'connecting',
+      trust: cfg.trust,
       tools: [], resources: [], prompts: []
     };
     this.servers.set(cfg.id, instance);
@@ -319,6 +320,27 @@ export class McpManager extends EventEmitter {
     const out: ToolDefinition[] = [];
     for (const inst of this.servers.values()) out.push(...inst.tools);
     return out;
+  }
+
+  /**
+   * Resolve a tool name — either the raw name advertised to the model, or the
+   * explicit `mcp:<serverId>:<tool>` form — to its owning server, along with
+   * whether that server is trusted. The caller needs the trust bit *before*
+   * running the tool, so resolution cannot happen at dispatch time.
+   */
+  resolveTool(name: string): { serverId: string; toolName: string; trusted: boolean } | null {
+    if (name.startsWith('mcp:')) {
+      const [, serverId, ...rest] = name.split(':');
+      const inst = this.servers.get(serverId);
+      if (!inst) return null;
+      return { serverId, toolName: rest.join(':'), trusted: !!inst.trust };
+    }
+    for (const inst of this.servers.values()) {
+      if (inst.tools.some((t) => t.name === name)) {
+        return { serverId: inst.id, toolName: name, trusted: !!inst.trust };
+      }
+    }
+    return null;
   }
 
   async callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<{ content: unknown; isError?: boolean }> {
