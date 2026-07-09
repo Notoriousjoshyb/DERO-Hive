@@ -49,7 +49,9 @@ async function createMainWindow(): Promise<void> {
     icon: join(__dirname, '../../resources/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // The preload only talks to `electron` (contextBridge + ipcRenderer) and
+      // the renderer never touches Node, so the OS-level sandbox costs nothing.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
       // No <webview> is used anywhere in the renderer; leaving the tag enabled
