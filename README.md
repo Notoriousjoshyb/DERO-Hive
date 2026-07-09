@@ -164,7 +164,7 @@ Search across all conversations from the sidebar search bar:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/dero-hive.git
+git clone https://github.com/Notoriousjoshyb/dero-hive.git
 cd dero-hive
 
 # 2. Install dependencies
