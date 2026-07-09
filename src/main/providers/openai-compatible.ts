@@ -14,21 +14,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   async testConnection(): Promise<{ ok: boolean; error?: string; models?: string[]; hint?: string }> {
     const baseUrl = this.cfg.baseUrl.replace(/\/$/, '');
 
-    // 1. Try GET /models
-    try {
-      const r = await fetch(`${baseUrl}/models`, { headers: this.headers() });
-      if (r.ok) {
-        const data = (await r.json()) as { data?: { id: string }[] };
-        return { ok: true, models: (data.data || []).map((m) => m.id) };
-      }
-      // 401/403 with /models usually means the key is wrong; report that early.
-      if (r.status === 401 || r.status === 403) {
-        return { ok: false, error: `Auth failed (${r.status}): check your API key.`, hint: 'Edit the provider and re-enter the key.' };
-      }
-      // 404 / 405: provider doesn't list models — fall through to chat probe
-    } catch { /* network error — try chat probe */ }
-
-    // 2. Fallback: tiny chat completion to prove the endpoint accepts requests
+    // 1. Try a tiny chat completion first — this is the real auth test.
+    //    /models is often public and doesn't prove the key can actually chat.
     try {
       const probeModel = this.cfg.models[0]?.id || 'test';
       const r = await fetch(`${baseUrl}/chat/completions`, {
@@ -47,7 +34,34 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         return { ok: false, error: `Auth failed (${r.status}): check your API key.`, hint: 'Edit the provider and re-enter the key.' };
       }
       if (r.status === 404) {
-        // Try common URL variants to diagnose — maybe the user is just one segment off
+        // Fall through to /models test below
+      } else {
+        return { ok: false, error: `${r.status} ${r.statusText}: ${body.slice(0, 200)}` };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/ENOTFOUND|getaddrinfo/i.test(msg)) {
+        return { ok: false, error: `DNS lookup failed for "${this.cfg.baseUrl}"`, hint: 'Check the hostname. Is the service running?' };
+      }
+      if (/ECONNREFUSED/i.test(msg)) {
+        return { ok: false, error: `Connection refused at "${this.cfg.baseUrl}"`, hint: 'Is the service running on that host/port?' };
+      }
+      // Network error — try /models below
+    }
+
+    // 2. Fallback: GET /models (useful for local/ollama or public gateways)
+    try {
+      const r = await fetch(`${baseUrl}/models`, { headers: this.headers() });
+      if (r.ok) {
+        const data = (await r.json()) as { data?: { id: string }[] };
+        return { ok: true, models: (data.data || []).map((m) => m.id) };
+      }
+      // 401/403 with /models usually means the key is wrong; report that early.
+      if (r.status === 401 || r.status === 403) {
+        return { ok: false, error: `Auth failed (${r.status}): check your API key.`, hint: 'Edit the provider and re-enter the key.' };
+      }
+      // 404: try common URL variants
+      if (r.status === 404) {
         const host = this.extractHost();
         const probes = await Promise.allSettled([
           this.probeUrl(`https://${host}/v1/models`),
@@ -69,7 +83,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           hint: 'The base URL is wrong. Check the provider\'s dashboard for the exact API endpoint. Common shapes: https://api.example.com/v1, https://example.com/openai/v1.'
         };
       }
-      return { ok: false, error: `${r.status} ${r.statusText}: ${body.slice(0, 200)}` };
+      return { ok: false, error: `${r.status} ${r.statusText}` };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/ENOTFOUND|getaddrinfo/i.test(msg)) {
@@ -199,7 +213,51 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errText = await response.text();
+      logger.debug('openai', `response error ${response.status}: ${errText.slice(0, 500)}`);
       yield { type: 'error', error: `${response.status} ${response.statusText}: ${errText.slice(0, 500)}` };
+      return;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+
+    // Some providers ignore `stream: true` and return a single JSON object.
+    // Handle that gracefully instead of producing an empty stream.
+    if (contentType.includes('application/json')) {
+      try {
+        const json = (await response.json()) as Record<string, unknown>;
+        const choice = (json.choices as Record<string, unknown>[] | undefined)?.[0];
+        const message = choice?.message as Record<string, unknown> | undefined;
+        const content = typeof message?.content === 'string' ? message.content : undefined;
+        if (content) yield { type: 'delta', content };
+        const reasoning = (message as { reasoning_content?: string; reasoning?: string } | undefined)?.reasoning_content
+          ?? (message as { reasoning_content?: string; reasoning?: string } | undefined)?.reasoning;
+        if (reasoning) yield { type: 'reasoning', reasoning };
+        const tc = (message?.tool_calls as Array<Record<string, unknown>> | undefined) ?? (choice?.tool_calls as Array<Record<string, unknown>> | undefined);
+        if (tc && tc.length > 0) {
+          yield {
+            type: 'tool_calls',
+            toolCalls: tc.map((t) => ({
+              id: (t.id as string) || '',
+              name: ((t.function as { name?: string } | undefined)?.name as string) || '',
+              arguments: ((t.function as { arguments?: string } | undefined)?.arguments as string) || ''
+            }))
+          };
+        }
+        const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+        if (u) {
+          yield {
+            type: 'usage',
+            usage: {
+              promptTokens: u.prompt_tokens || 0,
+              completionTokens: u.completion_tokens || 0,
+              totalTokens: u.total_tokens || 0
+            }
+          };
+        }
+      } catch (err) {
+        logger.debug('openai', `failed to parse JSON response: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      yield { type: 'done' };
       return;
     }
 
@@ -219,12 +277,19 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         return;
       }
 
+      // Log the first event shape when debugging so we can diagnose provider quirks.
+      if (process.env.HIVE_DEBUG) {
+        logger.debug('openai', `sse event: ${JSON.stringify(data).slice(0, 400)}`);
+      }
+
       const choice = (data.choices as Record<string, unknown>[] | undefined)?.[0];
       if (choice) {
         const delta = choice.delta as Record<string, unknown> | undefined;
         if (delta) {
-          // Content
-          const content = delta.content as string | undefined;
+          // Content — try common field names used by OpenAI-compatible gateways
+          const content = delta.content as string | undefined
+            ?? delta.text as string | undefined
+            ?? (delta.message as Record<string, unknown> | undefined)?.content as string | undefined;
           if (content) yield { type: 'delta', content };
 
           // Reasoning content (o1/o3 style, or custom fields)

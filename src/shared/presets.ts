@@ -41,11 +41,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'kimi',
     name: 'Kimi Code (Moonshot)',
-    baseUrl: 'https://api.moonshot.cn/v1',
+    baseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://platform.moonshot.cn',
     defaultModel: 'kimi-k2-0711-preview',
     supportsTools: true,
-    notes: 'Moonshot Kimi K2. Model list fetched live when you save.',
+    notes: 'Moonshot Kimi K2 (OpenAI-compatible coding endpoint). Model list fetched live when you save.',
     models: []
   },
   {

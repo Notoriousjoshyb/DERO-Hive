@@ -8,6 +8,8 @@ export function ProjectsPanel(): JSX.Element {
   const deleteProject = useAppStore((s) => s.deleteProject);
   const [editing, setEditing] = useState<Project | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const handleAdd = (): void => {
     setEditing({
@@ -18,20 +20,31 @@ export function ProjectsPanel(): JSX.Element {
       createdAt: Date.now(),
       updatedAt: Date.now()
     });
+    setFormError(null);
     setShowForm(true);
   };
 
   const handleEdit = (p: Project): void => {
     setEditing({ ...p });
+    setFormError(null);
     setShowForm(true);
   };
 
   const handleSave = async (): Promise<void> => {
     if (!editing) return;
-    if (!editing.name.trim() || !editing.path.trim()) return;
-    await saveProject(editing);
-    setShowForm(false);
-    setEditing(null);
+    if (!editing.name.trim()) { setFormError('Project name is required.'); return; }
+    if (!editing.path.trim()) { setFormError('Folder path is required.'); return; }
+    setSaving(true);
+    setFormError(null);
+    try {
+      await saveProject({ ...editing, name: editing.name.trim(), path: editing.path.trim() });
+      setShowForm(false);
+      setEditing(null);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async (id: string): Promise<void> => {
@@ -100,18 +113,14 @@ export function ProjectsPanel(): JSX.Element {
               <button onClick={handleBrowse} className="btn-secondary">Browse…</button>
             </div>
           </div>
-          <div>
-            <label className="text-sm text-fg-subtle">Accent Color</label>
-            <input
-              type="color"
-              value={editing.color || '#6366f1'}
-              onChange={(e) => setEditing({ ...editing, color: e.target.value })}
-              className="w-full h-8 rounded cursor-pointer mt-1"
-            />
-          </div>
+          {formError && (
+            <div className="text-sm text-danger">{formError}</div>
+          )}
           <div className="flex gap-2 justify-end">
-            <button onClick={() => { setShowForm(false); setEditing(null); }} className="btn-secondary">Cancel</button>
-            <button onClick={() => void handleSave()} className="btn-primary">Save</button>
+            <button onClick={() => { setShowForm(false); setEditing(null); setFormError(null); }} className="btn-secondary">Cancel</button>
+            <button onClick={() => void handleSave()} disabled={saving} className="btn-primary disabled:opacity-60">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
       )}

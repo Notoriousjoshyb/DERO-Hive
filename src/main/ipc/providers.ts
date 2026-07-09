@@ -31,7 +31,8 @@ export function registerProviderHandlers(): void {
       }
     }
     if (!final.models || final.models.length === 0) {
-      const fallback = (cfg as { defaultModel?: string }).defaultModel || 'default';
+      const preset = final.presetId ? findPreset(final.presetId) : undefined;
+      const fallback = preset?.defaultModel || 'default';
       final.models = [{ id: fallback, name: fallback }];
     }
 
@@ -64,13 +65,11 @@ export function registerProviderHandlers(): void {
     clearAdapterCache();
     logger.info('providers', `saved ${final.name}`);
 
-    // Auto-fetch live models in the background if we have a key
-    if (cfg.apiKey) {
-      void refreshModelsInBackground(final.id);
-    }
+    // Auto-fetch live models in the background so the list is current
+    void refreshModelsInBackground(final.id);
 
     // Strip the plaintext key before returning to renderer
-    return { ...final, apiKey: '', hasApiKey: !!cfg.apiKey };
+    return { ...final, apiKey: '', hasApiKey: !!cfg.apiKey || !!getSecret(`provider:${final.id}`) };
   });
 
   ipcMain.handle(IPC.PROVIDER_DELETE, async (_e, id: string) => {
@@ -94,7 +93,6 @@ export function registerProviderHandlers(): void {
 
   ipcMain.handle(IPC.PROVIDER_PROBE_MODELS, async (_e, cfg: { baseUrl: string; apiKey: string; presetId?: string; customHeaders?: Record<string, string> }) => {
     if (!cfg.baseUrl) return { ok: false, error: 'Base URL is required' };
-    if (!cfg.apiKey) return { ok: false, error: 'API key is required' };
     return await fetchLiveModels(cfg.baseUrl, cfg.apiKey, cfg.presetId, cfg.customHeaders);
   });
 }
@@ -114,16 +112,19 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
   if (!cfg) return { ok: false, error: 'Provider not found' };
   // Read the secret directly — the loaded config has apiKey stripped for safety
   const apiKey = getSecret(`provider:${id}`) || '';
-  if (!apiKey) return { ok: false, error: 'No API key configured' };
 
   const live = await fetchLiveModels(cfg.baseUrl, apiKey, cfg.presetId, cfg.customHeaders);
   if (!live.ok) return live;
-
-  // Merge with existing model metadata (context window, capabilities)
-  const merged = applyKnownMetadata(mergeModels(cfg.models, live.models || []));
-  if (merged.length === 0) {
+  if (!live.models || live.models.length === 0) {
     return { ok: false, error: 'Provider returned no models' };
   }
+
+  // Use live list as the source of truth, but preserve existing metadata for IDs we already know.
+  const liveModels: ProviderModel[] = live.models.map((modelId) => {
+    const existing = cfg.models.find((m) => m.id === modelId);
+    return existing || { id: modelId, name: modelId };
+  });
+  const merged = applyKnownMetadata(liveModels);
 
   const now = Date.now();
   getDb().prepare('UPDATE providers SET models = ?, models_fetched_at = ?, updated_at = ? WHERE id = ?')
@@ -139,24 +140,7 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
   return { ok: true, models: merged.map((m) => m.id), fetchedAt: now };
 }
 
-function mergeModels(existing: ProviderModel[], live: string[]): ProviderModel[] {
-  const map = new Map<string, ProviderModel>();
-  // Existing models keep their metadata
-  for (const m of existing) map.set(m.id, m);
-  // Add any new live IDs (preserve order from provider)
-  for (const id of live) {
-    if (!map.has(id)) {
-      map.set(id, { id, name: id });
-    }
-  }
-  // Output: live order first, then any existing-only models
-  const out: ProviderModel[] = [];
-  for (const id of live) {
-    const m = map.get(id);
-    if (m) out.push(m);
-  }
-  for (const [id, m] of map) {
-    if (!live.includes(id)) out.push(m);
-  }
-  return out;
+function safeJson<T>(s: string | null | undefined, fallback: T): T {
+  if (!s) return fallback;
+  try { return JSON.parse(s) as T; } catch { return fallback; }
 }

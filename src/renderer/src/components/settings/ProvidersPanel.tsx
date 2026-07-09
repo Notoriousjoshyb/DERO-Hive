@@ -19,14 +19,6 @@ export function ProvidersPanel(): JSX.Element {
   const probeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const probeSeq = useRef(0);
 
-  useEffect(() => {
-    let cleanup: (() => void) | undefined;
-    if (window.hive?.onModelsUpdated) {
-      cleanup = window.hive.onModelsUpdated(() => loadProviders());
-    }
-    return () => cleanup?.();
-  }, [loadProviders]);
-
   const startNew = (presetId?: string): void => {
     const preset = presetId ? presets.find((p) => p.id === presetId) : undefined;
     setEditing({
@@ -42,10 +34,10 @@ export function ProvidersPanel(): JSX.Element {
     setProbeError(null);
   };
 
-  // Auto-probe models when baseUrl + apiKey are present in the form
+  // Auto-probe models when baseUrl is present in the form
   useEffect(() => {
     if (!editing) return;
-    if (!editing.baseUrl || !apiKey || apiKey.length < 8) return;
+    if (!editing.baseUrl) return;
 
     if (probeTimer.current) clearTimeout(probeTimer.current);
     setProbeError(null);
@@ -171,9 +163,9 @@ export function ProvidersPanel(): JSX.Element {
                   <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
                     <button
                       onClick={() => void handleRefreshModels(p.id)}
-                      disabled={refreshing === p.id || !p.hasApiKey}
+                      disabled={refreshing === p.id}
                       className="btn-secondary"
-                      title={!p.hasApiKey ? 'Save an API key first to fetch models' : 'Fetch live model list from provider'}
+                      title="Fetch live model list from provider"
                     >
                       {refreshing === p.id ? '⟳ Fetching…' : '↻ Models'}
                     </button>
@@ -221,7 +213,7 @@ export function ProvidersPanel(): JSX.Element {
             <Field label="Base URL">
               <input value={editing.baseUrl} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} className="input w-full font-mono text-xs" />
             </Field>
-            <Field label="API key" hint={editing.hasApiKey ? 'Key saved. Leave blank to keep current; type a new value to replace.' : 'Paste your API key — the live model list is fetched automatically.'}>
+            <Field label="API key (optional)" hint={editing.hasApiKey ? 'Key saved. Leave blank to keep current; type a new value to replace.' : 'Paste your API key if required. Some providers (e.g. local Ollama) do not need one.'}>
               <input
                 type="password"
                 value={apiKey}

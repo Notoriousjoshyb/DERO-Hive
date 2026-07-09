@@ -47,6 +47,7 @@ export default function App(): JSX.Element {
     void loadTools();
 
     const offMcp = window.hive.onMcpChanged(() => loadMcpStatuses());
+    const offModels = window.hive.onModelsUpdated(() => loadProviders());
     const offMenu = window.hive.onMenu((action) => {
       if (action === 'new-conversation') void useAppStore.getState().createConversation();
       else if (action === 'toggle-sidebar') toggleSidebar();
@@ -63,7 +64,7 @@ export default function App(): JSX.Element {
       if (cur === 'system') applyTheme('system', info.shouldUseDarkColors);
     });
 
-    return () => { offMcp(); offMenu(); offProject(); offTheme(); };
+    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); };
   }, []);
 
   return (

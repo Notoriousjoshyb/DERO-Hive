@@ -23,11 +23,16 @@ export async function fetchLiveModels(
 
   // 1. Try GET /models
   try {
-    const r = await fetch(`${base}/models`, { headers });
+    const url = `${base}/models`;
+    logger.debug('models', `fetching ${url}`);
+    const r = await fetch(url, { headers });
     if (r.ok) {
       const data = await r.json();
       const ids = extractModelIds(data);
+      logger.debug('models', `extracted ${ids.length} ids from ${url}`);
       if (ids.length > 0) return { ok: true, models: ids };
+    } else {
+      logger.debug('models', `${url} returned ${r.status}`);
     }
   } catch (err) {
     logger.debug('models', `/models probe failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -71,9 +76,20 @@ function extractModelIds(data: unknown): string[] {
     if (typeof m === 'string') return m;
     if (m && typeof m === 'object') {
       const o = m as Record<string, unknown>;
-      return (o.id || o.name) as string;
+      return (o.id || o.name || o.model) as string;
     }
     return undefined;
   }).filter((s): s is string => !!s);
+  // Rare: top-level array
+  if (Array.isArray(d)) {
+    return d.map((m: unknown) => {
+      if (typeof m === 'string') return m;
+      if (m && typeof m === 'object') {
+        const o = m as Record<string, unknown>;
+        return (o.id || o.name || o.model) as string;
+      }
+      return undefined;
+    }).filter((s): s is string => !!s);
+  }
   return [];
 }
