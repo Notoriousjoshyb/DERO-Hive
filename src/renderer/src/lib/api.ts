@@ -7,7 +7,6 @@ import type {
   ProviderConfig,
   ProviderModel,
   ProviderPreset,
-  PermissionRule,
   Project,
   Skill,
   AppSettings,
@@ -63,7 +62,7 @@ declare global {
       projectDelete: (id: string) => Promise<{ ok: boolean }>;
 
       toolList: () => Promise<ToolDefinition[]>;
-      toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;
+      toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny'; remember?: boolean }) => Promise<{ ok: boolean }>;
       onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => () => void;
       onToolResult: (cb: (data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => void) => () => void;
 

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -65,7 +65,8 @@ const api = {
 
   // Tools
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),
-  toolPermissionDecide: (rule: PermissionRule) => ipcRenderer.invoke(IPC.TOOL_PERMISSION_DECIDE, rule),
+  toolPermissionDecide: (decision: { requestId: string; decision: 'allow' | 'deny'; remember?: boolean }) =>
+    ipcRenderer.invoke(IPC.TOOL_PERMISSION_DECIDE, decision),
   onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => {
     const l = (_: IpcRendererEvent, d: any) => cb(d);
     ipcRenderer.on(IPC.TOOL_PERMISSION_REQUEST, l);

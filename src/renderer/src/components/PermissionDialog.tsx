@@ -10,12 +10,9 @@ export function PermissionDialog(): JSX.Element | null {
   const req = pending[0];
 
   const decide = async (decision: 'allow' | 'deny', rememberDecision = false): Promise<void> => {
-    await window.hive.toolPermissionDecide({ requestId: req.requestId, decision });
-    if (rememberDecision) {
-      // Session-only: auto-allow until the app restarts. Does NOT persist —
-      // the saved toolApprovalMode setting is left untouched.
-      useAppStore.getState().setSessionAutoAllowTools(true);
-    }
+    // `remember` is honoured in the main process as a session-scoped grant for
+    // this one tool. It is not persisted, and it does not affect any other tool.
+    await window.hive.toolPermissionDecide({ requestId: req.requestId, decision, remember: rememberDecision });
     remove(req.requestId);
     setRemember(false);
   };
@@ -56,7 +53,7 @@ export function PermissionDialog(): JSX.Element | null {
               onChange={(e) => setRemember(e.target.checked)}
               className="accent-accent"
             />
-            Don't ask again for this session
+            Don't ask again for <span className="font-mono">{req.toolName}</span> this session
           </label>
           <button
             onClick={() => void decide('deny')}

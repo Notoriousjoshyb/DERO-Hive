@@ -20,8 +20,8 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
     getWin()?.webContents.send(IPC.TOOL_PERMISSION_REQUEST, req);
   });
 
-  ipcMain.handle(IPC.TOOL_PERMISSION_DECIDE, (_e, { requestId, decision }) => {
-    tools.decidePermission(requestId, decision === 'allow' ? 'allow' : 'deny');
+  ipcMain.handle(IPC.TOOL_PERMISSION_DECIDE, (_e, { requestId, decision, remember }) => {
+    tools.decidePermission(requestId, decision === 'allow' ? 'allow' : 'deny', !!remember);
     return { ok: true };
   });
 

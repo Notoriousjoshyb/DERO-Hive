@@ -30,6 +30,13 @@ type Decision = 'allow' | 'deny';
 export class ToolRegistry extends EventEmitter {
   private executors = new Map<string, ToolExecutor>();
   private pendingRequests = new Map<string, { resolve: (d: Decision) => void; rule: PermissionRule }>();
+  /**
+   * Tools the user approved with "don't ask again". Keyed by tool name, so
+   * approving `write_file` never silently approves `run_shell`. Held in memory
+   * on purpose: the grant must not outlive the app, and it must not be decided
+   * by the renderer, which is the component this gate exists to constrain.
+   */
+  private sessionAllow = new Set<string>();
 
   constructor(private mcpManager: McpManager | null) {
     super();
@@ -57,8 +64,10 @@ export class ToolRegistry extends EventEmitter {
     }
     // An explicit `ask` rule always prompts. With no rule, sensitive built-ins
     // prompt, and so does any tool from an MCP server the user has not trusted.
-    const needsApproval = rule?.action === 'ask'
-      || (!rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted)));
+    // A session grant covers only the tool it was given for.
+    const needsApproval = !this.sessionAllow.has(name)
+      && (rule?.action === 'ask'
+        || (!rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted))));
     if (needsApproval) {
       const allowed = await this.requestPermission({ requestId: cryptoRandom(), toolName: name, args });
       if (!allowed) return { content: `User denied: ${name}`, isError: true };
@@ -133,9 +142,10 @@ export class ToolRegistry extends EventEmitter {
     getDb().prepare('DELETE FROM permissions WHERE id = ?').run(id);
   }
 
-  decidePermission(requestId: string, decision: Decision): void {
+  decidePermission(requestId: string, decision: Decision, remember = false): void {
     const p = this.pendingRequests.get(requestId);
     if (p) {
+      if (remember && decision === 'allow') this.sessionAllow.add(p.rule.toolName);
       p.resolve(decision);
       this.pendingRequests.delete(requestId);
     }
