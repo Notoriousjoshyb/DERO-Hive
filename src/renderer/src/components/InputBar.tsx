@@ -6,7 +6,7 @@ import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
 import { UsageBudgetAlert } from './UsageBudgetAlert';
 import { thinkingOptionsFor } from '@shared/thinkingCapabilities';
-import { resolveAgent } from '@shared/agents';
+import { resolveAgent, shouldOrchestratorDispatch } from '@shared/agents';
 import { executeCustomCommand } from '../lib/customSlashCommands';
 
 interface Props {
@@ -51,9 +51,29 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   const [dragIdx, setDragIdx] = useState<number | null>(null); // chip being reordered
   const [fileDropActive, setFileDropActive] = useState(false); // OS files hovering over the composer
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bridgeRequestRef = useRef<string | null>(null);
   // The autocomplete menu registers a key handler here; a `true` return means
   // it consumed the key (e.g. Enter selected a match instead of sending).
   const autocompleteKeyRef = useRef<((e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean) | null>(null);
+
+  // Panels can prepare a scoped prompt without bypassing the normal composer,
+  // so attachments, voice input, agent selection, and send behaviour remain
+  // exactly the same as a hand-written message.
+  useEffect(() => {
+    const onCompose = (event: Event): void => {
+      const detail = (event as CustomEvent<string | { text: string; autoSend?: boolean; requestId?: string }>).detail;
+      const prompt = typeof detail === 'string' ? detail : detail?.text;
+      if (!prompt) return;
+      setText((current) => current ? `${current}\n\n${prompt}` : prompt);
+      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+      if (typeof detail !== 'string' && detail.autoSend) {
+        bridgeRequestRef.current = detail.requestId || null;
+        void submit(prompt);
+      }
+    };
+    window.addEventListener('hive:companion-compose', onCompose);
+    return () => window.removeEventListener('hive:companion-compose', onCompose);
+  }, []);
 
   // Auto-grow textarea
   useEffect(() => {
@@ -154,8 +174,14 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   const submit = async (overrideText?: string): Promise<void> => {
     const content = (overrideText ?? text).trim();
     if (!content) return;
-    if (!conversationId) return;
     const state = useAppStore.getState();
+    // Browser-extension requests always run as a single agent: the extension
+    // streams one reply per request, so a swarm's multi-conversation fan-out
+    // would leave it waiting on a conversation that never answers.
+    if (!bridgeRequestRef.current && state.composerAgent === 'orchestrator' && pendingAttachments.length === 0 && shouldOrchestratorDispatch(content)) {
+      state.openSwarm(content, true);
+      return;
+    }
 
     const userMsg = {
       id: crypto.randomUUID(),
@@ -175,7 +201,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
     // If the model is already working, queue the message so it can be inserted
     // at the next tool-call boundary instead of interrupting the current turn.
-    if (state.isStreaming) {
+    if (state.isStreaming && conversationId) {
       state.queueUserMessage(userMsg as never);
       await window.hive.chatQueueMessage(conversationId, userMsg as never);
       setText('');
@@ -285,6 +311,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       const reasoning = composerReasoning !== 'off' && supportedThinking.some((item) => item.id === composerReasoning)
         ? { effort: composerReasoning }
         : undefined;
+      // Bind before sending so the bridge forwards the very first deltas of
+      // the reply to the browser extension instead of dropping them.
+      const bridgeRequestId = bridgeRequestRef.current;
+      bridgeRequestRef.current = null;
+      if (bridgeRequestId) await window.hive.browserBridgeBind(bridgeRequestId, convId);
       const { messageId } = await window.hive.chatSend({
         conversationId: convId,
         providerId,
@@ -519,6 +550,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             onAttachGh={openGhModal}
             onVoiceResult={onVoiceResult}
             onCompare={() => useAppStore.getState().openCompare(text)}
+            onSwarm={() => useAppStore.getState().openSwarm(text)}
             onSchedule={() => setScheduleMenuOpen(true)}
             canSend={text.trim().length > 0}
             focusComposer={() => textareaRef.current?.focus({ preventScroll: true })}

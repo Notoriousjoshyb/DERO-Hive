@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "DERO Hive Browser Companion",
+  "description": "Capture the active page as transparent, untrusted context for DERO Hive, with live streamed replies.",
+  "version": "0.2.0",
+  "minimum_chrome_version": "114",
+  "permissions": ["activeTab", "tabs", "scripting", "storage", "sidePanel", "clipboardWrite"],
+  "host_permissions": ["http://127.0.0.1:43120/*", "http://*/*", "https://*/*"],
+  "action": {
+    "default_title": "Open DERO Hive Browser Companion",
+    "default_icon": "icon.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+H" },
+      "description": "Open the DERO Hive Browser Companion"
+    }
+  },
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}

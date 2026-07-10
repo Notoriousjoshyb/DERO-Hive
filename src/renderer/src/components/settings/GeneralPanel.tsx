@@ -255,6 +255,20 @@ export function GeneralPanel(): JSX.Element {
         <Field label="Show reasoning" hint="Display extended thinking content when supported.">
           <input type="checkbox" checked={settings.showReasoning} onChange={(e) => updateSettings({ showReasoning: e.target.checked })} className="accent-accent w-4 h-4" />
         </Field>
+        <Field label="Agent tool rounds" hint="How many model → tool → model cycles one task can take before it stops. Tool permissions still apply.">
+          <select
+            value={settings.maxAgenticRounds ?? 20}
+            onChange={(e) => updateSettings({ maxAgenticRounds: parseInt(e.target.value, 10) })}
+            className="input"
+          >
+            <option value={1}>1 round</option>
+            <option value={5}>5 rounds</option>
+            <option value={10}>10 rounds</option>
+            <option value={20}>20 rounds (default)</option>
+            <option value={35}>35 rounds</option>
+            <option value={50}>50 rounds</option>
+          </select>
+        </Field>
         <Field label="Tool approval">
           <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as 'always' | 'project' | 'never' })} className="input">
             <option value="always">Always ask</option>

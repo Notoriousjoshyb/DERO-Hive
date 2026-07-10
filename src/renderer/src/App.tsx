@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { VisionPanel } from './components/VisionPanel';
 import { VisionTab } from './components/VisionTab';
+import { HiveCompanionPanel } from './components/HiveCompanionPanel';
 import { RightSidebar } from './components/rightsidebar/RightSidebar';
 import { CodeTab } from './components/code/CodeTab';
 import { SettingsModal } from './components/settings/SettingsModal';
@@ -14,6 +15,7 @@ import { SystemPromptModal } from './components/SystemPromptModal';
 import { AgentsModal } from './components/AgentsModal';
 import { SearchDialog } from './components/SearchDialog';
 import { ComparePanel } from './components/ComparePanel';
+import { SwarmModal } from './components/SwarmModal';
 import { CommandPalette } from './components/CommandPalette';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -22,6 +24,7 @@ import { applyTheme, applyAppearance } from './lib/theme';
 export default function App(): JSX.Element {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const visionOpen = useAppStore((s) => s.visionOpen);
+  const companionOpen = useAppStore((s) => s.companionOpen);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const codeTabOpen = useAppStore((s) => s.codeTabOpen);
   const visionTabOpen = useAppStore((s) => s.visionTabOpen);
@@ -47,6 +50,13 @@ export default function App(): JSX.Element {
 
   useEffect(() => { applyTheme(theme); }, [theme]);
   useEffect(() => { applyAppearance(settings); }, [settings]);
+
+  // Keep the browser extension's model picker in sync with the composer.
+  const selectedProviderId = useAppStore((s) => s.selectedProviderId);
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  useEffect(() => {
+    void window.hive.browserBridgeReportSelection(selectedProviderId, selectedModel);
+  }, [selectedProviderId, selectedModel]);
 
   useEffect(() => {
     void loadSettings();
@@ -78,17 +88,27 @@ export default function App(): JSX.Element {
     const offTitle = window.hive.onConvTitleGenerated(() => {
       void loadConversations();
     });
+    const offBrowserBridge = window.hive.onBrowserBridgeContext(({ detail, requestId, providerId, model }) => {
+      if (providerId && model) useAppStore.getState().setSelection(providerId, model);
+      window.dispatchEvent(new CustomEvent('hive:companion-compose', { detail: { text: detail, autoSend: true, requestId } }));
+    });
+    const offSelectModel = window.hive.onBrowserBridgeSelectModel(({ providerId, model }) => {
+      const state = useAppStore.getState();
+      const provider = state.providers.find((p) => p.id === providerId);
+      if (provider?.models.some((m) => m.id === model)) state.setSelection(providerId, model);
+    });
 
-    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); offTitle(); };
+    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); offTitle(); offBrowserBridge(); offSelectModel(); };
   }, []);
 
   return (
     <div className="flex flex-col h-screen bg-bg">
       <TitleBar />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden">
         {sidebarOpen && <Sidebar />}
         {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : <ChatView />}
         {visionOpen && <VisionPanel />}
+        {companionOpen && <HiveCompanionPanel />}
         <RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} />
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
@@ -98,6 +118,7 @@ export default function App(): JSX.Element {
       <AgentsModal />
       <SearchDialog />
       <ComparePanel />
+      <SwarmModal />
       <CommandPalette />
       <style>{`
         body.focus-mode [data-sidebar-panel],

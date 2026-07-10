@@ -72,6 +72,8 @@ export interface ChatRequest {
   agentPrompt?: string;
   stream?: boolean;
   reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
+  /** Optional per-request cap used by orchestrators such as Swarm. */
+  maxAgenticRounds?: number;
   planMode?: boolean;
   toolApprovalModeOverride?: 'always' | 'project' | 'never';
   attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
@@ -254,6 +256,8 @@ export interface AppSettings {
   defaultModelId?: string;
   favouriteModels?: string[]; // entries are "providerId:modelId"
   maxConcurrentToolCalls: number;
+  /** Maximum model → tools → model cycles for one submitted task (1–50). */
+  maxAgenticRounds: number;
   toolApprovalMode: 'always' | 'project' | 'never';
   workingDirectory?: string;
   codeFolder?: string; // last folder opened in the Code tab explorer (persists across sessions)
@@ -438,6 +442,10 @@ export const IPC = {
   APP_OPEN_EXTERNAL: 'app:openExternal',
   APP_PLATFORM: 'app:platform',
   APP_VERSION: 'app:version',
+  BROWSER_BRIDGE_SET_ENABLED: 'browserBridge:setEnabled',
+  BROWSER_BRIDGE_STATUS: 'browserBridge:status',
+  BROWSER_BRIDGE_BIND: 'browserBridge:bind',
+  BROWSER_BRIDGE_SELECTION: 'browserBridge:selection',
   UPDATE_CHECK: 'update:check',
   UPDATE_INSTALL: 'update:install',
 

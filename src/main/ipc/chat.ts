@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { IPC, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
+import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
 import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
 import { getAdapter } from '../providers/registry';
@@ -15,8 +15,16 @@ import { truncateMessagesForContext } from '../utils/tokenBudget';
 
 const activeRequests = new Map<string, AbortController>();
 const queuedUserMessages = new Map<string, Message[]>();
+const streamObservers = new Set<(event: StreamEvent) => void>();
 const MAX_STREAM_RETRIES = 2;
 const STREAM_RETRY_BASE_DELAY_MS = 800;
+
+// Used by the loopback Browser Companion bridge. Observers only receive the
+// same normalized stream events already sent to the renderer.
+export function onChatStreamEvent(observer: (event: StreamEvent) => void): () => void {
+  streamObservers.add(observer);
+  return () => streamObservers.delete(observer);
+}
 
 // Retry a streaming adapter if it fails before producing any events. This
 // smooths over transient network blips without duplicating partial content.
@@ -153,6 +161,7 @@ async function runChat(
   const win = getWin();
   const send = (evt: StreamEvent): void => {
     win?.webContents.send(IPC.CHAT_STREAM, evt);
+    for (const observer of streamObservers) observer(evt);
   };
 
   // Run async without blocking the invoke response
@@ -291,11 +300,17 @@ async function runChat(
 
       let currentMessages = messages;
 
-      // Multi-turn tool loop. Up to 20 rounds.
+      // Multi-turn agentic loop. Each round lets the model inspect its tool
+      // results and decide the next action. Keep it bounded so a mistaken or
+      // repetitive plan cannot run indefinitely.
       const availableTools = tools.listTools();
+      const configuredRounds = req.maxAgenticRounds ?? getSetting<Partial<AppSettings>>('appSettings')?.maxAgenticRounds ?? 20;
+      const maxAgenticRounds = Number.isFinite(configuredRounds)
+        ? Math.min(50, Math.max(1, Math.floor(configuredRounds)))
+        : 20;
 
       let lastTurnId = messageId;
-      for (let round = 0; round < 20; round++) {
+      for (let round = 0; round < maxAgenticRounds; round++) {
         const turnId = round === 0 ? messageId : randomUUID();
         lastTurnId = turnId;
         if (round > 0) send({ type: 'start', conversationId: req.conversationId, messageId: turnId });
@@ -431,12 +446,20 @@ async function runChat(
         // and any queued user messages.
       }
 
-      // Tool-round budget exhausted. Close the turn that is actually streaming
-      // in the renderer, which after round 0 is no longer the original message.
+      // The agent reached its configured safety budget. Close the turn that is
+      // actually streaming in the renderer, which after round 0 is no longer
+      // the original message, and make the stop reason visible to the user.
+      const limitMessage = `Agent stopped after ${maxAgenticRounds} tool round${maxAgenticRounds === 1 ? '' : 's'} to prevent an unbounded loop. Increase “Agent tool rounds” in Settings → General to let it continue further.`;
+      send({ type: 'error', conversationId: req.conversationId, messageId: lastTurnId, error: limitMessage });
       send({ type: 'done', conversationId: req.conversationId, messageId: lastTurnId });
-      notifyStreamOutcome(win, 'done', 'Stopped after reaching the tool-call round limit.');
+      notifyStreamOutcome(win, 'error', limitMessage);
     } catch (err) {
-      logger.error('chat', 'runChat failed', err);
+      logger.error('chat', 'runChat failed', {
+        conversationId: req.conversationId,
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        code: (err as { code?: string }).code
+      });
       const errMsg = err instanceof Error ? err.message : String(err);
       send({ type: 'error', conversationId: req.conversationId, messageId, error: errMsg });
       send({ type: 'done', conversationId: req.conversationId, messageId });

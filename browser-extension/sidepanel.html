@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DERO Hive Browser Companion</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <button id="toggle-sessions" class="brand" title="Browser sessions"><img class="brand-mark" src="logo.svg" alt="DERO Hive" /><span><strong>DERO <b>Hive</b></strong><small>Browser Companion</small></span></button>
+      <div class="topbar-actions"><button id="new-session" class="icon-button" title="New browser session">+</button><button id="toggle-settings" class="icon-button" title="Settings">⚙</button></div>
+    </header>
+
+    <aside id="sessions" class="sessions" hidden>
+      <div class="drawer-header"><strong>Browser sessions</strong><button id="close-sessions" class="text-button">Done</button></div>
+      <div id="session-list" class="session-list"></div>
+    </aside>
+
+    <aside id="settings" class="settings" hidden>
+      <div class="drawer-header"><strong>Companion settings</strong><button id="close-settings" class="text-button">Done</button></div>
+      <label>Theme
+        <select id="theme-select">
+          <option value="hive">Hive (terracotta)</option>
+          <option value="forest">Forest</option>
+          <option value="midnight">Midnight</option>
+          <option value="ember">Ember</option>
+          <option value="mono">Mono</option>
+          <option value="cyber">Cyberpunk</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
+      <label class="toggle-row"><span>Auto-refresh page context</span><input id="auto-refresh" type="checkbox" /></label>
+      <label class="toggle-row"><span>Block capture on sensitive sites</span><input id="guard-sites" type="checkbox" /></label>
+      <p id="bridge-status" class="settings-note"></p>
+      <button id="copy-diagnostics" class="secondary">Copy diagnostics</button>
+      <p class="settings-note">The Companion does not send data to a server. It captures the active page after you invoke it and talks only to your local DERO Hive at 127.0.0.1. Tip: press <kbd>Alt+H</kbd> to open this panel.</p>
+    </aside>
+
+    <main>
+      <section class="model-card"><div><strong>Model</strong><span id="model-status">Pair with Hive to load models</span></div><div class="model-selects"><select id="provider-select" disabled aria-label="Provider"></select><select id="model-select" disabled aria-label="Model"></select><button id="reload-models" class="text-button" type="button">Reload models</button></div></section>
+      <section class="context-card">
+        <div class="section-heading"><div><strong>Context</strong><span id="context-status">No page captured</span></div><div class="context-buttons"><button id="pick-text" class="small-button" title="Drag a box over part of the page to capture just that text">✂ Snip</button><button id="refresh" class="small-button">Refresh</button></div></div>
+        <div class="scope-picker" role="tablist">
+          <button data-scope="page" class="active">Page</button><button data-scope="selection">Selection</button><button data-scope="tabs">Tabs</button>
+        </div>
+        <div id="context-empty" class="empty-state">Open a normal webpage, then press Refresh to capture it.</div>
+        <div id="context-preview" hidden>
+          <div class="page-title"><span id="page-favicon">◈</span><div><strong id="page-title"></strong><a id="page-url" target="_blank" rel="noreferrer"></a></div></div>
+          <div class="context-controls"><span id="context-count"></span><button id="toggle-receipt" class="text-button">What Hive sees</button></div>
+          <pre id="receipt" hidden></pre>
+        </div>
+      </section>
+
+      <div id="timeline-head" class="timeline-head" hidden><span>Conversation</span><button id="clear-chat" class="text-button" title="Clear this session's conversation">Clear chat</button></div>
+      <section id="timeline" class="timeline" aria-live="polite"></section>
+    </main>
+
+    <footer class="composer">
+      <div class="quick-commands"><button data-command="/summarize">Summarize</button><button data-command="/explain">Explain</button><button data-command="/action-items">Actions</button><button data-command="/rewrite">Rewrite</button></div>
+      <div class="composer-box"><textarea id="task" rows="3" placeholder="Ask DERO Hive about this page…"></textarea><div class="composer-actions"><button id="voice" class="icon-button" title="Voice dictation">◉</button><span id="voice-status"></span><button id="send" class="send-button">Copy to Hive <span>↗</span></button></div></div>
+    </footer>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

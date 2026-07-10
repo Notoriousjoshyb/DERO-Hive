@@ -14,12 +14,13 @@ interface Props {
   onVoiceResult: (text: string, isFinal: boolean) => void;
   onAttachGh: () => void;
   onCompare?: () => void;
+  onSwarm?: () => void;
   onSchedule?: () => void;
   focusComposer?: () => void;
 }
 
 const EMPTY_FAVS: string[] = [];
-export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh, onCompare, onSchedule, focusComposer }: Props): JSX.Element {
+export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh, onCompare, onSwarm, onSchedule, focusComposer }: Props): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const providers = useAppStore((s) => s.providers);
   const selectedProviderId = useAppStore((s) => s.selectedProviderId);
@@ -352,6 +353,19 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
           </button>
         )}
 
+        {onSwarm && (
+          <button
+            type="button"
+            onClick={onSwarm}
+            disabled={isStreaming}
+            title="Launch parallel specialist agents for this task"
+            className="px-2 py-1 rounded text-[11px] flex items-center gap-1 text-fg-muted hover:text-fg hover:bg-bg-elev disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            <SwarmIcon />
+            <span>Swarm</span>
+          </button>
+        )}
+
         {onSchedule && (
           <button
             type="button"
@@ -456,6 +470,17 @@ function SplitIcon(): JSX.Element {
       <path d="M8 1v14" />
       <path d="M4 4h4M4 8h4M4 12h4" />
       <path d="M12 4h2M12 8h2M12 12h2" />
+    </svg>
+  );
+}
+
+function SwarmIcon(): JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="4" cy="5" r="2" />
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="8" cy="12" r="2" />
+      <path d="M5.7 6.1l1.2 3.4M10.3 6.1L9.1 9.5M6 5h4" />
     </svg>
   );
 }

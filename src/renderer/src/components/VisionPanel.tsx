@@ -7,6 +7,11 @@ import type { Artifact } from '@shared/types';
 import { extractArtifacts, artifactGroupKey, artifactLabel as label, type ExtractedArtifact } from '../lib/artifacts';
 import { renderVisionHtml } from '../lib/visionRender';
 
+const MIN_PANEL_WIDTH = 280;
+const MIN_CHAT_WIDTH = 360;
+const LEFT_SIDEBAR_WIDTH = 256;
+const RIGHT_SIDEBAR_WIDTH = 288;
+
 // Vision — the interactive workspace panel. Artifacts extracted from the
 // conversation appear here as live previews with version history, in-place
 // editing, export, and open-in-browser sharing.
@@ -15,6 +20,8 @@ export function VisionPanel(): JSX.Element {
   const artifactsChangedAt = useAppStore((s) => s.artifactsChangedAt);
   const isStreaming = useAppStore((s) => s.isStreaming);
   const streamingContent = useAppStore((s) => s.streamingContent);
+  const sidebarOpen = useAppStore((s) => s.sidebarOpen);
+  const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
 
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
@@ -28,18 +35,33 @@ export function VisionPanel(): JSX.Element {
   // Resizable width, persisted across sessions
   const [width, setWidth] = useState(() => {
     const saved = Number(localStorage.getItem('visionPanelWidth'));
-    return saved >= 340 ? saved : 520;
+    return saved >= MIN_PANEL_WIDTH ? saved : 520;
   });
   const [resizing, setResizing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const panelRef = useRef<HTMLElement>(null);
+  const sidebarsWidth = (sidebarOpen ? LEFT_SIDEBAR_WIDTH : 0) + (rightSidebarOpen ? RIGHT_SIDEBAR_WIDTH : 0);
+  const maxDockedWidth = viewportWidth - sidebarsWidth - MIN_CHAT_WIDTH;
+  const docked = maxDockedWidth >= MIN_PANEL_WIDTH;
+  const renderedWidth = docked
+    ? Math.min(width, Math.min(980, maxDockedWidth))
+    : Math.min(width, Math.max(MIN_PANEL_WIDTH, viewportWidth - 24));
+
+  useEffect(() => {
+    const onResize = (): void => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     if (!resizing) return;
     const onMove = (e: MouseEvent): void => {
       const rect = panelRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const max = Math.min(980, window.innerWidth * 0.7);
-      setWidth(Math.round(Math.min(max, Math.max(340, rect.right - e.clientX))));
+      const max = docked
+        ? Math.min(980, maxDockedWidth)
+        : Math.min(980, window.innerWidth - 24);
+      setWidth(Math.round(Math.min(max, Math.max(MIN_PANEL_WIDTH, rect.right - e.clientX))));
     };
     const onUp = (): void => setResizing(false);
     document.body.style.cursor = 'col-resize';
@@ -53,7 +75,7 @@ export function VisionPanel(): JSX.Element {
       window.removeEventListener('mouseup', onUp);
       localStorage.setItem('visionPanelWidth', String(panelRef.current?.getBoundingClientRect().width ?? 520));
     };
-  }, [resizing]);
+  }, [resizing, docked, maxDockedWidth]);
 
   // Load artifacts; when something newer than we've seen arrives, jump to it.
   useEffect(() => {
@@ -173,8 +195,8 @@ export function VisionPanel(): JSX.Element {
     <aside
       ref={panelRef}
       data-vision-panel
-      style={{ width }}
-      className="flex-shrink-0 relative z-10 bg-bg-sidebar border-l border-border flex flex-col h-full"
+      style={{ width: renderedWidth }}
+      className={`${docked ? 'flex-shrink-0 relative z-10' : 'absolute inset-y-0 right-0 z-30 shadow-2xl'} bg-bg-sidebar border-l border-border flex flex-col h-full`}
     >
       {/* Resize handle */}
       <div

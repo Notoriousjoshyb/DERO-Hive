@@ -16,6 +16,7 @@ const DEFAULTS: AppSettings = {
   showReasoning: true,
   autoTitle: true,
   maxConcurrentToolCalls: 4,
+  maxAgenticRounds: 20,
   toolApprovalMode: 'always',
   telemetry: false,
   experimentalFeatures: false,

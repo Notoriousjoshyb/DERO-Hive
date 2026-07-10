@@ -68,7 +68,7 @@ export function AgentsModal(): JSX.Element | null {
   const deleteAgent = async (id: string): Promise<void> => {
     await updateSettings({ customAgents: customAgents.filter((a) => a.id !== id) });
     // Don't leave the composer pointing at a deleted agent.
-    if (composerAgent === id) setComposerAgent('default');
+    if (composerAgent === id) setComposerAgent('orchestrator');
   };
 
   return (

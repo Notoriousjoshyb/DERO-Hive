@@ -26,6 +26,7 @@ import { ensureDirs } from './utils/paths';
 import { McpManager } from './mcp/manager';
 import { WhisperManager } from './whisper/manager';
 import { SimulatorManager } from './simulator/manager';
+import { BrowserBridge } from './browserBridge';
 import { terminalDisposeAll } from './terminal/session';
 import { shutdownAdapterCache } from './providers/registry';
 import type { AppSettings } from '../shared/types';
@@ -36,6 +37,7 @@ let mainWindow: BrowserWindow | null = null;
 let mcpManager: McpManager | null = null;
 let whisperManager: WhisperManager | null = null;
 let simulatorManager: SimulatorManager | null = null;
+let browserBridge: BrowserBridge | null = null;
 
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -253,6 +255,10 @@ app.whenReady().then(async () => {
   simulatorManager = new SimulatorManager((status) => {
     mainWindow?.webContents.send(IPC.SIMULATOR_STATUS_CHANGED, status);
   });
+  browserBridge = new BrowserBridge(() => mainWindow, () => whisperManager);
+  // The browser extension should work whenever the app is running, so the
+  // loopback bridge starts with the app instead of with the Companion panel.
+  void browserBridge.setEnabled(true).catch((err) => logger.error('browser-bridge', 'failed to start', err));
 
   // Register IPC handlers
   registerChatHandlers(() => mainWindow, mcpManager);
@@ -272,6 +278,10 @@ app.whenReady().then(async () => {
   registerProjectHandlers();
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
+  ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120 });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120 });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_BIND, (_event, requestId: string, conversationId: string) => browserBridge?.bind(requestId, conversationId) ?? { ok: false });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_SELECTION, (_event, providerId?: string, model?: string) => browserBridge?.reportSelection(providerId, model) ?? { ok: false });
 
   // Window controls (custom titlebar)
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
@@ -322,6 +332,8 @@ app.on('before-quit', async (event) => {
   try { terminalDisposeAll(); } catch { /* ignore */ }
   try { await shutdownAdapterCache(); } catch { /* ignore */ }
   try { await simulatorManager?.stop(); } catch { /* ignore */ }
+  try { await browserBridge?.stop(); } catch { /* ignore */ }
+  try { browserBridge?.dispose(); } catch { /* ignore */ }
   try { await whisperManager?.stop(); } catch { /* ignore */ }
   try { await mcpManager?.shutdownAll(); } catch { /* ignore */ }
   closeDb();

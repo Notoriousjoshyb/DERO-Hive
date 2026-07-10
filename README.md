@@ -15,6 +15,7 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - Built-in file, shell, Git, artifact, voice, and permission workflows. Keyboard shortcuts cheatsheet on `?`.
 - MCP server support with a curated Discover catalog, bundled DERO MCP resources, and DERO-focused skills.
 - Appearance engine: themes, accent colour override, and custom CSS injection.
+- Browser Companion extension (Chrome/Edge side panel) that sends page context to DERO Hive and streams replies live back into the browser. See below.
 
 ## Requirements
 
@@ -51,7 +52,7 @@ npm run build:win
 
 ## Providers
 
-Use **Settings â†’ Providers** to add a provider. API-backed providers fetch their model list after being saved.
+Use **Settings → Providers** to add a provider. API-backed providers fetch their model list after being saved.
 
 | Provider | Authentication | Notes |
 |---|---|---|
@@ -65,13 +66,26 @@ Use **Settings â†’ Providers** to add a provider. API-backed providers fetc
 
 ### Codex (ChatGPT) setup
 
-1. Add **Codex (ChatGPT)** in Settings â†’ Providers and save it.
+1. Add **Codex (ChatGPT)** in Settings → Providers and save it.
 2. Complete the browser sign-in if Codex has no reusable local login session.
 3. DERO Hive automatically imports the available Codex models and their reported thinking levels.
 
 The Codex adapter stays alive for the app session. Normal messages reuse the existing ACP process and do not intentionally start another browser login. On Windows, the bundled Codex app-server is launched hidden to avoid console-window flashes.
 
 Codex normally stores its reusable credentials in the operating-system credential store or `~/.codex/auth.json`. Treat `auth.json` as a password and never commit or share it.
+
+## Browser Companion extension
+
+`browser-extension/` contains a Manifest V3 side-panel extension for Chrome/Edge. Load it via `chrome://extensions` → Developer mode → **Load unpacked**, then open it with the toolbar icon or **Alt+H**.
+
+While the desktop app is running, the extension pairs automatically with a loopback-only bridge on `127.0.0.1:43120` (ephemeral token, rotated each app start). It can then:
+
+- Capture the active page, a drag-to-snip region, or the open-tab list as transparent, untrusted context.
+- Stream replies token-by-token into the side panel (SSE) with collapsed model thinking, tool-activity chips, and Markdown rendering.
+- Sync the selected provider/model with the app in both directions.
+- Dictate prompts through the app's bundled local Whisper — fully offline.
+
+Extension requests always run as a single agent and never move focus away from the browser. Full details in [`browser-extension/README.md`](browser-extension/README.md).
 
 ## Thinking controls
 
@@ -93,6 +107,7 @@ src/main/                 Electron main process, IPC, providers, tools, and serv
 src/preload/              Context-isolated renderer API
 src/renderer/src/         React user interface and Zustand state
 src/shared/               Shared types, presets, model metadata, capabilities
+browser-extension/        Chrome/Edge side-panel Browser Companion (unpacked MV3 extension)
 resources/mcp/            Bundled DERO MCP server source and assets
 resources/skills/         Bundled DERO development skills
 scripts/                  Resource setup and Codex ACP patch scripts
@@ -102,7 +117,7 @@ scripts/                  Resource setup and Codex ACP patch scripts
 
 | Variable | Purpose |
 |---|---|
-| `DERO_HIVE_DATA_DIR` | Overrides DERO Hiveâ€™s local app-data directory. |
+| `DERO_HIVE_DATA_DIR` | Overrides DERO Hive's local app-data directory. |
 | `CODEX_PATH` | Optional custom Codex executable used by ACP. |
 
 ## Acknowledgments

@@ -132,6 +132,12 @@ declare global {
         noReleases?: boolean; error?: string;
       }>;
       updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => Promise<{ ok: boolean; launched?: boolean; error?: string }>;
+      browserBridgeSetEnabled: (enabled: boolean) => Promise<{ enabled: boolean; port: number; pairingCode?: string }>;
+      browserBridgeStatus: () => Promise<{ enabled: boolean; port: number; pairingCode?: string }>;
+      browserBridgeBind: (requestId: string, conversationId: string) => Promise<{ ok: boolean }>;
+      onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => () => void;
+      browserBridgeReportSelection: (providerId?: string, model?: string) => Promise<{ ok: boolean }>;
+      onBrowserBridgeSelectModel: (cb: (data: { providerId: string; model: string }) => void) => () => void;
 
       winMinimize: () => Promise<void>;
       winMaximize: () => Promise<boolean>;

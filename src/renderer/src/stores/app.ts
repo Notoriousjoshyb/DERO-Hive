@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showReasoning: true,
   autoTitle: true,
   maxConcurrentToolCalls: 4,
+  maxAgenticRounds: 20,
   toolApprovalMode: 'always',
   telemetry: false,
   experimentalFeatures: false,
@@ -66,6 +67,19 @@ export interface FileChange {
   bytesAdded: number;
   isNewFile?: boolean;
   at: number;
+}
+
+export interface SwarmWorkerActivity {
+  agentId: string;
+  agentName: string;
+  task: string;
+  dialogue: Message[];
+  error?: string;
+}
+
+export interface SwarmRunActivity {
+  task: string;
+  workers: SwarmWorkerActivity[];
 }
 
 interface PendingPermission {
@@ -201,12 +215,14 @@ interface AppState {
   // UI state
   sidebarOpen: boolean;
   visionOpen: boolean;
+  companionOpen: boolean;
   settingsOpen: boolean;
   rightSidebarOpen: boolean;
   codeTabOpen: boolean;
   toggleSidebar: () => void;
   toggleVision: () => void;
   setVisionOpen: (open: boolean) => void;
+  toggleCompanion: () => void;
   setSettingsOpen: (open: boolean) => void;
   toggleRightSidebar: () => void;
   toggleCodeTab: () => void;
@@ -232,6 +248,15 @@ interface AppState {
   comparePrompt: string;
   openCompare: (prompt?: string) => void;
   closeCompare: () => void;
+
+  // Parallel specialist swarm launcher
+  swarmOpen: boolean;
+  swarmPrompt: string;
+  swarmAutoLaunch: boolean;
+  openSwarm: (prompt?: string, autoLaunch?: boolean) => void;
+  closeSwarm: () => void;
+  swarmRuns: Record<string, SwarmRunActivity>;
+  recordSwarmRun: (conversationId: string, run: SwarmRunActivity) => void;
 
   // Full-text search dialog (Ctrl+Shift+F)
   searchDialogOpen: boolean;
@@ -288,7 +313,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       settings,
       composerFocusMode: settings.composerFocusMode ?? false,
       composerPlanMode: settings.composerPlanMode ?? false,
-      composerAgent: settings.composerAgent ?? 'default',
+      composerAgent: settings.composerAgent === 'default' ? 'orchestrator' : settings.composerAgent ?? 'orchestrator',
       composerReasoning: settings.composerReasoning ?? 'medium'
     });
     if (typeof document !== 'undefined') {
@@ -596,7 +621,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   composerFocusMode: false,
   composerPlanMode: false,
-  composerAgent: 'default',
+  composerAgent: 'orchestrator',
   composerReasoning: 'medium',
   toggleComposerFocus: () => {
     const next = !get().composerFocusMode;
@@ -641,12 +666,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sidebarOpen: true,
   visionOpen: false,
+  companionOpen: false,
   settingsOpen: false,
   rightSidebarOpen: false,
   codeTabOpen: false,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen })),
-  setVisionOpen: (open) => set({ visionOpen: open }),
+  toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen, companionOpen: s.visionOpen ? s.companionOpen : false })),
+  setVisionOpen: (open) => set({ visionOpen: open, companionOpen: open ? false : get().companionOpen }),
+  toggleCompanion: () => set((s) => ({ companionOpen: !s.companionOpen, visionOpen: s.companionOpen ? s.visionOpen : false })),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
 
   artifactsChangedAt: 0,
@@ -673,6 +700,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   comparePrompt: '',
   openCompare: (prompt = '') => set({ compareOpen: true, comparePrompt: prompt }),
   closeCompare: () => set({ compareOpen: false }),
+
+  swarmOpen: false,
+  swarmPrompt: '',
+  swarmAutoLaunch: false,
+  openSwarm: (prompt = '', autoLaunch = false) => set({ swarmOpen: true, swarmPrompt: prompt, swarmAutoLaunch: autoLaunch }),
+  closeSwarm: () => set({ swarmOpen: false, swarmAutoLaunch: false }),
+  swarmRuns: {},
+  recordSwarmRun: (conversationId, run) => set((s) => ({ swarmRuns: { ...s.swarmRuns, [conversationId]: run } })),
 
   searchDialogOpen: false,
   setSearchDialogOpen: (open) => set({ searchDialogOpen: open }),

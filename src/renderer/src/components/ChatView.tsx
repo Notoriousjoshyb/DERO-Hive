@@ -7,6 +7,7 @@ import { TaskListPanel } from './TaskListPanel';
 import { CompactionToast } from './CompactionToast';
 import { extractThinking } from '../lib/thinking';
 import { ThinkingDisclosure } from './Message';
+import { SwarmActivity } from './SwarmActivity';
 
 export function ChatView(): JSX.Element {
   const messages = useAppStore((s) => s.currentMessages);
@@ -76,6 +77,7 @@ export function ChatView(): JSX.Element {
                 </button>
               </div>
             )}
+            <SwarmActivity conversationId={currentId} />
             <MessageList />
             {(streamingContent || streamingReasoning) && (
               <StreamingMessage content={streamingContent} reasoning={streamingReasoning} />

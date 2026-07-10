@@ -1066,7 +1066,7 @@ function ProjectsSection({
                   >
                     <span>+ New chat</span>
                   </button>
-                  {projectConvs.slice(0, 5).map((c) => (
+                  {projectConvs.map((c) => (
                     <ConvItem
                       key={c.id}
                       conv={c}

@@ -134,6 +134,20 @@ const api = {
   version: () => ipcRenderer.invoke(IPC.APP_VERSION),
   updateCheck: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => ipcRenderer.invoke(IPC.UPDATE_INSTALL, a),
+  browserBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SET_ENABLED, enabled) as Promise<{ enabled: boolean; port: number; pairingCode?: string }>,
+  browserBridgeStatus: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_STATUS) as Promise<{ enabled: boolean; port: number; pairingCode?: string }>,
+  browserBridgeBind: (requestId: string, conversationId: string) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_BIND, requestId, conversationId) as Promise<{ ok: boolean }>,
+  onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => {
+    const l = (_: IpcRendererEvent, data: { detail: string; requestId?: string; providerId?: string; model?: string }) => cb(data);
+    ipcRenderer.on('browser-bridge:context', l);
+    return () => ipcRenderer.off('browser-bridge:context', l);
+  },
+  browserBridgeReportSelection: (providerId?: string, model?: string) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SELECTION, providerId, model) as Promise<{ ok: boolean }>,
+  onBrowserBridgeSelectModel: (cb: (data: { providerId: string; model: string }) => void) => {
+    const l = (_: IpcRendererEvent, data: { providerId: string; model: string }) => cb(data);
+    ipcRenderer.on('browser-bridge:select-model', l);
+    return () => ipcRenderer.off('browser-bridge:select-model', l);
+  },
 
   // Whisper (local STT)
   whisperStatus: () => ipcRenderer.invoke(IPC.WHISPER_STATUS),
