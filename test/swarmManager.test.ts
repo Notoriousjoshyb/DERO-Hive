@@ -19,7 +19,8 @@ const state = vi.hoisted(() => ({
   gitDenials: 0,
   workerContent: '',
   pauseAfterTool: null as Promise<void> | null,
-  afterToolReached: null as (() => void) | null
+  afterToolReached: null as (() => void) | null,
+  incomingDriverAttack: false
 }));
 
 vi.mock('../src/main/db/client', () => ({
@@ -56,7 +57,14 @@ vi.mock('../src/main/providers/registry', () => ({
       }
       if (state.buildEdits && tools.includes('write_file') && round === 0) {
         const filename = state.workerFiles[req.conversationId] ||= `worker-${++state.nextWorker}.txt`;
-        yield { type: 'tool_calls', toolCalls: [{ id: `call-${filename}`, name: 'write_file', arguments: JSON.stringify({ path: filename, content: state.workerContent || filename }) }] };
+        const toolCalls = state.incomingDriverAttack && filename === 'worker-1.txt'
+          ? [
+              { id: 'incoming-attrs', name: 'write_file', arguments: JSON.stringify({ path: '.gitattributes', content: 'victim.txt filter=swarmtest\n' }) },
+              { id: 'incoming-filter', name: 'write_file', arguments: JSON.stringify({ path: 'filter.sh', content: '#!/bin/sh\ncat\nprintf ran > "$SWARM_INCOMING_MARKER"\n' }) },
+              { id: 'incoming-victim', name: 'write_file', arguments: JSON.stringify({ path: 'victim.txt', content: 'victim\n' }) }
+            ]
+          : [{ id: `call-${filename}`, name: 'write_file', arguments: JSON.stringify({ path: filename, content: state.workerContent || filename }) }];
+        yield { type: 'tool_calls', toolCalls };
         yield { type: 'done' };
         return;
       }
@@ -436,6 +444,197 @@ describe('SwarmManager research pipeline', () => {
       state.afterToolReached = null;
       state.workerContent = '';
       for (const path of quarantines) rmSync(path, { recursive: true, force: true });
+      db.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('audits the exact incoming worker commit before a fast-forward merge can run its filter', async () => {
+    const db = makeDb();
+    state.db = db;
+    state.tools = [];
+    state.buildEdits = true;
+    state.rounds = {};
+    state.nextWorker = 0;
+    state.workerFiles = {};
+    state.incomingDriverAttack = true;
+    state.nativeToolScope = 'none';
+    state.nativeExecutionModes = [];
+    const repo = mkdtempSync(join(tmpdir(), 'hive-swarm-incoming-filter-'));
+    const marker = `${repo}-filter-ran`;
+    const previousMarker = process.env.SWARM_INCOMING_MARKER;
+    let swarmRoot = '';
+    let armed = false;
+    process.env.SWARM_INCOMING_MARKER = marker;
+    try {
+      execFileSync('git', ['init', '-b', 'main', repo]);
+      writeFileSync(join(repo, 'base.txt'), 'base');
+      execFileSync('git', ['-C', repo, 'add', 'base.txt']);
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
+      const baseHead = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('incoming-filter-project', repo);
+
+      let finish!: (run: import('../src/shared/types').SwarmRun) => void;
+      const finished = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { finish = resolve; });
+      const manager = new SwarmManager((run) => {
+        const worker = run.tasks.find((task) => task.phase === 'worker');
+        if (!armed && worker?.status === 'completed') {
+          execFileSync('git', ['-C', repo, 'config', 'filter.swarmtest.smudge', 'sh filter.sh']);
+          armed = true;
+        }
+        if (run.status === 'awaiting_apply' || run.status === 'failed') finish(run);
+      });
+      await manager.start({
+        prompt: 'introduce a target-tree filter', mode: 'build', providerId: 'fake', model: 'fake-model',
+        projectId: 'incoming-filter-project', workerCount: 1
+      });
+      const failed = await finished;
+      swarmRoot = dirname(failed.integrationPath!);
+      expect(armed).toBe(true);
+      expect(failed.status).toBe('failed');
+      expect(failed.tasks.find((task) => task.phase === 'worker')?.error)
+        .toMatch(/active executable Git attributes.*filter=swarmtest/);
+      expect(existsSync(marker)).toBe(false);
+      expect(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(baseHead);
+      expect(existsSync(join(repo, 'victim.txt'))).toBe(false);
+    } finally {
+      state.incomingDriverAttack = false;
+      if (previousMarker === undefined) delete process.env.SWARM_INCOMING_MARKER;
+      else process.env.SWARM_INCOMING_MARKER = previousMarker;
+      if (existsSync(marker)) unlinkSync(marker);
+      if (swarmRoot) rmSync(swarmRoot, { recursive: true, force: true });
+      db.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('audits an integration branch before recreating its missing worktree', async () => {
+    const db = makeDb();
+    state.db = db;
+    state.tools = [];
+    state.buildEdits = true;
+    state.rounds = {};
+    state.nextWorker = 0;
+    state.workerFiles = {};
+    state.incomingDriverAttack = false;
+    state.nativeToolScope = 'none';
+    state.nativeExecutionModes = [];
+    const repo = mkdtempSync(join(tmpdir(), 'hive-swarm-target-filter-'));
+    const marker = `${repo}-filter-ran`;
+    const previousMarker = process.env.SWARM_TARGET_MARKER;
+    process.env.SWARM_TARGET_MARKER = marker;
+    try {
+      execFileSync('git', ['init', '-b', 'main', repo]);
+      writeFileSync(join(repo, 'base.txt'), 'base');
+      execFileSync('git', ['-C', repo, 'add', 'base.txt']);
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
+      db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('target-filter-project', repo);
+
+      let finish!: (run: import('../src/shared/types').SwarmRun) => void;
+      const finished = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { finish = resolve; });
+      const manager = new SwarmManager((run) => {
+        if (run.status === 'awaiting_apply' || run.status === 'failed') finish(run);
+      });
+      await manager.start({
+        prompt: 'prepare one normal edit', mode: 'build', providerId: 'fake', model: 'fake-model',
+        projectId: 'target-filter-project', workerCount: 1
+      });
+      const ready = await finished;
+      expect(ready.status).toBe('awaiting_apply');
+
+      writeFileSync(join(ready.integrationPath!, '.gitattributes'), 'victim.txt filter=swarmtarget\n');
+      writeFileSync(join(ready.integrationPath!, 'filter.sh'), '#!/bin/sh\ncat\nprintf ran > "$SWARM_TARGET_MARKER"\n');
+      writeFileSync(join(ready.integrationPath!, 'victim.txt'), 'victim\n');
+      execFileSync('git', ['-C', ready.integrationPath!, 'add', '.']);
+      execFileSync('git', [
+        '-C', ready.integrationPath!, '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`,
+        '-c', 'commit.gpgSign=false', '-c', 'user.name=Test', '-c', 'user.email=test@invalid',
+        'commit', '-m', 'unreviewed target filter'
+      ]);
+      const maliciousHead = execFileSync('git', ['-C', ready.integrationPath!, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      execFileSync('git', ['-C', repo, 'worktree', 'remove', ready.integrationPath!]);
+      execFileSync('git', ['-C', repo, 'worktree', 'prune']);
+      execFileSync('git', ['-C', repo, 'config', 'filter.swarmtarget.smudge', 'sh filter.sh']);
+
+      await expect(manager.apply(ready.id)).rejects.toThrow(/active executable Git attributes.*filter=swarmtarget/);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(ready.integrationPath!)).toBe(false);
+      expect(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(ready.baseHead);
+
+      execFileSync('git', ['-C', repo, 'config', '--unset-all', 'filter.swarmtarget.smudge']);
+      execFileSync('git', [
+        '-C', repo, 'update-ref', `refs/heads/${ready.integrationBranch!}`, ready.integrationHead!, maliciousHead
+      ]);
+      const applied = await manager.apply(ready.id);
+      expect(applied.status).toBe('applied');
+      expect(existsSync(join(repo, 'worker-1.txt'))).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      state.incomingDriverAttack = false;
+      if (previousMarker === undefined) delete process.env.SWARM_TARGET_MARKER;
+      else process.env.SWARM_TARGET_MARKER = previousMarker;
+      if (existsSync(marker)) unlinkSync(marker);
+      db.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('audits the pinned integration commit before post-CAS recovery materializes it', async () => {
+    const db = makeDb();
+    state.db = db;
+    state.tools = [];
+    state.buildEdits = true;
+    state.rounds = {};
+    state.nextWorker = 0;
+    state.workerFiles = {};
+    state.incomingDriverAttack = true;
+    state.nativeToolScope = 'none';
+    state.nativeExecutionModes = [];
+    const repo = mkdtempSync(join(tmpdir(), 'hive-swarm-recovery-filter-'));
+    const marker = `${repo}-filter-ran`;
+    const previousMarker = process.env.SWARM_INCOMING_MARKER;
+    let swarmRoot = '';
+    process.env.SWARM_INCOMING_MARKER = marker;
+    try {
+      execFileSync('git', ['init', '-b', 'main', repo]);
+      writeFileSync(join(repo, 'base.txt'), 'base');
+      execFileSync('git', ['-C', repo, 'add', 'base.txt']);
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
+      db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('recovery-filter-project', repo);
+
+      let readyResolve!: (run: import('../src/shared/types').SwarmRun) => void;
+      const readyPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { readyResolve = resolve; });
+      const manager = new SwarmManager((run) => {
+        if (run.status === 'awaiting_apply') readyResolve(run);
+      });
+      await manager.start({
+        prompt: 'prepare a filtered integration tree', mode: 'build', providerId: 'fake', model: 'fake-model',
+        projectId: 'recovery-filter-project', workerCount: 1
+      });
+      const ready = await readyPromise;
+      swarmRoot = dirname(ready.integrationPath!);
+      execFileSync('git', ['-C', repo, 'config', 'filter.swarmtest.smudge', 'sh filter.sh']);
+      db.prepare("UPDATE swarm_runs SET status = 'applying' WHERE id = ?").run(ready.id);
+      execFileSync('git', [
+        '-C', repo, 'update-ref', 'refs/heads/main', ready.integrationHead!, ready.baseHead!
+      ]);
+
+      let fail!: (run: import('../src/shared/types').SwarmRun) => void;
+      const failedPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { fail = resolve; });
+      const recovering = new SwarmManager((run) => {
+        if (run.id === ready.id && run.status === 'failed') fail(run);
+      });
+      const failed = await failedPromise;
+      expect(recovering.get(ready.id)?.status).toBe('failed');
+      expect(failed.error).toMatch(/active executable Git attributes.*filter=swarmtest/);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(join(repo, 'victim.txt'))).toBe(false);
+    } finally {
+      state.incomingDriverAttack = false;
+      if (previousMarker === undefined) delete process.env.SWARM_INCOMING_MARKER;
+      else process.env.SWARM_INCOMING_MARKER = previousMarker;
+      if (existsSync(marker)) unlinkSync(marker);
+      if (swarmRoot) rmSync(swarmRoot, { recursive: true, force: true });
       db.close();
       rmSync(repo, { recursive: true, force: true });
     }

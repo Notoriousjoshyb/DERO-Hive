@@ -411,9 +411,19 @@ export class SwarmManager {
     for (const task of this.requireRun(run.id).tasks.filter((item) => item.phase === 'worker' && item.status === 'completed')) {
       if (!task.branchName) continue;
       throwIfAborted(signal);
-      if (await isAncestor(run.repoRoot!, task.branchName, run.integrationBranch!, signal)) continue;
       try {
-        await gitStep(signal, run.integrationPath!, 'merge', '--no-edit', task.branchName);
+        if (!task.worktreePath || !existsSync(task.worktreePath)
+          || !await validateLinkedWorktree(run.repoRoot!, task.worktreePath, task.branchName, signal)) {
+          throw new Error('Worker worktree identity changed before integration');
+        }
+        const workerHead = await resolveAndAuditGitTarget(
+          run.repoRoot!,
+          `refs/heads/${task.branchName}`,
+          signal
+        );
+        await assertCleanRepository(task.worktreePath, signal);
+        if (await isAncestor(run.repoRoot!, workerHead, run.integrationBranch!, signal)) continue;
+        await gitStep(signal, run.integrationPath!, 'merge', '--no-edit', workerHead);
       } catch (error) {
         await gitBestEffort(run.integrationPath!, 'merge', '--abort');
         if (signal.aborted) throw new AbortError();
@@ -457,11 +467,11 @@ export class SwarmManager {
     if (indexTree !== baseTree || unstaged) {
       throw new Error('Apply recovery refused to overwrite unexpected working-tree changes');
     }
-    await git(run.repoRoot!, 'read-tree', '--reset', '-u', run.integrationHead!);
+    await materializeGitTarget(run.repoRoot!, run.integrationHead!);
 
     const finalBranch = await git(run.repoRoot!, 'branch', '--show-current');
     if (finalBranch !== run.baseBranch) {
-      await git(run.repoRoot!, 'read-tree', '--reset', '-u', 'HEAD');
+      await materializeGitTarget(run.repoRoot!, 'HEAD');
     }
     await assertCleanRepository(run.repoRoot!);
   }
@@ -709,7 +719,10 @@ export function markInterruptedSwarmRuns(
 async function ensureWorktree(repoRoot: string, worktreePath: string, branch: string, base: string, signal?: AbortSignal): Promise<void> {
   throwIfAborted(signal);
   if (existsSync(worktreePath)) {
-    if (await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) return;
+    if (await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) {
+      await resolveAndAuditGitTarget(repoRoot, `refs/heads/${branch}`, signal);
+      return;
+    }
     await quarantineAppWorktree(worktreePath);
     await gitBestEffortMaybe(signal, repoRoot, 'worktree', 'prune');
   }
@@ -721,12 +734,29 @@ async function ensureWorktree(repoRoot: string, worktreePath: string, branch: st
     throwIfAborted(signal);
     branchExists = false;
   }
-  if (branchExists) await gitMaybe(signal, repoRoot, 'worktree', 'add', worktreePath, branch);
-  else await gitMaybe(signal, repoRoot, 'worktree', 'add', '-b', branch, worktreePath, base);
-  if (!await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) {
+  const targetHead = await resolveAndAuditGitTarget(
+    repoRoot,
+    branchExists ? `refs/heads/${branch}` : base,
+    signal
+  );
+  try {
+    if (branchExists) await gitMaybe(signal, repoRoot, 'worktree', 'add', '--no-checkout', worktreePath, branch);
+    else await gitMaybe(signal, repoRoot, 'worktree', 'add', '--no-checkout', '-b', branch, worktreePath, targetHead);
+    if (!await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) {
+      throw new Error(`Swarm worktree identity validation failed at ${worktreePath}`);
+    }
+    const attachedHead = await gitMaybe(signal, repoRoot, 'rev-parse', '--verify', `refs/heads/${branch}`);
+    if (attachedHead !== targetHead) throw new Error('Swarm worktree branch changed before checkout');
+    await materializeGitTarget(worktreePath, targetHead, signal);
+    const materializedHead = await gitMaybe(signal, repoRoot, 'rev-parse', '--verify', `refs/heads/${branch}`);
+    if (materializedHead !== targetHead || !await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) {
+      throw new Error('Swarm worktree branch changed during checkout');
+    }
+    await assertCleanRepository(worktreePath, signal);
+  } catch (error) {
     if (existsSync(worktreePath)) await quarantineAppWorktree(worktreePath);
     await gitBestEffortMaybe(signal, repoRoot, 'worktree', 'prune');
-    throw new Error(`Swarm worktree identity validation failed at ${worktreePath}`);
+    throw error;
   }
 }
 
@@ -790,6 +820,19 @@ async function gitStep(signal: AbortSignal, cwd: string, ...args: string[]): Pro
   return result;
 }
 
+async function resolveAndAuditGitTarget(cwd: string, treeish: string, signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
+  const target = await gitMaybe(signal, cwd, 'rev-parse', '--verify', `${treeish}^{commit}`);
+  await assertSafeGitConfiguration(cwd, target);
+  throwIfAborted(signal);
+  return target;
+}
+
+async function materializeGitTarget(cwd: string, treeish: string, signal?: AbortSignal): Promise<void> {
+  const target = await resolveAndAuditGitTarget(cwd, treeish, signal);
+  await gitMaybe(signal, cwd, 'read-tree', '--reset', '-u', target);
+}
+
 async function gitBestEffortMaybe(signal: AbortSignal | undefined, cwd: string, ...args: string[]): Promise<void> {
   try { await gitMaybe(signal, cwd, ...args); }
   catch {
@@ -826,7 +869,7 @@ function requiresGitSafetyAudit(args: string[]): boolean {
   return ['status', 'add', 'commit', 'merge', 'update-ref', 'read-tree', 'diff'].includes(args[0]);
 }
 
-async function assertSafeGitConfiguration(cwd: string): Promise<void> {
+async function assertSafeGitConfiguration(cwd: string, sourceTree?: string): Promise<void> {
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync('git', ['-C', cwd, 'config', '--null', '--name-only', '--get-regexp', '.*'], {
@@ -853,7 +896,9 @@ async function assertSafeGitConfiguration(cwd: string): Promise<void> {
   let paths: string;
   try {
     ({ stdout: paths } = await execFileAsync('git', [
-      '-C', cwd, '-c', 'core.fsmonitor=false', 'ls-files', '-co', '--exclude-standard', '-z'
+      '-C', cwd, '-c', 'core.fsmonitor=false', ...(sourceTree
+        ? ['ls-tree', '-r', '-z', '--name-only', sourceTree, '--']
+        : ['ls-files', '-co', '--exclude-standard', '-z'])
     ], {
       encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024,
       timeout: GIT_TIMEOUT_MS, env: sanitizedGitEnv()
@@ -865,7 +910,9 @@ async function assertSafeGitConfiguration(cwd: string): Promise<void> {
   if (!paths) return;
 
   const attributes = await execGitWithInput(cwd, [
-    '-c', 'core.fsmonitor=false', 'check-attr', '-z', 'filter', 'merge', 'diff', '--stdin'
+    '-c', 'core.fsmonitor=false', 'check-attr', '-z',
+    ...(sourceTree ? [`--source=${sourceTree}`] : []),
+    'filter', 'merge', 'diff', '--stdin'
   ], paths);
   const fields = attributes.split('\0');
   const active: string[] = [];
