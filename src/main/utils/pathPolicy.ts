@@ -1,5 +1,32 @@
-import { resolve, isAbsolute, relative } from 'node:path';
+import { resolve, isAbsolute, relative, dirname, basename, join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { getSetting, getDb } from '../db/client';
+
+/**
+ * Resolve symlinks in `p`, keeping any trailing segments that do not exist yet.
+ *
+ * Plain `resolve()` is lexical, so a symlink inside the workspace pointing out
+ * of it slips past a containment check and the file tools follow it. `realpath`
+ * would catch that but throws on paths that have not been created — which is
+ * every `write_file` to a new file — so canonicalise the deepest existing
+ * ancestor and re-append the rest.
+ */
+function canonicalize(p: string): string {
+  const abs = resolve(p);
+  let current = abs;
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      const real = realpathSync(current);
+      return missing.length ? join(real, ...missing.reverse()) : real;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return abs; // hit the filesystem root; nothing to resolve
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+}
 
 export function getWorkspaceRoot(): string {
   try {
@@ -10,8 +37,10 @@ export function getWorkspaceRoot(): string {
 }
 
 export function isPathWithin(absPath: string, root: string): boolean {
-  const rootAbs = resolve(root);
-  const targetAbs = resolve(absPath);
+  // Compare canonical paths: a symlink out of the workspace must not be
+  // mistaken for a path inside it.
+  const rootAbs = canonicalize(root);
+  const targetAbs = canonicalize(absPath);
   const rel = relative(rootAbs, targetAbs);
   return !rel.startsWith('..') && !isAbsolute(rel);
 }
