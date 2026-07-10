@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "minimum_chrome_version": "114",
   "permissions": ["activeTab", "tabs", "scripting", "storage", "sidePanel", "clipboardWrite"],
-  "host_permissions": ["http://127.0.0.1:43120/*", "http://*/*", "https://*/*"],
+  "host_permissions": ["http://127.0.0.1:43120/*"],
   "action": {
     "default_title": "Open DERO Hive Browser Companion",
     "default_icon": "icon.png"

@@ -37,6 +37,18 @@ describe('Browser Companion bridge security', () => {
     expect(panel).not.toMatch(/[?&]token=/);
   });
 
+  test('extension host access is limited to the local bridge', () => {
+    const manifest = JSON.parse(readFileSync(resolve('browser-extension/manifest.json'), 'utf8')) as {
+      permissions: string[];
+      host_permissions: string[];
+    };
+    const panel = readFileSync(resolve('browser-extension/sidepanel.js'), 'utf8');
+
+    expect(manifest.host_permissions).toEqual(['http://127.0.0.1:43120/*']);
+    expect(manifest.permissions).toEqual(expect.arrayContaining(['activeTab', 'scripting']));
+    expect(panel).toContain('chrome.scripting.executeScript');
+  });
+
   test('revoking pairing clears the persisted credential', () => {
     const bridge = new BrowserBridge(() => null);
 

@@ -450,7 +450,7 @@ async function syncStateFromHive() {
       renderModels();
     }
   } catch {
-    // Hive quit or restarted: fall back to the auto-pair loop.
+    // Hive quit or restarted: the saved credential reconnect loop will retry.
     if (store.bridgeConnected) { store.bridgeConnected = false; void persist(); applySettings(); }
   }
 }
