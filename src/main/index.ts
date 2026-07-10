@@ -7,6 +7,7 @@ import { registerChatHandlers } from './ipc/chat';
 import { registerProviderHandlers, startModelRefreshScheduler } from './ipc/providers';
 import { registerMcpHandlers } from './ipc/mcp';
 import { registerSkillHandlers } from './ipc/skills';
+import { registerPromptHandlers } from './ipc/prompts';
 import { registerFsHandlers } from './ipc/fs';
 import { registerShellHandlers } from './ipc/shell';
 import { registerSettingsHandlers } from './ipc/settings';
@@ -252,6 +253,7 @@ app.whenReady().then(async () => {
   startModelRefreshScheduler();
   registerMcpHandlers(mcpManager);
   registerSkillHandlers();
+  registerPromptHandlers();
   registerFsHandlers();
   registerShellHandlers();
   registerSettingsHandlers();
@@ -273,6 +275,11 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('window:close', () => mainWindow?.close());
   ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
+  ipcMain.handle('window:toggleFullscreen', () => {
+    if (!mainWindow) return false;
+    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    return mainWindow.isFullScreen();
+  });
 
   buildAppMenu();
   await createMainWindow();

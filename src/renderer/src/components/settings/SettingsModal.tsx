@@ -5,12 +5,13 @@ import { McpPanel } from './McpPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { ToolsPanel } from './ToolsPanel';
 import { ProjectsPanel } from './ProjectsPanel';
+import { PromptsPanel } from './PromptsPanel';
 
 interface Props {
   onClose: () => void;
 }
 
-type Tab = 'general' | 'providers' | 'mcp' | 'skills' | 'tools' | 'projects';
+type Tab = 'general' | 'providers' | 'mcp' | 'skills' | 'prompts' | 'tools' | 'projects';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: 'General' },
@@ -18,6 +19,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'projects', label: 'Projects' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'skills', label: 'Skills' },
+  { id: 'prompts', label: 'Prompts' },
   { id: 'tools', label: 'Tools & Permissions' }
 ];
 
@@ -65,6 +67,7 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
             {tab === 'projects' && <ProjectsPanel />}
             {tab === 'mcp' && <McpPanel />}
             {tab === 'skills' && <SkillsPanel />}
+            {tab === 'prompts' && <PromptsPanel />}
             {tab === 'tools' && <ToolsPanel />}
           </div>
         </div>

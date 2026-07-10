@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { GitPanel } from './GitPanel';
 import { FilesPanel } from './FilesPanel';
 import { ContextPanel } from './ContextPanel';
+import { UsagePanel } from './UsagePanel';
 
-type Tab = 'git' | 'files' | 'context';
+type Tab = 'git' | 'files' | 'context' | 'usage';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'git', label: 'Git' },
   { id: 'files', label: 'Files' },
-  { id: 'context', label: 'Context' }
+  { id: 'context', label: 'Context' },
+  { id: 'usage', label: 'Usage' }
 ];
 
 interface Props {
@@ -42,6 +44,7 @@ export function RightSidebar({ isOpen, onClose }: Props): JSX.Element | null {
         {tab === 'git' && <GitPanel />}
         {tab === 'files' && <FilesPanel />}
         {tab === 'context' && <ContextPanel />}
+        {tab === 'usage' && <UsagePanel />}
       </div>
     </aside>
   );

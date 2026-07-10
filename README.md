@@ -7,9 +7,13 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - Built-in provider presets for Codex (ChatGPT), OpenAI, Anthropic, OpenRouter, Groq, Ollama, OpenCode, MiniMax, Kimi, and Moonshot.
 - Persistent Codex ACP sessions with ChatGPT browser sign-in; no OpenAI API key is required for ChatGPT subscription use.
 - Per-model thinking controls. Known provider/model capabilities take precedence; unavailable capability metadata falls back to Medium reasoning.
-- Streaming chat with reasoning output, conversation history, token/context indicators, attachments, and project-aware working directories.
-- Built-in file, shell, Git, artifact, voice, and permission workflows.
-- MCP server support, bundled DERO MCP resources, and DERO-focused skills.
+- Streaming chat with reasoning output, conversation history, token/context indicators, attachments (drag-and-drop with reordering), and project-aware working directories.
+- Conversation power features: fork/revert from any message, full-text search (Ctrl+Shift+F) with jump-to-message, bookmarks, archiving, per-conversation system prompts, and Markdown/JSON export.
+- Composer agents (persona presets, built-in + custom), a prompt library inserted via `#` with `{{clipboard}}`/`{{date}}` variables, and fuzzy `/` skill + `@` file autocomplete.
+- Inline Mermaid diagrams and KaTeX math in chat; token & estimated-cost usage dashboard; native desktop notifications when responses finish in the background.
+- Built-in file, shell, Git, artifact, voice, and permission workflows. Keyboard shortcuts cheatsheet on `?`.
+- MCP server support with a curated Discover catalog, bundled DERO MCP resources, and DERO-focused skills.
+- Appearance engine: themes, accent colour override, and custom CSS injection.
 
 ## Requirements
 
@@ -122,6 +126,7 @@ DERO Hive is possible because of these open-source projects and services. This l
 - [eventsource-parser](https://github.com/rexxars/eventsource-parser) for streamed responses.
 - [fast-glob](https://github.com/mrmlnc/fast-glob) and [Fuse.js](https://www.fusejs.io/) for workspace and search features.
 - [Marked](https://marked.js.org/), [react-markdown](https://github.com/remarkjs/react-markdown), [remark-gfm](https://github.com/remarkjs/remark-gfm), [rehype-raw](https://github.com/rehypejs/rehype-raw), [rehype-highlight](https://github.com/rehypejs/rehype-highlight), [highlight.js](https://highlightjs.org/), and [Shiki](https://shiki.style/) for Markdown and code rendering.
+- [Mermaid](https://mermaid.js.org/), [KaTeX](https://katex.org/), [remark-math](https://github.com/remarkjs/remark-math), and [rehype-katex](https://github.com/remarkjs/remark-math/tree/main/packages/rehype-katex) for inline diagrams and math.
 - [Zod](https://zod.dev/) for runtime validation.
 - [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for local speech-to-text.
 

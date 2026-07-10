@@ -143,6 +143,64 @@ export function registerConvHandlers(): void {
     return { id: newConvId };
   });
 
+  ipcMain.handle(IPC.MSG_BOOKMARK, (_e, { messageId, bookmarked }: { messageId: string; bookmarked: boolean }) => {
+    getDb().prepare('UPDATE messages SET bookmarked = ? WHERE id = ?').run(bookmarked ? 1 : 0, messageId);
+    return { ok: true };
+  });
+
+  ipcMain.handle(IPC.BOOKMARK_LIST, () => {
+    const rows = getDb().prepare(`
+      SELECT m.id AS message_id, m.conversation_id, m.role, m.content, m.created_at, c.title
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE m.bookmarked = 1
+      ORDER BY m.created_at DESC
+      LIMIT 200
+    `).all() as Array<{ message_id: string; conversation_id: string; role: string; content: string; created_at: number; title: string }>;
+    return rows.map((r) => {
+      // Content may be a JSON content-part array — extract the first text part.
+      let preview = r.content;
+      try {
+        const j = JSON.parse(r.content);
+        if (Array.isArray(j)) preview = (j.find((p) => p?.type === 'text') as { text?: string } | undefined)?.text || '[attachment]';
+      } catch { /* plain string */ }
+      return {
+        messageId: r.message_id,
+        conversationId: r.conversation_id,
+        conversationTitle: r.title,
+        role: r.role,
+        preview: preview.replace(/\s+/g, ' ').trim().slice(0, 120),
+        createdAt: r.created_at
+      };
+    });
+  });
+
+  // Token usage aggregated per model for the dashboard. usage is stored as a
+  // JSON blob on assistant messages — SQLite's json_extract does the math.
+  ipcMain.handle(IPC.USAGE_STATS, () => {
+    const query = getDb().prepare(`
+      SELECT
+        COALESCE(model, 'unknown') AS model,
+        COALESCE(provider, 'unknown') AS provider,
+        COUNT(*) AS messages,
+        COALESCE(SUM(json_extract(usage, '$.promptTokens')), 0) AS promptTokens,
+        COALESCE(SUM(json_extract(usage, '$.completionTokens')), 0) AS completionTokens,
+        COALESCE(SUM(json_extract(usage, '$.totalTokens')), 0) AS totalTokens
+      FROM messages
+      WHERE role = 'assistant' AND usage IS NOT NULL AND created_at >= ?
+      GROUP BY model, provider
+      ORDER BY totalTokens DESC
+    `);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const now = Date.now();
+    return {
+      today: query.all(startOfToday.getTime()),
+      week: query.all(now - 7 * 24 * 3600_000),
+      month: query.all(now - 30 * 24 * 3600_000)
+    };
+  });
+
   ipcMain.handle(IPC.CONV_SEARCH, (_e, q: string) => {
     if (!q.trim()) return [];
     // Quote each term so FTS5 operators/punctuation in user input ("-", '"',
@@ -399,6 +457,7 @@ function rowToMsg(row: Record<string, unknown>): Message {
     provider: row.provider as string | undefined,
     usage,
     error: row.error as string | undefined,
-    createdAt: row.created_at as number
+    createdAt: row.created_at as number,
+    bookmarked: row.bookmarked === 1
   };
 }

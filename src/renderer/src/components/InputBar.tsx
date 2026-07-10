@@ -5,6 +5,7 @@ import { ComposerToolbar } from './ComposerToolbar';
 import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
 import { thinkingOptionsFor } from '@shared/thinkingCapabilities';
+import { resolveAgent } from '@shared/agents';
 
 interface Props {
   conversationId?: string;
@@ -16,7 +17,7 @@ const HELP_HINTS = [
   { key: '@', label: 'files/agents' },
   { key: '/', label: 'commands' },
   { key: '!', label: 'shell' },
-  { key: '#', label: 'snippets' }
+  { key: '#', label: 'prompts' }
 ];
 
 export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
@@ -25,6 +26,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   const pendingAttachments = useAppStore((s) => s.pendingAttachments);
   const addAttachment = useAppStore((s) => s.addAttachment);
   const removeAttachment = useAppStore((s) => s.removeAttachment);
+  const reorderAttachments = useAppStore((s) => s.reorderAttachments);
   const clearAttachments = useAppStore((s) => s.clearAttachments);
   const isStreaming = useAppStore((s) => s.isStreaming);
   const startStreaming = useAppStore((s) => s.startStreaming);
@@ -36,7 +38,12 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
   const [text, setText] = useState('');
   const [ghModal, setGhModal] = useState<{ url: string } | null>(null);
+  const [dragIdx, setDragIdx] = useState<number | null>(null); // chip being reordered
+  const [fileDropActive, setFileDropActive] = useState(false); // OS files hovering over the composer
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // The autocomplete menu registers a key handler here; a `true` return means
+  // it consumed the key (e.g. Enter selected a match instead of sending).
+  const autocompleteKeyRef = useRef<((e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean) | null>(null);
 
   // Auto-grow textarea
   useEffect(() => {
@@ -114,6 +121,13 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     if (!providerId) { state.setChatError('Add a provider in Settings → Providers first.'); return; }
     if (!model) { state.setChatError(`No model available for "${providerId}".`); return; }
 
+    // Offline guard — local providers (Ollama etc.) still work without a network.
+    const activeProvider = state.providers.find((pp) => pp.id === providerId);
+    if (!navigator.onLine && activeProvider && !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(activeProvider.baseUrl)) {
+      state.setChatError('You appear to be offline — this provider needs a network connection.');
+      return;
+    }
+
     state.setChatError(null);
 
     let prompt = content;
@@ -147,6 +161,10 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       systemPrompt = (systemPrompt ? systemPrompt + '\n' : '') +
         'Plan mode is enabled. Think step-by-step and present a plan (numbered steps) before taking any action. Wait for user confirmation before executing tools.';
     }
+
+    // Composer agent persona — resolved here, layered onto the base prompt in main.
+    const activeAgent = resolveAgent(state.composerAgent, settings.customAgents);
+    const agentPrompt = activeAgent.prompt.trim() || undefined;
 
     let convId = conversationId;
     if (!convId) {
@@ -203,6 +221,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
         messages: messagesToSend,
         attachments: pendingAttachments.map((a) => ({ type: a.type, filename: a.filename, mimeType: a.mimeType, data: a.data })),
         systemPrompt,
+        agentPrompt,
         planMode: composerPlanMode || undefined,
         toolApprovalModeOverride: settings.toolApprovalMode,
         reasoning
@@ -219,6 +238,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (autocompleteKeyRef.current?.(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && settings.sendOnEnter) {
       e.preventDefault();
       void submit();
@@ -245,6 +265,35 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
   const stop = (): void => {
     void abortChat();
+  };
+
+  // OS file drop → attach. Directories arrive with size 0 and no type; skip them.
+  const handleFileDrop = async (e: React.DragEvent): Promise<void> => {
+    e.preventDefault();
+    setFileDropActive(false);
+    const files = Array.from(e.dataTransfer.files);
+    for (const f of files) {
+      if (f.size === 0 && !f.type) continue;
+      if (f.size > 20 * 1024 * 1024) {
+        useAppStore.getState().setChatError(`"${f.name}" is larger than 20 MB — attach a smaller file.`);
+        continue;
+      }
+      try {
+        const data = await fileToBase64(f);
+        const type: Attachment['type'] =
+          f.type.startsWith('image/') ? 'image' :
+          f.type.startsWith('audio/') ? 'audio' :
+          f.type === 'application/pdf' ? 'pdf' : 'file';
+        addAttachment({
+          id: crypto.randomUUID(),
+          type,
+          filename: f.name,
+          mimeType: f.type || 'application/octet-stream',
+          size: f.size,
+          data
+        });
+      } catch { /* unreadable file — skip */ }
+    }
   };
 
   // Live dictation: VoiceInput emits the full transcript of the current
@@ -278,7 +327,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             <ContextIndicator promptChars={text.length} />
           </div>
         </div>
-        <ComposerAutocomplete text={text} setText={setText} textareaRef={textareaRef} />
+        <ComposerAutocomplete text={text} setText={setText} textareaRef={textareaRef} keyHandlerRef={autocompleteKeyRef} />
 
         {ghModal && <GhPreviewModal url={ghModal.url} onClose={() => setGhModal(null)} onInsert={(md) => {
           setText((t) => t + (t ? '\n\n' : '') + md);
@@ -287,8 +336,24 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
         {pendingAttachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
-            {pendingAttachments.map((a) => (
-              <div key={a.id} className="flex items-center gap-1.5 bg-bg-elev border border-border rounded-lg pl-1.5 pr-1 py-1 text-xs shadow-elev-sm animate-fade-in">
+            {pendingAttachments.map((a, i) => (
+              <div
+                key={a.id}
+                draggable
+                onDragStart={(e) => { setDragIdx(i); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragEnd={() => setDragIdx(null)}
+                onDragOver={(e) => { if (dragIdx !== null) e.preventDefault(); }}
+                onDrop={(e) => {
+                  if (dragIdx === null) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  reorderAttachments(dragIdx, i);
+                  setDragIdx(null);
+                }}
+                title="Drag to reorder"
+                className={`flex items-center gap-1.5 bg-bg-elev border rounded-lg pl-1.5 pr-1 py-1 text-xs shadow-elev-sm animate-fade-in cursor-grab active:cursor-grabbing ${
+                  dragIdx === i ? 'opacity-40 border-accent/60' : 'border-border'
+                }`}>
                 {a.type === 'image' ? (
                   <img src={`data:${a.mimeType};base64,${a.data}`} alt={a.filename} className="w-7 h-7 object-cover rounded-md" />
                 ) : (
@@ -309,7 +374,20 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
         <div
           ref={wrapperRef}
-          className={`bg-bg-input border rounded-2xl shadow-composer transition-all duration-200 focus-within:border-accent/70 focus-within:shadow-[0_0_0_3px_var(--accent-soft),var(--shadow-composer)] ${composerFocusMode ? 'border-accent/60' : 'border-border'}`}
+          onDragOver={(e) => {
+            // Only react to OS file drags — chip reordering is handled per-chip.
+            if (dragIdx === null && e.dataTransfer.types.includes('Files')) {
+              e.preventDefault();
+              setFileDropActive(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setFileDropActive(false);
+          }}
+          onDrop={(e) => { if (dragIdx === null) void handleFileDrop(e); }}
+          className={`bg-bg-input border rounded-2xl shadow-composer transition-all duration-200 focus-within:border-accent/70 focus-within:shadow-[0_0_0_3px_var(--accent-soft),var(--shadow-composer)] ${
+            fileDropActive ? 'border-accent border-dashed bg-accent-soft' : composerFocusMode ? 'border-accent/60' : 'border-border'
+          }`}
         >
           <textarea
             ref={textareaRef}
@@ -395,4 +473,17 @@ function GhPreviewModal({ url, onClose, onInsert }: { url: string; onClose: () =
       </div>
     </div>
   );
+}
+
+// Read a dropped File into base64 (dataURL minus the "data:...;base64," prefix).
+function fileToBase64(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = r.result as string;
+      resolve(s.slice(s.indexOf(',') + 1));
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(f);
+  });
 }

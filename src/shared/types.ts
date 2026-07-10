@@ -21,6 +21,17 @@ export interface Message {
   provider?: string;
   usage?: TokenUsage;
   error?: string;
+  bookmarked?: boolean;
+}
+
+// A bookmarked message as listed in the sidebar
+export interface BookmarkEntry {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  role: Role;
+  preview: string;
+  createdAt: number;
 }
 
 export interface TokenUsage {
@@ -57,6 +68,8 @@ export interface ChatRequest {
   topP?: number;
   maxTokens?: number;
   systemPrompt?: string;
+  /** Persona prompt from the composer's agent picker — layered on top of the base system prompt in main. */
+  agentPrompt?: string;
   stream?: boolean;
   reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
   planMode?: boolean;
@@ -150,6 +163,17 @@ export interface McpServerStatus {
   prompts: { name: string; description?: string; arguments?: unknown[] }[];
 }
 
+// Composer agent — a named persona (system prompt preset) selectable in the
+// composer toolbar. Built-ins live in shared/agents.ts; custom ones persist in
+// AppSettings.customAgents.
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  prompt: string;
+  description?: string;
+  builtin?: boolean;
+}
+
 export interface Skill {
   id: string;
   name: string;
@@ -159,6 +183,17 @@ export interface Skill {
   enabled: boolean;
   builtin?: boolean;
   category?: string;
+}
+
+// Reusable prompt template (Prompt Library). Inserted via the "#" composer
+// trigger; {{clipboard}} and {{date}} interpolate at insert time.
+export interface PromptTemplate {
+  id: string;
+  title: string;
+  content: string;
+  category?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Project {
@@ -221,16 +256,20 @@ export interface AppSettings {
   workingDirectory?: string;
   codeFolder?: string; // last folder opened in the Code tab explorer (persists across sessions)
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
+  accentColor?: string; // hex override for the accent colour (empty = theme default)
+  customCss?: string; // user CSS injected after app styles
   telemetry: boolean;
   experimentalFeatures: boolean;
   // Composer (per-session, but persists in settings)
   composerFocusMode?: boolean;
   composerPlanMode?: boolean;
-  composerAgent?: string; // "default" | other
+  composerAgent?: string; // agent id: "default", "explore", "review", or a custom agent's id
+  customAgents?: AgentDefinition[]; // user-defined composer agents (personas)
   composerReasoning?: ThinkingEffort;
   microphoneDeviceId?: string;
   voiceNotificationSounds?: boolean;
   voiceNotificationVolume?: number;
+  desktopNotifications?: boolean; // native OS notification when a response finishes in the background (default true)
   voiceSttEndpoint?: string;
   // Local Whisper.cpp speech-to-text
   whisperEnabled?: boolean; // auto-start local server with the app (default true)
@@ -256,6 +295,22 @@ export interface Artifact {
   title?: string;
   content: string;
   createdAt: number;
+}
+
+// Aggregated token usage for the dashboard (per model, per period)
+export interface UsageModelRow {
+  model: string;
+  provider: string;
+  messages: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface UsageStats {
+  today: UsageModelRow[];
+  week: UsageModelRow[];
+  month: UsageModelRow[];
 }
 
 export interface SearchResult {
@@ -285,6 +340,13 @@ export const IPC = {
   CONV_COMPACT: 'conv:compact',
   CONV_COMPACTED: 'conv:compacted',
 
+  // Usage / cost dashboard
+  USAGE_STATS: 'usage:stats',
+
+  // Message bookmarks
+  MSG_BOOKMARK: 'msg:bookmark',
+  BOOKMARK_LIST: 'bookmark:list',
+
   // Providers
   PROVIDER_LIST: 'provider:list',
   PROVIDER_SAVE: 'provider:save',
@@ -308,6 +370,11 @@ export const IPC = {
   SKILL_LIST: 'skill:list',
   SKILL_SAVE: 'skill:save',
   SKILL_DELETE: 'skill:delete',
+
+  // Prompt library
+  PROMPT_LIST: 'prompt:list',
+  PROMPT_SAVE: 'prompt:save',
+  PROMPT_DELETE: 'prompt:delete',
 
   // Projects
   PROJECT_LIST: 'project:list',

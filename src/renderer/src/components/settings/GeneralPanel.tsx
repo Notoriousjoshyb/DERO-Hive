@@ -137,6 +137,36 @@ export function GeneralPanel(): JSX.Element {
             <option value="monokai">Monokai</option>
           </select>
         </Field>
+
+        <Field label="Accent colour" hint="Overrides the theme accent everywhere. Reset to return to the default.">
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={settings.accentColor || '#c26647'}
+              onChange={(e) => updateSettings({ accentColor: e.target.value })}
+              className="w-8 h-8 rounded cursor-pointer bg-transparent border border-border p-0.5"
+            />
+            {settings.accentColor && (
+              <button
+                onClick={() => updateSettings({ accentColor: undefined })}
+                className="btn-secondary text-xs"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </Field>
+
+        <Field label="Custom CSS" hint="Injected after the app's styles — targets any selector. Leave empty to disable.">
+          <textarea
+            value={settings.customCss || ''}
+            onChange={(e) => updateSettings({ customCss: e.target.value || undefined })}
+            placeholder={'.prose-hive { line-height: 1.8; }\n[data-message-id] { border-radius: 4px; }'}
+            rows={5}
+            spellCheck={false}
+            className="input w-full resize-y font-mono text-xs leading-relaxed"
+          />
+        </Field>
       </Section>
 
       <Section title="Default model">
@@ -196,6 +226,9 @@ export function GeneralPanel(): JSX.Element {
         </Field>
         <Field label="Show token usage" hint="Display token counts under assistant messages.">
           <input type="checkbox" checked={settings.showTokenUsage} onChange={(e) => updateSettings({ showTokenUsage: e.target.checked })} className="accent-accent w-4 h-4" />
+        </Field>
+        <Field label="Desktop notifications" hint="Notify when a response finishes while the window is in the background.">
+          <input type="checkbox" checked={settings.desktopNotifications ?? true} onChange={(e) => updateSettings({ desktopNotifications: e.target.checked })} className="accent-accent w-4 h-4" />
         </Field>
         <Field label="Show reasoning" hint="Display extended thinking content when supported.">
           <input type="checkbox" checked={settings.showReasoning} onChange={(e) => updateSettings({ showReasoning: e.target.checked })} className="accent-accent w-4 h-4" />

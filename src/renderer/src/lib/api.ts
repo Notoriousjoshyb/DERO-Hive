@@ -1,4 +1,5 @@
 import type {
+  BookmarkEntry,
   ChatRequest,
   Conversation,
   Message,
@@ -8,11 +9,14 @@ import type {
   ProviderModel,
   ProviderPreset,
   Project,
+  PromptTemplate,
   Skill,
   AppSettings,
   Artifact,
   ToolDefinition,
   StreamEvent,
+  SearchResult,
+  UsageStats,
   WhisperStatus,
   SimulatorStatus,
   SimulatorStartOptions
@@ -30,7 +34,13 @@ declare global {
       convCreate: (data: Partial<Conversation>) => Promise<{ id: string }>;
       convUpdate: (id: string, data: Partial<Conversation>) => Promise<{ ok: boolean }>;
       convDelete: (id: string) => Promise<{ ok: boolean }>;
-      convSearch: (q: string) => Promise<Array<{ conversationId: string; messageId: string; role: string; snippet: string; score: number }>>;
+      convSearch: (q: string) => Promise<SearchResult[]>;
+      usageStats: () => Promise<UsageStats>;
+      msgBookmark: (messageId: string, bookmarked: boolean) => Promise<{ ok: boolean }>;
+      bookmarkList: () => Promise<BookmarkEntry[]>;
+      promptList: () => Promise<PromptTemplate[]>;
+      promptSave: (p: PromptTemplate) => Promise<{ ok: boolean }>;
+      promptDelete: (id: string) => Promise<{ ok: boolean }>;
       convFork: (conversationId: string, messageId?: string) => Promise<{ id: string } | null>;
       convRevert: (conversationId: string, messageId: string) => Promise<{ ok: boolean; error?: string; keptCount?: number }>;
       convCompact: (conversationId: string) => Promise<{ removedCount: number; summaryText: string; beforeTokens: number; afterTokens: number; tokensSaved: number } | null>;
@@ -124,6 +134,7 @@ declare global {
       winMaximize: () => Promise<boolean>;
       winClose: () => Promise<void>;
       winIsMaximized: () => Promise<boolean>;
+      winToggleFullscreen: () => Promise<boolean>;
 
       onMenu: (cb: (action: string) => void) => () => void;
       onProjectOpened: (cb: (path: string) => void) => () => void;

@@ -159,6 +159,16 @@ input:focus-visible, textarea:focus-visible {
 }
 .animate-msg-in { animation: msg-in 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
 
+/* Search jump highlight — flashes the message a search result landed on */
+@keyframes search-flash {
+  0%, 60% { background-color: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-glow); }
+  100% { background-color: transparent; box-shadow: none; }
+}
+.search-flash {
+  animation: search-flash 2s ease-out;
+  border-radius: 10px;
+}
+
 /* Streaming label shimmer */
 @keyframes shimmer-text {
   0% { background-position: 200% center; }

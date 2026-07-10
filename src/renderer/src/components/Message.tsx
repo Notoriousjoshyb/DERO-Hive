@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
 import type { Message as Msg, ToolDefinition } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { ToolCallCard } from './ToolCallCard';
+import { MermaidBlock } from './MermaidBlock';
 import { extractArtifacts } from '../lib/artifacts';
 import { extractThinking } from '../lib/thinking';
 
@@ -21,6 +24,12 @@ export function Message({ message }: Props): JSX.Element {
   const forkConversation = useAppStore((s) => s.forkConversation);
   const revertConversation = useAppStore((s) => s.revertConversation);
   const [msgCopied, setMsgCopied] = useState(false);
+  const [bookmarked, setBookmarked] = useState(!!message.bookmarked);
+
+  // Keep local star state in sync when the conversation reloads from DB.
+  useEffect(() => {
+    setBookmarked(!!message.bookmarked);
+  }, [message.bookmarked]);
 
   // Strip <think>...</think> tags from content and merge into reasoning
   const { cleanContent, combinedReasoning } = useMemo(() => {
@@ -73,6 +82,17 @@ export function Message({ message }: Props): JSX.Element {
     await forkConversation(currentConversationId, message.id);
   };
 
+  const toggleBookmark = async (): Promise<void> => {
+    const next = !bookmarked;
+    setBookmarked(next); // optimistic — the DB write follows
+    try {
+      await window.hive.msgBookmark(message.id, next);
+      useAppStore.getState().notifyBookmarksChanged();
+    } catch {
+      setBookmarked(!next);
+    }
+  };
+
   const revertToHere = async (): Promise<void> => {
     if (!currentConversationId) return;
     if (!window.confirm('Revert this conversation to this message? Messages after this point will be deleted.')) return;
@@ -81,16 +101,18 @@ export function Message({ message }: Props): JSX.Element {
 
   if (message.role === 'user') {
     return (
-      <div className="group flex flex-col items-end animate-msg-in">
+      <div data-message-id={message.id} className="group flex flex-col items-end animate-msg-in">
         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-bg-bubble border border-border/60 px-4 py-2.5 shadow-elev-sm select-text message-content">
           <UserContent content={message.content} />
         </div>
         {currentConversationId && (
           <MessageActions
             copied={msgCopied}
+            bookmarked={bookmarked}
             onCopy={() => void copyMessage()}
             onFork={() => void forkFromHere()}
             onRevert={() => void revertToHere()}
+            onBookmark={() => void toggleBookmark()}
           />
         )}
       </div>
@@ -105,7 +127,7 @@ export function Message({ message }: Props): JSX.Element {
 
   // Assistant — flowing inline layout
   return (
-    <div className="group relative pl-3 sm:pl-5 border-l-2 border-transparent hover:border-accent/25 transition-colors animate-msg-in">
+    <div data-message-id={message.id} className="group relative pl-3 sm:pl-5 border-l-2 border-transparent hover:border-accent/25 transition-colors animate-msg-in">
       <div className="flex items-center gap-2 mb-2 text-xs text-fg-subtle">
         <span className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
         <span className="font-medium text-fg-muted">Assistant</span>
@@ -125,8 +147,10 @@ export function Message({ message }: Props): JSX.Element {
       {typeof cleanContent === 'string' && cleanContent && (
         <div className="prose-hive select-text">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
+            remarkPlugins={[remarkGfm, remarkMath]}
+            // KaTeX must run BEFORE highlight — otherwise hljs wraps the math
+            // code nodes in spans and KaTeX can no longer parse them.
+            rehypePlugins={[rehypeKatex, rehypeHighlight]}
             components={{
               a: ({ href, children }) => (
                 <a href={href} onClick={(e) => { e.preventDefault(); if (href) void window.hive.openExternal(href); }}>
@@ -139,7 +163,9 @@ export function Message({ message }: Props): JSX.Element {
                 const lang = (codeChild?.className || '').replace('language-', '') || 'text';
                 // With rehype-highlight the code's children are element arrays,
                 // not a plain string — extract text recursively.
-                return <CodeBlock language={lang} code={reactNodeToText(codeChild?.children)} />;
+                const codeText = reactNodeToText(codeChild?.children);
+                if (lang === 'mermaid') return <MermaidBlock code={codeText} />;
+                return <CodeBlock language={lang} code={codeText} />;
               }
             }}
           >
@@ -168,23 +194,27 @@ export function Message({ message }: Props): JSX.Element {
       {currentConversationId && (
         <MessageActions
           copied={msgCopied}
+          bookmarked={bookmarked}
           onCopy={() => void copyMessage()}
           onFork={() => void forkFromHere()}
           onRevert={() => void revertToHere()}
+          onBookmark={() => void toggleBookmark()}
         />
       )}
     </div>
   );
 }
 
-function MessageActions({ copied, onCopy, onFork, onRevert }: {
+function MessageActions({ copied, bookmarked, onCopy, onFork, onRevert, onBookmark }: {
   copied: boolean;
+  bookmarked: boolean;
   onCopy: () => void;
   onFork: () => void;
   onRevert: () => void;
+  onBookmark: () => void;
 }): JSX.Element {
   return (
-    <div className="opacity-0 group-hover:opacity-100 transition-opacity mt-1.5 flex items-center gap-2">
+    <div className={`${bookmarked ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 transition-opacity mt-1.5 flex items-center gap-2`}>
       <button
         onClick={onCopy}
         className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-fg hover:bg-bg-elev px-1.5 py-0.5 rounded transition-colors"
@@ -209,7 +239,25 @@ function MessageActions({ copied, onCopy, onFork, onRevert }: {
         <RevertIcon />
         Revert
       </button>
+      <button
+        onClick={onBookmark}
+        className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+          bookmarked ? 'text-warn' : 'text-fg-subtle hover:text-warn hover:bg-bg-elev'
+        }`}
+        title={bookmarked ? 'Remove bookmark' : 'Bookmark this message'}
+      >
+        <StarIcon filled={bookmarked} />
+        {bookmarked ? 'Saved' : 'Save'}
+      </button>
     </div>
+  );
+}
+
+function StarIcon({ filled }: { filled: boolean }): JSX.Element {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6 3.2 10.1l.6-3.1L1.5 4.8l3.1-.4z" />
+    </svg>
   );
 }
 

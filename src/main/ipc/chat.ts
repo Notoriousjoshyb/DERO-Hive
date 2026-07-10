@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { IPC, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
 import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
@@ -12,6 +12,29 @@ import { getDefaultWorkspace } from '../utils/paths';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
 
 const activeRequests = new Map<string, AbortController>();
+
+// Native OS notification when a response finishes or fails while the window is
+// in the background. Toggleable in Settings → General; best-effort only.
+function notifyStreamOutcome(win: BrowserWindow | null, kind: 'done' | 'error', text: string): void {
+  try {
+    const appSettings = getSetting<{ desktopNotifications?: boolean }>('appSettings');
+    if (appSettings?.desktopNotifications === false) return;
+    if (!win || win.isDestroyed() || win.isFocused()) return;
+    if (!Notification.isSupported()) return;
+    const preview = text.replace(/\s+/g, ' ').trim().slice(0, 120);
+    const n = new Notification({
+      title: kind === 'error' ? 'DERO Hive — response failed' : 'DERO Hive — response ready',
+      body: preview || (kind === 'error' ? 'Something went wrong.' : 'The assistant finished responding.')
+    });
+    n.on('click', () => {
+      if (win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    });
+    n.show();
+  } catch { /* notifications are best-effort */ }
+}
 
 export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpManager: McpManager | null): void {
   const tools = new ToolRegistry(mcpManager);
@@ -72,7 +95,7 @@ async function runChat(
 
       // Resolve working directory: project path > global setting > the app's
       // default workspace (Documents\DERO Hive) — never the app's own folder.
-      const conv = getDb().prepare('SELECT project_id FROM conversations WHERE id = ?').get(req.conversationId) as { project_id?: string } | undefined;
+      const conv = getDb().prepare('SELECT project_id, system_prompt FROM conversations WHERE id = ?').get(req.conversationId) as { project_id?: string; system_prompt?: string } | undefined;
       let projectPath: string | undefined;
       if (conv?.project_id) {
         const proj = getDb().prepare('SELECT path FROM projects WHERE id = ?').get(conv.project_id) as { path?: string } | undefined;
@@ -84,9 +107,16 @@ async function runChat(
       }
 
       const baseSystemPrompt = req.systemPrompt || getSetting<string>('defaultSystemPrompt', '') || DEFAULT_SYSTEM_PROMPT;
+      // Composer agent persona (if any) is layered first, then per-conversation
+      // custom instructions — both on top of whatever base applies (skill/plan
+      // prompt from the request, the global default, or the built-in).
+      const agentPrompt = req.agentPrompt?.trim();
+      const withAgent = agentPrompt ? `${baseSystemPrompt}\n\n${agentPrompt}` : baseSystemPrompt;
+      const convSystemPrompt = conv?.system_prompt?.trim();
+      const withConv = convSystemPrompt ? `${withAgent}\n\n${convSystemPrompt}` : withAgent;
       const systemPrompt = projectPath
-        ? `${baseSystemPrompt}\n\nThe user has selected a project folder: ${projectPath}\nTreat this directory as the working context for file operations, shell commands, and any code-related tasks. When the user refers to "the project" or "the codebase", they mean this folder.`
-        : baseSystemPrompt;
+        ? `${withConv}\n\nThe user has selected a project folder: ${projectPath}\nTreat this directory as the working context for file operations, shell commands, and any code-related tasks. When the user refers to "the project" or "the codebase", they mean this folder.`
+        : withConv;
       let messages = req.messages;
 
       // Look up model context window for adaptive truncation
@@ -233,6 +263,7 @@ async function runChat(
           } else if (evt.type === 'error' && evt.error) {
             send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: evt.error });
             send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+            notifyStreamOutcome(win, 'error', evt.error);
             return;
           }
         }
@@ -258,6 +289,8 @@ async function runChat(
         // tools or start another round.
         if (abort.signal.aborted || toolCalls.length === 0) {
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+          // The user pressed stop on an abort — only notify on real completions.
+          if (!abort.signal.aborted) notifyStreamOutcome(win, 'done', assistantContent);
           return;
         }
 
@@ -304,10 +337,13 @@ async function runChat(
       // Tool-round budget exhausted. Close the turn that is actually streaming
       // in the renderer, which after round 0 is no longer the original message.
       send({ type: 'done', conversationId: req.conversationId, messageId: lastTurnId });
+      notifyStreamOutcome(win, 'done', 'Stopped after reaching the tool-call round limit.');
     } catch (err) {
       logger.error('chat', 'runChat failed', err);
-      send({ type: 'error', conversationId: req.conversationId, messageId, error: err instanceof Error ? err.message : String(err) });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      send({ type: 'error', conversationId: req.conversationId, messageId, error: errMsg });
       send({ type: 'done', conversationId: req.conversationId, messageId });
+      notifyStreamOutcome(win, 'error', errMsg);
     } finally {
       activeRequests.delete(req.conversationId);
     }

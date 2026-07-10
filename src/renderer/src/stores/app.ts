@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, Skill, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
+import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, PromptTemplate, Skill, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -141,6 +141,10 @@ interface AppState {
   skills: Skill[];
   loadSkills: () => Promise<void>;
 
+  // Prompt library
+  prompts: PromptTemplate[];
+  loadPrompts: () => Promise<void>;
+
   // Projects
   projects: Project[];
   loadProjects: () => Promise<void>;
@@ -166,6 +170,7 @@ interface AppState {
   pendingAttachments: Attachment[];
   addAttachment: (a: Attachment) => void;
   removeAttachment: (id: string) => void;
+  reorderAttachments: (fromIndex: number, toIndex: number) => void;
   clearAttachments: () => void;
 
   // UI state
@@ -182,6 +187,31 @@ interface AppState {
   toggleCodeTab: () => void;
   visionTabOpen: boolean;
   toggleVisionTab: () => void;
+
+  // Keyboard shortcuts cheatsheet overlay (toggled with "?")
+  shortcutsOpen: boolean;
+  toggleShortcuts: () => void;
+  setShortcutsOpen: (open: boolean) => void;
+
+  // Per-conversation system prompt editor (conversation id being edited, or null)
+  systemPromptEditorConvId: string | null;
+  openSystemPromptEditor: (conversationId: string) => void;
+  closeSystemPromptEditor: () => void;
+
+  // Custom agents manager modal
+  agentsEditorOpen: boolean;
+  setAgentsEditorOpen: (open: boolean) => void;
+
+  // Full-text search dialog (Ctrl+Shift+F)
+  searchDialogOpen: boolean;
+  setSearchDialogOpen: (open: boolean) => void;
+  // After opening a conversation from search results, scroll to this message.
+  pendingScrollMessageId: string | null;
+  setPendingScrollMessageId: (id: string | null) => void;
+
+  // Bump to make the sidebar Bookmarks section reload
+  bookmarksChangedAt: number;
+  notifyBookmarksChanged: () => void;
 
   // Vision workspace
   artifactsChangedAt: number; // bump to make VisionPanel reload
@@ -441,6 +471,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ skills });
   },
 
+  prompts: [],
+  loadPrompts: async () => {
+    const prompts = await window.hive.promptList();
+    set({ prompts });
+  },
+
   projects: [],
   loadProjects: async () => {
     const projects = await window.hive.projectList();
@@ -499,6 +535,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingAttachments: [],
   addAttachment: (a) => set((s) => ({ pendingAttachments: [...s.pendingAttachments, a] })),
   removeAttachment: (id) => set((s) => ({ pendingAttachments: s.pendingAttachments.filter((a) => a.id !== id) })),
+  reorderAttachments: (fromIndex, toIndex) => set((s) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return {};
+    const next = [...s.pendingAttachments];
+    if (fromIndex >= next.length || toIndex >= next.length) return {};
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    return { pendingAttachments: next };
+  }),
   clearAttachments: () => set({ pendingAttachments: [] }),
 
   sidebarOpen: true,
@@ -519,6 +563,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleCodeTab: () => set((s) => ({ codeTabOpen: !s.codeTabOpen, visionTabOpen: false })),
   visionTabOpen: false,
   toggleVisionTab: () => set((s) => ({ visionTabOpen: !s.visionTabOpen, codeTabOpen: false })),
+
+  shortcutsOpen: false,
+  toggleShortcuts: () => set((s) => ({ shortcutsOpen: !s.shortcutsOpen })),
+  setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
+
+  systemPromptEditorConvId: null,
+  openSystemPromptEditor: (conversationId) => set({ systemPromptEditorConvId: conversationId }),
+  closeSystemPromptEditor: () => set({ systemPromptEditorConvId: null }),
+
+  agentsEditorOpen: false,
+  setAgentsEditorOpen: (open) => set({ agentsEditorOpen: open }),
+
+  searchDialogOpen: false,
+  setSearchDialogOpen: (open) => set({ searchDialogOpen: open }),
+  pendingScrollMessageId: null,
+  setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),
+
+  bookmarksChangedAt: 0,
+  notifyBookmarksChanged: () => set({ bookmarksChangedAt: Date.now() }),
 
   todos: [],
   taskListExpanded: false,

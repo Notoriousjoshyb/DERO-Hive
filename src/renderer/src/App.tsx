@@ -9,6 +9,10 @@ import { RightSidebar } from './components/rightsidebar/RightSidebar';
 import { CodeTab } from './components/code/CodeTab';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { PermissionDialog } from './components/PermissionDialog';
+import { ShortcutsCheatsheet } from './components/ShortcutsCheatsheet';
+import { SystemPromptModal } from './components/SystemPromptModal';
+import { AgentsModal } from './components/AgentsModal';
+import { SearchDialog } from './components/SearchDialog';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
@@ -28,6 +32,7 @@ export default function App(): JSX.Element {
   const loadSettings = useAppStore((s) => s.loadSettings);
   const loadProviders = useAppStore((s) => s.loadProviders);
   const loadSkills = useAppStore((s) => s.loadSkills);
+  const loadPrompts = useAppStore((s) => s.loadPrompts);
   const loadMcpStatuses = useAppStore((s) => s.loadMcpStatuses);
   const loadConversations = useAppStore((s) => s.loadConversations);
   const loadTools = useAppStore((s) => s.loadTools);
@@ -44,6 +49,7 @@ export default function App(): JSX.Element {
     void loadSettings();
     void loadProviders();
     void loadSkills();
+    void loadPrompts();
     void loadMcpStatuses();
     void loadConversations();
     void loadTools();
@@ -80,6 +86,10 @@ export default function App(): JSX.Element {
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <PermissionDialog />
+      <ShortcutsCheatsheet />
+      <SystemPromptModal />
+      <AgentsModal />
+      <SearchDialog />
       <style>{`
         body.focus-mode [data-sidebar-panel],
         body.focus-mode [data-vision-panel] {

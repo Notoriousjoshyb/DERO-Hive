@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../stores/app';
 import { SimulatorPanel } from './SimulatorPanel';
-import type { Conversation, Project, Message } from '@shared/types';
+import type { BookmarkEntry, Conversation, Project, Message } from '@shared/types';
 
 // Update checker stays hidden until the repo has its first GitHub release.
 const SHOW_UPDATE_CHECKER = false;
@@ -315,6 +315,12 @@ export function Sidebar(): JSX.Element {
               isOpen={projectsExpanded}
             />
 
+            <BookmarksSection onOpen={(conversationId, messageId) => {
+              backToChat();
+              useAppStore.getState().setPendingScrollMessageId(messageId);
+              void selectConversation(conversationId);
+            }} />
+
             {archivedConvs.length > 0 && (
               <ArchivedSection
                 conversations={archivedConvs}
@@ -436,6 +442,11 @@ function ConvItem({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
 
+  // Fork lineage — show where this chat was forked from (parent may be deleted).
+  const parentTitle = useAppStore((s) =>
+    conv.parentId ? s.conversations.find((c) => c.id === conv.parentId)?.title : undefined
+  );
+
   const handleRename = (): void => {
     if (editing) {
       const trimmed = draft.trim();
@@ -447,18 +458,32 @@ function ConvItem({
     }
   };
 
+  const download = (content: string, filename: string, mime: string): void => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleExportMarkdown = async (): Promise<void> => {
     try {
       const data = await window.hive.convGet(conv.id);
       if (!data?.messages) return;
       const md = conversationToMarkdown(data.title, data.messages);
-      const blob = new Blob([md], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${conv.title || 'Untitled'}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
+      download(md, `${conv.title || 'Untitled'}.md`, 'text/markdown');
+    } catch (e) {
+      console.error('Export failed:', e);
+    }
+  };
+
+  const handleExportJson = async (): Promise<void> => {
+    try {
+      const data = await window.hive.convGet(conv.id);
+      if (!data) return;
+      download(JSON.stringify(data, null, 2), `${conv.title || 'Untitled'}.json`, 'application/json');
     } catch (e) {
       console.error('Export failed:', e);
     }
@@ -504,7 +529,17 @@ function ConvItem({
             {conv.pinned ? <PinIcon /> : <ChatIcon />}
           </span>
           <div className="flex-1 min-w-0">
-            <div className="truncate text-xs">{conv.title || 'Untitled'}</div>
+            <div className="truncate text-xs flex items-center gap-1">
+              {conv.parentId && (
+                <span
+                  className="text-fg-subtle flex-shrink-0"
+                  title={parentTitle ? `Forked from “${parentTitle}”` : 'Forked from a deleted chat'}
+                >
+                  <ForkGlyph />
+                </span>
+              )}
+              <span className="truncate">{conv.title || 'Untitled'}</span>
+            </div>
           </div>
         </button>
       )}
@@ -552,6 +587,11 @@ function ConvItem({
               label="Archive"
               onClick={() => { onArchive(); setMenuOpen(false); }}
             />
+            <MenuButton
+              icon={<PromptIcon />}
+              label="Edit system prompt"
+              onClick={() => { useAppStore.getState().openSystemPromptEditor(conv.id); setMenuOpen(false); }}
+            />
             <div className="relative">
               <MenuButton
                 icon={<MoveIcon />}
@@ -580,6 +620,11 @@ function ConvItem({
               icon={<ExportIcon />}
               label="Export Markdown"
               onClick={() => { void handleExportMarkdown(); setMenuOpen(false); }}
+            />
+            <MenuButton
+              icon={<ExportIcon />}
+              label="Export JSON"
+              onClick={() => { void handleExportJson(); setMenuOpen(false); }}
             />
             <div className="border-t border-border my-1" />
             <MenuButton
@@ -619,6 +664,16 @@ function ConvItem({
               icon={<ExportIcon />}
               label="Export Markdown"
               onClick={() => { void handleExportMarkdown(); closeMenus(); }}
+            />
+            <MenuButton
+              icon={<ExportIcon />}
+              label="Export JSON"
+              onClick={() => { void handleExportJson(); closeMenus(); }}
+            />
+            <MenuButton
+              icon={<PromptIcon />}
+              label="Edit system prompt"
+              onClick={() => { useAppStore.getState().openSystemPromptEditor(conv.id); closeMenus(); }}
             />
             <div className="border-t border-border my-1" />
             <MenuButton
@@ -728,6 +783,14 @@ function conversationToMarkdown(title: string, messages: Message[]): string {
   return lines.join('\n');
 }
 
+function ForkGlyph(): JSX.Element {
+  return (
+    <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 2v5a3 3 0 003 3h4M10 10l-2-2M10 10l-2 2" />
+    </svg>
+  );
+}
+
 function ChatIcon(): JSX.Element {
   return (
     <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
@@ -765,6 +828,15 @@ function MoveIcon(): JSX.Element {
   return (
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
       <path d="M2 3h6l1.5 1.5V10H2z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PromptIcon(): JSX.Element {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2" width="9" height="8" rx="1.5" />
+      <path d="M3.5 4.5L5 6l-1.5 1.5M6.5 7.5h2.5" />
     </svg>
   );
 }
@@ -951,6 +1023,71 @@ function ProjectsSection({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function BookmarksSection({ onOpen }: { onOpen: (conversationId: string, messageId: string) => void }): JSX.Element | null {
+  const bookmarksChangedAt = useAppStore((s) => s.bookmarksChangedAt);
+  const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.hive.bookmarkList()
+      .then((b) => { if (!cancelled) setBookmarks(b || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [bookmarksChangedAt]);
+
+  const removeBookmark = async (messageId: string): Promise<void> => {
+    await window.hive.msgBookmark(messageId, false);
+    useAppStore.getState().notifyBookmarksChanged();
+  };
+
+  if (bookmarks.length === 0) return null;
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle hover:text-fg flex items-center gap-1"
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span>Bookmarks ({bookmarks.length})</span>
+      </button>
+      {open && (
+        <div className="space-y-0.5">
+          {bookmarks.map((b) => (
+            <div key={b.messageId} className="relative group">
+              <button
+                onClick={() => onOpen(b.conversationId, b.messageId)}
+                className="w-full text-left px-2 py-1.5 rounded-md transition text-xs text-fg-muted hover:bg-bg-elev hover:text-fg"
+                title={b.preview}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="text-warn flex-shrink-0">
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinejoin="round">
+                      <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6 3.2 10.1l.6-3.1L1.5 4.8l3.1-.4z" />
+                    </svg>
+                  </span>
+                  <span className="truncate flex-1">{b.preview || '(empty message)'}</span>
+                </div>
+                <div className="text-[9px] text-fg-subtle truncate pl-4">{b.conversationTitle}</div>
+              </button>
+              <button
+                onClick={() => void removeBookmark(b.messageId)}
+                className="absolute right-1 top-1.5 p-1 rounded text-fg-subtle hover:text-danger hover:bg-bg-input opacity-0 group-hover:opacity-100 transition"
+                title="Remove bookmark"
+              >
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                  <path d="M3 3l6 6M9 3l-6 6" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

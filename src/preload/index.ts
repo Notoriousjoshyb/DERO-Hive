@@ -24,6 +24,9 @@ const api = {
     ipcRenderer.invoke(IPC.CONV_REVERT, { conversationId, messageId }) as Promise<{ ok: boolean; error?: string; keptCount?: number }>,
   convFork: (conversationId: string, messageId?: string) => ipcRenderer.invoke(IPC.CONV_FORK, { conversationId, messageId }),
   convCompact: (conversationId: string) => ipcRenderer.invoke(IPC.CONV_COMPACT, conversationId),
+  usageStats: () => ipcRenderer.invoke(IPC.USAGE_STATS),
+  msgBookmark: (messageId: string, bookmarked: boolean) => ipcRenderer.invoke(IPC.MSG_BOOKMARK, { messageId, bookmarked }),
+  bookmarkList: () => ipcRenderer.invoke(IPC.BOOKMARK_LIST),
   onConvCompacted: (cb: (data: { conversationId: string; removedCount: number; tokensSaved: number; beforeTokens: number; afterTokens: number }) => void) => {
     const l = (_: IpcRendererEvent, d: any) => cb(d);
     ipcRenderer.on(IPC.CONV_COMPACTED, l);
@@ -57,6 +60,11 @@ const api = {
   skillList: () => ipcRenderer.invoke(IPC.SKILL_LIST),
   skillSave: (s: Skill) => ipcRenderer.invoke(IPC.SKILL_SAVE, s),
   skillDelete: (id: string) => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
+
+  // Prompt library
+  promptList: () => ipcRenderer.invoke(IPC.PROMPT_LIST),
+  promptSave: (p: unknown) => ipcRenderer.invoke(IPC.PROMPT_SAVE, p),
+  promptDelete: (id: string) => ipcRenderer.invoke(IPC.PROMPT_DELETE, id),
 
   // Projects
   projectList: () => ipcRenderer.invoke(IPC.PROJECT_LIST),
@@ -151,6 +159,7 @@ const api = {
   winMaximize: () => ipcRenderer.invoke('window:maximize'),
   winClose: () => ipcRenderer.invoke('window:close'),
   winIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  winToggleFullscreen: () => ipcRenderer.invoke('window:toggleFullscreen'),
 
   // Menu events
   onMenu: (cb: (action: string) => void) => {

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS messages (
   error TEXT,
   created_at INTEGER NOT NULL,
   sort_order INTEGER NOT NULL,
+  bookmarked INTEGER DEFAULT 0,
   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, sort_order);
@@ -124,6 +125,15 @@ CREATE TABLE IF NOT EXISTS permissions (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS prompts (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  category TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
@@ -138,7 +148,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifact_conv ON artifacts(conversation_id);
 `;
 
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -196,6 +206,20 @@ const MIGRATIONS: Migration[] = [
       database.exec(`ALTER TABLE conversations ADD COLUMN compaction_count INTEGER DEFAULT 0`);
       database.exec(`ALTER TABLE conversations ADD COLUMN last_compaction_at INTEGER`);
       database.exec(`ALTER TABLE conversations ADD COLUMN tokens_saved_by_compaction INTEGER DEFAULT 0`);
+    }
+  },
+  {
+    version: 6,
+    description: 'Add messages.bookmarked for message bookmarks',
+    up: (database) => {
+      // Fresh installs already have the column from the base schema, and a
+      // thrown "duplicate column" would abort the transaction before the index
+      // statement — so check first instead of relying on the error handler.
+      const cols = database.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'bookmarked')) {
+        database.exec(`ALTER TABLE messages ADD COLUMN bookmarked INTEGER DEFAULT 0`);
+      }
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_msg_bookmarked ON messages(bookmarked) WHERE bookmarked = 1`);
     }
   }
 ];

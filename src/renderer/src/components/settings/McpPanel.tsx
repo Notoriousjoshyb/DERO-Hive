@@ -2,6 +2,61 @@ import { useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/app';
 import type { McpServerConfig } from '@shared/types';
 
+// Curated, bundled index of well-known MCP servers (all npx-installable).
+// "Add" pre-fills the editor so users can adjust paths/keys before saving.
+interface CatalogEntry {
+  name: string;
+  description: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  requires?: string; // human hint about required config
+}
+
+const MCP_CATALOG: CatalogEntry[] = [
+  {
+    name: 'Filesystem',
+    description: 'Read/write files in a folder you choose',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-filesystem', 'C:\\path\\to\\folder'],
+    requires: 'Replace the folder path in the arguments'
+  },
+  {
+    name: 'Memory',
+    description: 'Persistent knowledge-graph memory across chats',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-memory']
+  },
+  {
+    name: 'Sequential Thinking',
+    description: 'Structured step-by-step reasoning tool',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-sequential-thinking']
+  },
+  {
+    name: 'GitHub',
+    description: 'Repos, issues, and PRs via the GitHub API',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-github'],
+    env: { GITHUB_PERSONAL_ACCESS_TOKEN: '' },
+    requires: 'Set GITHUB_PERSONAL_ACCESS_TOKEN in the environment'
+  },
+  {
+    name: 'Brave Search',
+    description: 'Web search via the Brave Search API',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-brave-search'],
+    env: { BRAVE_API_KEY: '' },
+    requires: 'Set BRAVE_API_KEY in the environment'
+  },
+  {
+    name: 'Puppeteer',
+    description: 'Browser automation — navigate, screenshot, scrape',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-puppeteer']
+  }
+];
+
 export function McpPanel(): JSX.Element {
   const statuses = useAppStore((s) => s.mcpStatuses);
   const loadMcpStatuses = useAppStore((s) => s.loadMcpStatuses);
@@ -72,8 +127,67 @@ export function McpPanel(): JSX.Element {
         </div>
       )}
 
+      <DiscoverSection
+        installedNames={list.map((s) => s.name.toLowerCase())}
+        onAdd={(entry) => setEditing({
+          id: `mcp-${Date.now()}`,
+          name: entry.name,
+          enabled: true,
+          command: entry.command,
+          args: [...entry.args],
+          env: { ...(entry.env || {}) }
+        })}
+      />
+
       {editing && (
         <McpEditor cfg={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void loadMcpStatuses(); }} />
+      )}
+    </div>
+  );
+}
+
+function DiscoverSection({ installedNames, onAdd }: {
+  installedNames: string[];
+  onAdd: (entry: CatalogEntry) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 text-left py-1 text-sm font-semibold uppercase tracking-wide text-fg-subtle hover:text-fg transition"
+      >
+        <span className="text-[10px]">{open ? '▾' : '▸'}</span>
+        Discover
+        <span className="text-[10px] font-normal normal-case tracking-normal text-fg-subtle">— known servers, one click to add</span>
+      </button>
+      {open && (
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {MCP_CATALOG.map((entry) => {
+            const installed = installedNames.includes(entry.name.toLowerCase());
+            return (
+              <div key={entry.name} className="p-3 bg-bg-elev/50 border border-border rounded-xl hover:border-border-strong transition-colors flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-fg text-sm">{entry.name}</span>
+                  <button
+                    onClick={() => onAdd(entry)}
+                    disabled={installed}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed bg-accent-soft text-accent border border-accent/25 hover:bg-accent hover:text-white"
+                  >
+                    {installed ? 'Added' : 'Add'}
+                  </button>
+                </div>
+                <p className="text-xs text-fg-muted leading-relaxed">{entry.description}</p>
+                <code className="text-[10px] text-fg-subtle font-mono truncate" title={`${entry.command} ${entry.args.join(' ')}`}>
+                  {entry.command} {entry.args.join(' ')}
+                </code>
+                {entry.requires && (
+                  <div className="text-[10px] text-warn">⚠ {entry.requires}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

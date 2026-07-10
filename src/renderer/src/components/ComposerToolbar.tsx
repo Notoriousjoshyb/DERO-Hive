@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/app';
 import type { ProviderModel } from '@shared/types';
 import { thinkingOptionsFor, usesDefaultThinkingOptions } from '@shared/thinkingCapabilities';
+import { BUILTIN_AGENTS, resolveAgent } from '@shared/agents';
 import { VoiceInput } from './VoiceInput';
 
 interface Props {
@@ -34,6 +35,10 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const agent = useAppStore((s) => s.composerAgent);
   const setAgent = useAppStore((s) => s.setComposerAgent);
   const loadProviders = useAppStore((s) => s.loadProviders);
+
+  const customAgents = settings.customAgents || [];
+  const allAgents = [...BUILTIN_AGENTS, ...customAgents];
+  const activeAgent = resolveAgent(agent, customAgents);
 
   const provider = providers.find((p) => p.id === selectedProviderId);
   const selectedProviderModel = provider?.models.find((model) => model.id === selectedModel);
@@ -174,27 +179,36 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
           <button
             type="button"
             onClick={() => toggleMenu('agent')}
-            title="Agent"
-            className="px-2 py-1 rounded text-[11px] hover:bg-bg-elev text-fg-muted hover:text-fg flex items-center gap-1"
+            title={activeAgent.description || 'Agent'}
+            className="px-2 py-1 rounded text-[11px] hover:bg-bg-elev text-fg-muted hover:text-fg flex items-center gap-1 max-w-32"
           >
             <AgentIcon />
-            <span className="capitalize">{agent}</span>
+            <span className="truncate">{activeAgent.name}</span>
             <ChevronIcon />
           </button>
           {agentMenuOpen && (
-            <div className="absolute bottom-full right-0 mb-1 menu-panel overflow-hidden min-w-40 z-50">
+            <div className="absolute bottom-full right-0 mb-1 menu-panel overflow-hidden min-w-48 max-h-72 overflow-y-auto z-50">
               <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Agent</div>
-              {['default', 'explore', 'review'].map((a) => (
+              {allAgents.map((a) => (
                 <button
-                  key={a}
-                  onClick={() => { setAgent(a); closeAll(); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-bg-input ${agent === a ? 'text-accent' : 'text-fg'}`}
+                  key={a.id}
+                  onClick={() => { setAgent(a.id); closeAll(); }}
+                  title={a.description || a.prompt.slice(0, 120)}
+                  className={`w-full text-left px-3 py-1.5 flex items-center justify-between gap-2 hover:bg-bg-input ${agent === a.id ? 'text-accent' : 'text-fg'}`}
                 >
-                  <span className="capitalize">{a}</span>
-                  {agent === a && <CheckMark />}
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-xs truncate">{a.name}</span>
+                    {a.description && <span className="text-[10px] text-fg-subtle truncate">{a.description}</span>}
+                  </span>
+                  {agent === a.id && <CheckMark />}
                 </button>
               ))}
-              <div className="px-3 py-2 text-[10px] text-fg-subtle border-t border-border/50">More agents coming soon</div>
+              <button
+                onClick={() => { useAppStore.getState().setAgentsEditorOpen(true); closeAll(); }}
+                className="w-full text-left px-3 py-2 text-[11px] text-fg-subtle hover:text-fg hover:bg-bg-input border-t border-border/50"
+              >
+                Manage agents…
+              </button>
             </div>
           )}
         </div>
