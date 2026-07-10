@@ -350,15 +350,30 @@ function updateConversationTokens(conversationId: string, tokens: number): void 
     .run(tokens, conversationId);
 }
 
+/** The slice of the database handle compaction actually uses. Narrow on purpose:
+ *  it lets tests hand in a real SQLite database instead of the app's. */
+export interface CompactionDb {
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  transaction<T extends (...args: never[]) => unknown>(fn: T): T;
+}
+
 // Inline auto-compaction: called from chat loop before sending when context
 // is over the threshold. Mirrors the logic in conversations.ts IPC handler.
-async function compactConversationInPlace(
+//
+// `db` is injectable so this destructive rewrite can be exercised against a
+// real SQLite database in tests; production uses the app's handle.
+export async function compactConversationInPlace(
   conversationId: string,
   _providerId: string,
-  _model: string
+  _model: string,
+  db: CompactionDb = getDb() as unknown as CompactionDb
 ): Promise<{ removedCount: number; beforeTokens: number; afterTokens: number; tokensSaved: number }> {
   const config = { keepRecentMessages: 6, truncateToolOutputChars: 4000, maxHistoryMessageChars: 8000 };
-  const messages = getDb().prepare(
+  const messages = db.prepare(
     'SELECT * FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC'
   ).all(conversationId) as Array<Record<string, unknown>>;
 
@@ -373,6 +388,7 @@ async function compactConversationInPlace(
 
   const systemMsgs = messages.filter((m) => m.role === 'system');
   const nonSystem = messages.filter((m) => m.role !== 'system');
+
   const recent = nonSystem.slice(-config.keepRecentMessages);
   const older = nonSystem.slice(0, nonSystem.length - config.keepRecentMessages);
 
@@ -419,7 +435,6 @@ async function compactConversationInPlace(
   const afterTokens = afterContents.reduce((sum, c) => sum + Math.ceil((c?.length || 0) / 3.7), 0);
   const tokensSaved = Math.max(0, Math.round(beforeTokens) - Math.round(afterTokens));
 
-  const db = getDb();
   db.transaction(() => {
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
     db.prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(conversationId);
