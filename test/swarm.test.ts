@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clampWorkerCount, markInterruptedSwarmRuns, runPool, swarmToolNames, verifyRepositorySnapshot } from '../src/main/swarm/manager';
+import { clampWorkerCount, isForbiddenSwarmWritePath, markInterruptedSwarmRuns, runPool, swarmToolNames, verifyRepositorySnapshot } from '../src/main/swarm/manager';
 import { createTestDb } from './helpers/sqlite';
 
 describe('native swarm', () => {
@@ -28,6 +28,14 @@ describe('native swarm', () => {
       active--;
     });
     expect(peak).toBe(3);
+  });
+
+  test('denies Git metadata write aliases without blocking ordinary dotfiles', () => {
+    for (const path of ['.git', '.GIT/config', 'nested\\.git\\config', '.git.', '.git ', '.git:stream', '.git::$DATA']) {
+      expect(isForbiddenSwarmWritePath(path, repo)).toBe(true);
+    }
+    expect(isForbiddenSwarmWritePath('.gitignore', repo)).toBe(false);
+    expect(isForbiddenSwarmWritePath('docs/example.git/config', repo)).toBe(false);
   });
 
   test('marks only in-flight persisted work interrupted', () => {
@@ -60,6 +68,14 @@ afterAll(() => rmSync(repo, { recursive: true, force: true }));
 
 test('build snapshot refuses dirty repositories and HEAD drift', async () => {
   await expect(verifyRepositorySnapshot(repo, 'main', baseHead)).resolves.toBeUndefined();
+  const previousGitDir = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(repo, 'redirected.git');
+  try {
+    await expect(verifyRepositorySnapshot(repo, 'main', baseHead)).resolves.toBeUndefined();
+  } finally {
+    if (previousGitDir === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = previousGitDir;
+  }
   writeFileSync(join(repo, 'dirty.txt'), 'dirty');
   await expect(verifyRepositorySnapshot(repo, 'main', baseHead)).rejects.toThrow(/clean repository/);
   unlinkSync(join(repo, 'dirty.txt'));

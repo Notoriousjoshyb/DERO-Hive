@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS swarm_runs (
   base_head TEXT,
   integration_branch TEXT,
   integration_path TEXT,
+  integration_head TEXT,
   result TEXT,
   error TEXT,
   created_at INTEGER NOT NULL,
@@ -190,7 +191,7 @@ CREATE TABLE IF NOT EXISTS swarm_tasks (
 CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
 `;
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 10;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -314,6 +315,7 @@ const MIGRATIONS: Migration[] = [
           base_head TEXT,
           integration_branch TEXT,
           integration_path TEXT,
+          integration_head TEXT,
           result TEXT,
           error TEXT,
           created_at INTEGER NOT NULL,
@@ -336,6 +338,16 @@ const MIGRATIONS: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
       `);
+    }
+  },
+  {
+    version: 10,
+    description: 'Pin the reviewed swarm integration commit',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(swarm_runs)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('integration_head')) database.exec('ALTER TABLE swarm_runs ADD COLUMN integration_head TEXT');
     }
   }
 ];

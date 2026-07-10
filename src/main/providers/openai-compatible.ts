@@ -20,6 +20,8 @@ function extractErrorMessage(body: string): string | null {
 // implements that format (OpenAI, OpenCode Zen/Go, Groq, OpenRouter, Moonshot, Ollama, etc.)
 export class OpenAICompatibleAdapter implements ProviderAdapter {
   readonly id: string;
+  readonly nativeToolScope = 'none' as const;
+  readonly nativeExecutionModes = [] as const;
   constructor(private readonly cfg: ProviderConfig, private readonly apiKey: string) {
     this.id = cfg.id;
   }

@@ -366,6 +366,7 @@ export interface SwarmRun {
   baseHead?: string;
   integrationBranch?: string;
   integrationPath?: string;
+  integrationHead?: string;
   result?: string;
   error?: string;
   createdAt: number;

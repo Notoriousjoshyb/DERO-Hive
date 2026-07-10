@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type {
   Message,
@@ -18,6 +18,7 @@ import { getDb, getSetting } from '../db/client';
 import { getAdapter, closeConversationSessions } from '../providers/registry';
 import { BUILTIN_TOOLS, builtinExecutors } from '../tools/builtin';
 import { composeSystemPrompt } from '../utils/systemPrompt';
+import { canonicalizePath } from '../utils/pathPolicy';
 import { getDefaultWorkspace, paths } from '../utils/paths';
 import { logger } from '../utils/logger';
 
@@ -26,6 +27,8 @@ const DEFAULT_WORKERS = 4;
 const MAX_WORKERS = 8;
 const WORKER_CONCURRENCY = 3;
 const REPORT_LIMIT = 16_000;
+const GIT_TIMEOUT_MS = 120_000;
+const GIT_HOOKS_SINK = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const READ_TOOLS = new Set(['read_file', 'list_directory', 'glob_files', 'grep_files']);
 const WRITE_TOOLS = new Set([...READ_TOOLS, 'write_file', 'edit_file']);
 const WORKER_ROLES = [
@@ -42,6 +45,16 @@ export function clampWorkerCount(value: unknown): number {
 
 export function swarmToolNames(writable: boolean): string[] {
   return [...(writable ? WRITE_TOOLS : READ_TOOLS)];
+}
+
+export function isForbiddenSwarmWritePath(input: unknown, cwd: string): boolean {
+  if (typeof input !== 'string' || !input) return true;
+  const containsGitMetadata = (value: string): boolean => value.split(/[\\/]+/).some((segment) => {
+    const base = segment.split(':', 1)[0].replace(/[ .]+$/u, '');
+    return base.toLowerCase() === '.git';
+  });
+  const absolute = isAbsolute(input) ? resolve(input) : resolve(cwd, input);
+  return containsGitMetadata(input) || containsGitMetadata(absolute) || containsGitMetadata(canonicalizePath(absolute));
 }
 
 export async function runPool<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
@@ -72,7 +85,18 @@ export class SwarmManager {
     if (prompt.length > 100_000) throw new Error('Swarm prompt is too long');
     if (input.mode !== 'research' && input.mode !== 'build') throw new Error('Invalid swarm mode');
     if (!input.providerId || !input.model) throw new Error('Provider and model are required');
-    if (!getAdapter(input.providerId)) throw new Error('Provider is not configured');
+    const adapter = getAdapter(input.providerId);
+    if (!adapter) throw new Error('Provider is not configured');
+    const scope = adapter.nativeToolScope;
+    if (!['none', 'cwd-confined', 'unconfined'].includes(scope)) {
+      throw new Error('Provider does not declare safe native tool capabilities');
+    }
+    if (scope === 'unconfined') {
+      throw new Error('Swarm requires a provider whose native tools are path-confined');
+    }
+    if (scope !== 'none' && !adapter.nativeExecutionModes?.includes('read-only')) {
+      throw new Error('Swarm requires a provider with an enforceable read-only native mode');
+    }
 
     const context = this.resolveContext(input);
     const id = randomUUID();
@@ -101,8 +125,8 @@ export class SwarmManager {
       INSERT INTO swarm_runs (
         id, conversation_id, project_id, prompt, mode, status, provider_id, model,
         worker_count, repo_root, base_branch, base_head, integration_branch,
-        integration_path, result, error, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+        integration_path, integration_head, result, error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
     `);
     const insertTask = db.prepare(`
       INSERT INTO swarm_tasks (id, run_id, phase, task_index, status)
@@ -175,9 +199,12 @@ export class SwarmManager {
   async apply(id: string): Promise<SwarmRun> {
     const run = this.requireRun(id);
     if (run.mode !== 'build' || run.status !== 'awaiting_apply') throw new Error('Only a finished build swarm can be applied');
+    if (!run.integrationHead) throw new Error('Apply refused: reviewed integration commit is missing');
     await this.verifyBaseSnapshot(run);
     await assertCleanRepository(run.integrationPath!);
-    await git(run.repoRoot!, 'merge', '--ff-only', run.integrationBranch!);
+    const integrationRef = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.integrationBranch!}`);
+    if (integrationRef !== run.integrationHead) throw new Error('Apply refused: integration branch changed after verification');
+    await git(run.repoRoot!, 'merge', '--ff-only', run.integrationHead);
     this.setRun(id, 'applied', run.result, undefined);
     await this.cleanupBuildWorktrees(this.requireRun(id));
     this.emit(id);
@@ -245,7 +272,13 @@ export class SwarmManager {
         );
       }
       if (!result?.trim()) throw new Error('Synthesizer returned no result');
-      this.setRun(run.id, run.mode === 'build' ? 'awaiting_apply' : 'completed', result, undefined);
+      if (run.mode === 'build') {
+        await assertCleanRepository(run.integrationPath!);
+        const integrationHead = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.integrationBranch!}`);
+        this.setRunAwaitingApply(run.id, integrationHead, result);
+      } else {
+        this.setRun(run.id, 'completed', result, undefined);
+      }
       this.emit(run.id);
     } catch (error) {
       const aborted = error instanceof AbortError || controller.signal.aborted;
@@ -335,7 +368,7 @@ export class SwarmManager {
     const dirty = await git(cwd, 'status', '--porcelain');
     if (!dirty) return;
     await git(cwd, 'add', '-A');
-    await git(cwd, '-c', 'user.name=DERO Hive Swarm', '-c', 'user.email=swarm@localhost', 'commit', '-m', `swarm worker ${task.index + 1}`);
+    await git(cwd, 'commit', '-m', `swarm worker ${task.index + 1}`);
   }
 
   private async mergeWorkerBranches(run: SwarmRun): Promise<void> {
@@ -343,12 +376,7 @@ export class SwarmManager {
       if (!task.branchName) continue;
       if (await isAncestor(run.repoRoot!, task.branchName, run.integrationBranch!)) continue;
       try {
-        await git(
-          run.integrationPath!,
-          '-c', 'user.name=DERO Hive Swarm',
-          '-c', 'user.email=swarm@localhost',
-          'merge', '--no-edit', task.branchName
-        );
+        await git(run.integrationPath!, 'merge', '--no-edit', task.branchName);
       } catch (error) {
         await gitBestEffort(run.integrationPath!, 'merge', '--abort');
         this.setTask(task.id, 'failed', task.output, `Integration conflict: ${errorMessage(error)}`, task.startedAt, Date.now());
@@ -397,6 +425,11 @@ export class SwarmManager {
   private setRun(id: string, status: SwarmRunStatus, result?: string, error?: string): void {
     getDb().prepare('UPDATE swarm_runs SET status = ?, result = ?, error = ?, updated_at = ? WHERE id = ?')
       .run(status, result || null, error || null, Date.now(), id);
+  }
+
+  private setRunAwaitingApply(id: string, integrationHead: string, result: string): void {
+    getDb().prepare("UPDATE swarm_runs SET status = 'awaiting_apply', integration_head = ?, result = ?, error = NULL, updated_at = ? WHERE id = ?")
+      .run(integrationHead, result, Date.now(), id);
   }
 
   private setTask(
@@ -465,6 +498,7 @@ async function runAgent(options: {
         tools,
         systemPrompt,
         reasoning: { effort: 'medium' },
+        nativeExecutionMode: options.writable ? undefined : 'read-only',
         signal: options.signal,
         // Provider-native actions cannot be path-confined by Hive. Build workers
         // must use the explicit file tools above, which enforce the worktree root.
@@ -490,6 +524,10 @@ async function runAgent(options: {
         }
         let args: Record<string, unknown> = {};
         try { args = JSON.parse(call.arguments) as Record<string, unknown>; } catch { /* invalid args become empty */ }
+        if ((call.name === 'write_file' || call.name === 'edit_file') && isForbiddenSwarmWritePath(args.path, options.cwd)) {
+          messages.push({ id: randomUUID(), role: 'tool', toolCallId: call.id, name: call.name, content: 'Tool denied: Swarm cannot write Git metadata', createdAt: Date.now() });
+          continue;
+        }
         const result = await builtinExecutors[call.name](args, { cwd: options.cwd, conversationId });
         messages.push({ id: randomUUID(), role: 'tool', toolCallId: call.id, name: call.name, content: result.content, createdAt: Date.now() });
       }
@@ -545,13 +583,34 @@ async function isAncestor(repoRoot: string, ancestor: string, descendant: string
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-      encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024
+    const env = { ...process.env };
+    const redirected = new Set([
+      'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+      'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE',
+      'GIT_GRAFT_FILE', 'GIT_REPLACE_REF_BASE', 'GIT_SHALLOW_FILE'
+    ]);
+    for (const key of Object.keys(env)) {
+      const upper = key.toUpperCase();
+      if (redirected.has(upper) || upper.startsWith('GIT_CONFIG_')) delete env[key];
+    }
+    env.GIT_TERMINAL_PROMPT = '0';
+    const { stdout } = await execFileAsync('git', [
+      '-C', cwd,
+      '-c', `core.hooksPath=${GIT_HOOKS_SINK}`,
+      '-c', 'commit.gpgSign=false',
+      '-c', 'tag.gpgSign=false',
+      '-c', 'merge.gpgSign=false',
+      '-c', 'user.name=DERO Hive Swarm',
+      '-c', 'user.email=swarm@localhost',
+      ...args
+    ], {
+      encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS, env
     });
     return stdout.trim();
   } catch (error) {
     const details = error as Error & { stderr?: string };
-    throw new Error(details.stderr?.trim() || details.message);
+    throw new Error(details.stderr?.trim() || details.message, { cause: error });
   }
 }
 
@@ -587,6 +646,7 @@ function rowToRun(row: Record<string, unknown>, tasks: SwarmTask[]): SwarmRun {
     baseHead: row.base_head as string | undefined,
     integrationBranch: row.integration_branch as string | undefined,
     integrationPath: row.integration_path as string | undefined,
+    integrationHead: row.integration_head as string | undefined,
     result: row.result as string | undefined,
     error: row.error as string | undefined,
     createdAt: row.created_at as number,
