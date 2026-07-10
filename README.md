@@ -132,7 +132,7 @@ DERO Hive is possible because of these open-source projects and services. This l
 
 ### DERO ecosystem
 
-- [DERO](https://dero.io/) and the projects, documentation, and community that support the bundled DERO MCP server and DERO development skills.
+- [DERO](https://derofoundation.co) and the projects, documentation, and community that support the bundled DERO MCP server and DERO development skills.
 
 ## License
 
