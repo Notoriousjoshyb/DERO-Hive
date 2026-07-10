@@ -7,13 +7,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'opencode-zen',
     name: 'OpenCode Zen',
-    baseUrl: 'https://opencode.ai/zen/go/v1',
+    baseUrl: 'https://opencode.ai/zen/v1',
     apiKeyUrl: 'https://opencode.ai/auth',
     docsUrl: 'https://opencode.ai/docs',
-    defaultModel: 'big-pickle',
+    defaultModel: 'claude-sonnet-4-5',
     supportsTools: true,
     supportsVision: true,
-    notes: 'OpenCode Zen — curated multi-model gateway. The model list is fetched live when you save.',
+    notes: 'OpenCode Zen — full multi-model gateway (Claude, GPT, Gemini, …). Requires a Zen API key with credits; a Go-subscription key will NOT work here — use the OpenCode Go preset instead. Model list fetched live.',
     models: []
   },
   {
@@ -22,9 +22,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://opencode.ai/zen/go/v1',
     apiKeyUrl: 'https://opencode.ai/auth',
     docsUrl: 'https://opencode.ai/docs',
-    defaultModel: 'gpt-4o-mini',
+    defaultModel: 'minimax-m3',
     supportsTools: true,
-    notes: 'OpenCode Go gateway — same endpoint as Zen. Model list fetched live on save.',
+    notes: 'OpenCode Go subscription gateway (MiniMax, Kimi, GLM, DeepSeek, Qwen). Requires your Go API key. Model list fetched live.',
     models: []
   },
   {
@@ -40,12 +40,22 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   },
   {
     id: 'kimi',
-    name: 'Kimi Code (Moonshot)',
+    name: 'Kimi for Coding',
     baseUrl: 'https://api.kimi.com/coding/v1',
-    apiKeyUrl: 'https://platform.moonshot.cn',
+    apiKeyUrl: 'https://www.kimi.com',
+    defaultModel: 'kimi-for-coding',
+    supportsTools: true,
+    notes: 'Kimi-for-Coding subscription endpoint — only exposes the coding models (usually 1–2). For the full Kimi/Moonshot catalog use the Moonshot AI preset.',
+    models: []
+  },
+  {
+    id: 'moonshot',
+    name: 'Moonshot AI (full Kimi catalog)',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    apiKeyUrl: 'https://platform.moonshot.ai/console/api-keys',
     defaultModel: 'kimi-k2-0711-preview',
     supportsTools: true,
-    notes: 'Moonshot Kimi K2 (OpenAI-compatible coding endpoint). Model list fetched live when you save.',
+    notes: 'Full Moonshot platform catalog (all Kimi models). Requires a platform.moonshot.ai API key — a Kimi-for-Coding subscription key will not work here. Model list fetched live.',
     models: []
   },
   {
@@ -97,8 +107,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     name: 'Ollama (local)',
     baseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.2',
-    supportsTools: false,
-    notes: 'Local Ollama. Models fetched dynamically from /api/tags.',
+    supportsTools: true,
+    notes: 'Local Ollama via its OpenAI-compatible /v1 endpoint. No API key needed. Installed models are fetched from the local server.',
     models: []
   },
   {

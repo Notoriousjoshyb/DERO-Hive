@@ -9,9 +9,33 @@ import { logger } from '../utils/logger';
 import { fetchLiveModels } from '../providers/models';
 import { applyKnownMetadata } from '@shared/modelMetadata';
 
+// Keep model lists fresh: refresh on startup, on a timer, and opportunistically
+// whenever the renderer asks for the provider list and the cached models are stale.
+const MODEL_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const MODEL_STALE_AFTER_MS = 60 * 60 * 1000; // 1 hour
+const refreshInFlight = new Set<string>();
+
+export function startModelRefreshScheduler(): void {
+  void refreshAllProviderModels();
+  setInterval(() => void refreshAllProviderModels(), MODEL_REFRESH_INTERVAL_MS);
+}
+
+async function refreshAllProviderModels(): Promise<void> {
+  const configured = listProviders().filter((p) => p.enabled && p.baseUrl);
+  await Promise.allSettled(configured.map((p) => refreshModelsInBackground(p.id)));
+}
+
 export function registerProviderHandlers(): void {
   ipcMain.handle(IPC.PROVIDER_LIST, () => {
     const configured = listProviders();
+    // Top up any stale model lists in the background; the renderer listens for
+    // PROVIDER_MODELS_UPDATED and reloads when each refresh lands.
+    const now = Date.now();
+    for (const p of configured) {
+      if (p.enabled && p.baseUrl && (!p.modelsFetchedAt || now - p.modelsFetchedAt > MODEL_STALE_AFTER_MS)) {
+        void refreshModelsInBackground(p.id);
+      }
+    }
     return {
       configured,
       presets: PROVIDER_PRESETS
@@ -98,12 +122,16 @@ export function registerProviderHandlers(): void {
 }
 
 async function refreshModelsInBackground(id: string): Promise<void> {
+  if (refreshInFlight.has(id)) return;
+  refreshInFlight.add(id);
   try {
     const r = await refreshModelsNow(id);
     if (r.ok) logger.info('providers', `auto-refreshed ${r.models?.length || 0} models for ${id}`);
     else logger.warn('providers', `auto-refresh failed for ${id}: ${r.error}`);
   } catch (err) {
     logger.warn('providers', `auto-refresh crashed for ${id}`, err);
+  } finally {
+    refreshInFlight.delete(id);
   }
 }
 
@@ -119,10 +147,22 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
     return { ok: false, error: 'Provider returned no models' };
   }
 
-  // Use live list as the source of truth, but preserve existing metadata for IDs we already know.
+  // Use live list as the source of truth and rebuild metadata each refresh:
+  // what the provider reports live wins, then applyKnownMetadata fills the
+  // gaps from our table. Deliberately NOT carrying stored metadata forward —
+  // it only ever came from these same sources and would pin stale values.
   const liveModels: ProviderModel[] = live.models.map((modelId) => {
     const existing = cfg.models.find((m) => m.id === modelId);
-    return existing || { id: modelId, name: modelId };
+    const detail = live.details?.[modelId];
+    return {
+      id: modelId,
+      name: detail?.name || existing?.name || modelId,
+      contextWindow: detail?.contextWindow,
+      maxOutput: detail?.maxOutput,
+      supportsVision: detail?.supportsVision,
+      supportsTools: detail?.supportsTools,
+      supportsReasoning: detail?.supportsReasoning
+    };
   });
   const merged = applyKnownMetadata(liveModels);
 

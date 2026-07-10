@@ -11,11 +11,12 @@ interface Props {
   canSend: boolean;
   onVoiceResult: (text: string, isFinal: boolean) => void;
   onAttachGh: () => void;
+  focusComposer?: () => void;
 }
 
 const EMPTY_FAVS: string[] = [];
 
-export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh }: Props): JSX.Element {
+export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh, focusComposer }: Props): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const providers = useAppStore((s) => s.providers);
   const selectedProviderId = useAppStore((s) => s.selectedProviderId);
@@ -204,7 +205,7 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
                           className={`flex items-center px-3 py-1 hover:bg-bg-input ${selectedModel === m.id ? 'text-accent' : 'text-fg'}`}
                         >
                           <button
-                            onClick={() => setSelection(selectedProviderId, m.id)}
+                            onClick={() => { setSelection(selectedProviderId, m.id); closeAll(); focusComposer?.(); }}
                             className="flex-1 text-left text-xs truncate"
                             title={m.id}
                           >

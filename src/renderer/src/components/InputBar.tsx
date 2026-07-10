@@ -335,6 +335,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             onAttachGh={openGhModal}
             onVoiceResult={onVoiceResult}
             canSend={text.trim().length > 0}
+            focusComposer={() => textareaRef.current?.focus({ preventScroll: true })}
           />
         </div>
         {!composerFocusMode && (

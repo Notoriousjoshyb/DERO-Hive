@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC } from '../shared/types';
 import { registerChatHandlers } from './ipc/chat';
-import { registerProviderHandlers } from './ipc/providers';
+import { registerProviderHandlers, startModelRefreshScheduler } from './ipc/providers';
 import { registerMcpHandlers } from './ipc/mcp';
 import { registerSkillHandlers } from './ipc/skills';
 import { registerFsHandlers } from './ipc/fs';
@@ -248,6 +248,7 @@ app.whenReady().then(async () => {
   // Register IPC handlers
   registerChatHandlers(() => mainWindow, mcpManager);
   registerProviderHandlers();
+  startModelRefreshScheduler();
   registerMcpHandlers(mcpManager);
   registerSkillHandlers();
   registerFsHandlers();

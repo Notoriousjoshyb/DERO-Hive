@@ -3,6 +3,18 @@ import { parseSSE } from './streaming';
 import type { ProviderConfig, Message, ToolDefinition, ContentPart } from '@shared/types';
 import { logger } from '../utils/logger';
 
+// Pull the human-readable message out of an error response body.
+// Handles OpenAI ({error:{message}}) and OpenCode ({type:'error',error:{message}}) shapes.
+function extractErrorMessage(body: string): string | null {
+  try {
+    const j = JSON.parse(body) as { error?: { message?: string } | string; message?: string };
+    if (typeof j.error === 'string') return j.error;
+    if (j.error?.message) return j.error.message;
+    if (j.message) return j.message;
+  } catch { /* not JSON */ }
+  return body ? body.slice(0, 200) : null;
+}
+
 // OpenAI Chat Completions compatible adapter. Works with any service that
 // implements that format (OpenAI, OpenCode Zen/Go, Groq, OpenRouter, Moonshot, Ollama, etc.)
 export class OpenAICompatibleAdapter implements ProviderAdapter {
@@ -31,7 +43,16 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       if (r.ok) return { ok: true, models: this.cfg.models.map((m) => m.id) };
       const body = await r.text();
       if (r.status === 401 || r.status === 403) {
-        return { ok: false, error: `Auth failed (${r.status}): check your API key.`, hint: 'Edit the provider and re-enter the key.' };
+        // Some gateways (OpenCode Zen/Go) return 401 for other problems too
+        // (e.g. "model not supported") — surface the provider's own message.
+        const detail = extractErrorMessage(body);
+        return {
+          ok: false,
+          error: `Auth failed (${r.status})${detail ? `: ${detail}` : ': check your API key.'}`,
+          hint: detail && /model/i.test(detail)
+            ? 'The probe model may not exist on this endpoint — refresh the model list.'
+            : 'Edit the provider and re-enter the key.'
+        };
       }
       if (r.status === 404) {
         // Fall through to /models test below
@@ -58,7 +79,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       }
       // 401/403 with /models usually means the key is wrong; report that early.
       if (r.status === 401 || r.status === 403) {
-        return { ok: false, error: `Auth failed (${r.status}): check your API key.`, hint: 'Edit the provider and re-enter the key.' };
+        const detail = extractErrorMessage(await r.text());
+        return { ok: false, error: `Auth failed (${r.status})${detail ? `: ${detail}` : ': check your API key.'}`, hint: 'Edit the provider and re-enter the key.' };
       }
       // 404: try common URL variants
       if (r.status === 404) {
