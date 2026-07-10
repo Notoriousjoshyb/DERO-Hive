@@ -1,0 +1,6 @@
+.opencode/
+.vscode/
+build/
+*.zip
+native/purewolf-native
+extension/manifest.json
