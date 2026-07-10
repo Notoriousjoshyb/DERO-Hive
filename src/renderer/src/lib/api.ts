@@ -26,7 +26,9 @@ import type {
   UsageStats,
   WhisperStatus,
   SimulatorStatus,
-  SimulatorStartOptions
+  SimulatorStartOptions,
+  IntegrationId,
+  IntegrationStatus
 } from '@shared/types';
 
 declare global {
@@ -139,6 +141,11 @@ declare global {
       simulatorRestart: (opts?: SimulatorStartOptions) => Promise<SimulatorStatus>;
       onSimulatorOutput: (cb: (e: { stream: 'stdout' | 'stderr'; data: string }) => void) => () => void;
       onSimulatorStatus: (cb: (status: SimulatorStatus) => void) => () => void;
+
+      integrationList: () => Promise<IntegrationStatus[]>;
+      integrationStart: (id: IntegrationId) => Promise<IntegrationStatus>;
+      integrationStop: (id: IntegrationId) => Promise<IntegrationStatus>;
+      onIntegrationChanged: (cb: (status: IntegrationStatus) => void) => () => void;
 
       openExternal: (url: string) => Promise<void>;
       platform: () => Promise<NodeJS.Platform>;

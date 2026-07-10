@@ -34,3 +34,6 @@ resources/mcp/*/hive-mcp.json
 
 # DERO simulator is built from DEROFDN/derohe on postinstall (see scripts/setup-simulator.mjs)
 resources/simulator/bin/
+
+# Optional integration binaries are local release inputs, not source artifacts.
+resources/integrations/*/bin/

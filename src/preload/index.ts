@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -188,6 +188,16 @@ const api = {
     const l = (_: IpcRendererEvent, d: SimulatorStatus) => cb(d);
     ipcRenderer.on(IPC.SIMULATOR_STATUS_CHANGED, l);
     return () => ipcRenderer.off(IPC.SIMULATOR_STATUS_CHANGED, l);
+  },
+
+  // Optional integrations
+  integrationList: (): Promise<IntegrationStatus[]> => ipcRenderer.invoke(IPC.INTEGRATION_LIST),
+  integrationStart: (id: IntegrationId): Promise<IntegrationStatus> => ipcRenderer.invoke(IPC.INTEGRATION_START, id),
+  integrationStop: (id: IntegrationId): Promise<IntegrationStatus> => ipcRenderer.invoke(IPC.INTEGRATION_STOP, id),
+  onIntegrationChanged: (cb: (status: IntegrationStatus) => void) => {
+    const l = (_: IpcRendererEvent, status: IntegrationStatus) => cb(status);
+    ipcRenderer.on(IPC.INTEGRATION_CHANGED, l);
+    return () => ipcRenderer.off(IPC.INTEGRATION_CHANGED, l);
   },
 
   // Window

@@ -558,6 +558,10 @@ export const IPC = {
   APP_OPEN_EXTERNAL: 'app:openExternal',
   APP_PLATFORM: 'app:platform',
   APP_VERSION: 'app:version',
+  INTEGRATION_LIST: 'integration:list',
+  INTEGRATION_START: 'integration:start',
+  INTEGRATION_STOP: 'integration:stop',
+  INTEGRATION_CHANGED: 'integration:changed', // event
   BROWSER_BRIDGE_SET_ENABLED: 'browserBridge:setEnabled',
   BROWSER_BRIDGE_STATUS: 'browserBridge:status',
   BROWSER_BRIDGE_REVOKE: 'browserBridge:revoke',
@@ -610,6 +614,24 @@ export interface SimulatorStartOptions {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+}
+
+export type IntegrationId = 'hologram' | 'purewolf' | 'hermes';
+export type IntegrationKind = 'desktop-sidecar' | 'native-host' | 'gateway';
+export type IntegrationLaunchMode = 'managed' | 'browser' | 'external';
+
+export interface IntegrationStatus {
+  id: IntegrationId;
+  name: string;
+  kind: IntegrationKind;
+  launchMode: IntegrationLaunchMode;
+  optional: true;
+  installed: boolean;
+  running: boolean;
+  pid: number | null;
+  binaryPath: string | null;
+  endpoint: string | null;
+  error: string | null;
 }
 
 export type IpcChannel = typeof IPC[keyof typeof IPC];

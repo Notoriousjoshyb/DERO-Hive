@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HOLOGRAM App Icon - G. Layered Depths
+  Glyphic solid-fill design with tonal depth
+  For macOS/iOS/Windows app icons
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0c0c14"/>
+      <stop offset="100%" style="stop-color:#08080e"/>
+    </linearGradient>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="iconBounds">
+      <rect width="1024" height="1024"/>
+    </clipPath>
+  </defs>
+  
+  <!-- Dark square background - macOS applies its own rounded corners -->
+  <rect width="1024" height="1024" fill="url(#bgGrad)"/>
+  
+  <!-- Clip everything to prevent any bleed outside bounds -->
+  <g clip-path="url(#iconBounds)">
+  
+  <!-- G. Layered Depths Logo - Centered at 512,512, scaled to fit with padding -->
+  <!-- Original viewBox 0 0 100 100 → scale 7.2, centered -->
+  <g transform="translate(152, 152) scale(7.2)" filter="url(#glow)">
+    <!-- Outer Frame - Light cyan (brightest layer) -->
+    <polygon 
+      points="50,2 95,26 95,74 50,98 5,74 5,26" 
+      fill="#67e8f9"
+    />
+    
+    <!-- Inner Void - Dark depth layer -->
+    <polygon 
+      points="50,7 90,28.5 90,71.5 50,93 10,71.5 10,28.5" 
+      fill="#0c1218"
+    />
+    
+    <!-- Inner Body - Primary cyan H-form -->
+    <polygon 
+      points="50,13 83,32 83,68 50,87 17,68 17,32" 
+      fill="#22d3ee"
+    />
+    
+    <!-- Arrow Cutouts - Teal indent (creates the H shape) -->
+    <polygon 
+      points="17,32 38,32 38,45 50,50 62,45 62,32 83,32 50,13" 
+      fill="#0d4a55"
+    />
+    <polygon 
+      points="62,68 62,55 50,50 38,55 38,68 17,68 50,87 83,68" 
+      fill="#0d4a55"
+    />
+  </g>
+  </g>
+</svg>

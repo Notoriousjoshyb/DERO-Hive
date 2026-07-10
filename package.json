@@ -88,6 +88,7 @@
       "!resources/whisper/**",
       "!resources/simulator/**",
       "!resources/mcp/**",
+      "!resources/integrations/**",
       "package.json"
     ],
     "extraResources": [
@@ -108,6 +109,13 @@
       {
         "from": "resources/mcp",
         "to": "mcp",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/integrations",
+        "to": "integrations",
         "filter": [
           "**/*"
         ]

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Hologram",
+  "outputfilename": "Hologram",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "DHEBP"
+  },
+  "info": {
+    "companyName": "DHEBP",
+    "productName": "Hologram",
+    "productVersion": "1.0.1",
+    "copyright": "Copyright © 2026 DHEBP",
+    "protocols": [
+      {
+        "scheme": "dero",
+        "description": "DERO dURL Link",
+        "role": "Viewer"
+      }
+    ]
+  },
+  "enableDragAndDrop": true
+}
