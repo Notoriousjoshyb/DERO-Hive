@@ -70,14 +70,18 @@ export function createTestDb(): TestDb {
   return {
     prepare(sql: string) {
       const stmt = db.prepare(sql);
-      // node:sqlite rejects `undefined` parameters; the app passes `|| null`
-      // everywhere, but normalise so a stray undefined fails the assertion
-      // being tested rather than the binding.
-      const norm = (params: unknown[]): unknown[] => params.map((p) => (p === undefined ? null : p));
+      // Reject `undefined` rather than quietly binding NULL. better-sqlite3
+      // throws on undefined parameters, so silently coercing here would let a
+      // binding bug pass the tests and still crash in production.
+      const check = (params: unknown[]): never[] => {
+        const i = params.findIndex((p) => p === undefined);
+        if (i !== -1) throw new TypeError(`undefined bound to parameter ${i + 1} of: ${sql.trim().slice(0, 60)}`);
+        return params as never[];
+      };
       return {
-        run: (...params: unknown[]) => stmt.run(...(norm(params) as never[])),
-        get: (...params: unknown[]) => stmt.get(...(norm(params) as never[])),
-        all: (...params: unknown[]) => stmt.all(...(norm(params) as never[]))
+        run: (...params: unknown[]) => stmt.run(...check(params)),
+        get: (...params: unknown[]) => stmt.get(...check(params)),
+        all: (...params: unknown[]) => stmt.all(...check(params))
       };
     },
     transaction<T extends (...args: never[]) => unknown>(fn: T): T {
