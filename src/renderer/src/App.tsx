@@ -13,6 +13,8 @@ import { ShortcutsCheatsheet } from './components/ShortcutsCheatsheet';
 import { SystemPromptModal } from './components/SystemPromptModal';
 import { AgentsModal } from './components/AgentsModal';
 import { SearchDialog } from './components/SearchDialog';
+import { ComparePanel } from './components/ComparePanel';
+import { CommandPalette } from './components/CommandPalette';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
@@ -32,6 +34,7 @@ export default function App(): JSX.Element {
   const loadSettings = useAppStore((s) => s.loadSettings);
   const loadProviders = useAppStore((s) => s.loadProviders);
   const loadSkills = useAppStore((s) => s.loadSkills);
+  const loadCustomCommands = useAppStore((s) => s.loadCustomCommands);
   const loadPrompts = useAppStore((s) => s.loadPrompts);
   const loadMcpStatuses = useAppStore((s) => s.loadMcpStatuses);
   const loadConversations = useAppStore((s) => s.loadConversations);
@@ -49,6 +52,7 @@ export default function App(): JSX.Element {
     void loadSettings();
     void loadProviders();
     void loadSkills();
+    void loadCustomCommands();
     void loadPrompts();
     void loadMcpStatuses();
     void loadConversations();
@@ -71,8 +75,11 @@ export default function App(): JSX.Element {
       const cur = useAppStore.getState().settings.theme;
       if (cur === 'system') applyTheme('system', info.shouldUseDarkColors);
     });
+    const offTitle = window.hive.onConvTitleGenerated(() => {
+      void loadConversations();
+    });
 
-    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); };
+    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); offTitle(); };
   }, []);
 
   return (
@@ -90,6 +97,8 @@ export default function App(): JSX.Element {
       <SystemPromptModal />
       <AgentsModal />
       <SearchDialog />
+      <ComparePanel />
+      <CommandPalette />
       <style>{`
         body.focus-mode [data-sidebar-panel],
         body.focus-mode [data-vision-panel] {

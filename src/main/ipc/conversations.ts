@@ -148,6 +148,19 @@ export function registerConvHandlers(): void {
     return { ok: true };
   });
 
+  ipcMain.handle(IPC.MSG_UPDATE, (_e, { messageId, content }: { messageId: string; content: string }) => {
+    const msg = getDb().prepare('SELECT conversation_id, content FROM messages WHERE id = ?').get(messageId) as { conversation_id: string; content: string } | undefined;
+    if (!msg) return { ok: false, error: 'message not found' };
+    const contentText = typeof content === 'string' ? content : JSON.stringify(content);
+    getDb().prepare('UPDATE messages SET content = ? WHERE id = ?').run(contentText, messageId);
+    // Re-sync FTS index
+    getDb().prepare('DELETE FROM messages_fts WHERE rowid = (SELECT rowid FROM messages WHERE id = ?)').run(messageId);
+    getDb().prepare('INSERT INTO messages_fts (rowid, content, conversation_id, message_id) VALUES ((SELECT rowid FROM messages WHERE id = ?), ?, ?, ?)')
+      .run(messageId, contentText, msg.conversation_id, messageId);
+    getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversation_id);
+    return { ok: true };
+  });
+
   ipcMain.handle(IPC.BOOKMARK_LIST, () => {
     const rows = getDb().prepare(`
       SELECT m.id AS message_id, m.conversation_id, m.role, m.content, m.created_at, c.title

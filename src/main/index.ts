@@ -64,6 +64,13 @@ async function createMainWindow(): Promise<void> {
     mainWindow?.show();
   });
 
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('window:fullscreen-changed', { fullscreen: true });
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('window:fullscreen-changed', { fullscreen: false });
+  });
+
   // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -278,7 +285,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:toggleFullscreen', () => {
     if (!mainWindow) return false;
     mainWindow.setFullScreen(!mainWindow.isFullScreen());
-    return mainWindow.isFullScreen();
+    const fs = mainWindow.isFullScreen();
+    mainWindow.webContents.send('window:fullscreen-changed', { fullscreen: fs });
+    return fs;
   });
 
   buildAppMenu();

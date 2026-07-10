@@ -75,6 +75,8 @@ export interface ChatRequest {
   planMode?: boolean;
   toolApprovalModeOverride?: 'always' | 'project' | 'never';
   attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
+  /** When regenerating from an edited message, skip persisting the last user message again. */
+  skipUserPersist?: boolean;
 }
 
 export type StreamEvent =
@@ -258,6 +260,7 @@ export interface AppSettings {
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
   accentColor?: string; // hex override for the accent colour (empty = theme default)
   customCss?: string; // user CSS injected after app styles
+  themePreset?: string; // preset theme name (e.g., 'solarized', 'nord', 'catppuccin', 'gruvbox')
   telemetry: boolean;
   experimentalFeatures: boolean;
   // Composer (per-session, but persists in settings)
@@ -271,9 +274,21 @@ export interface AppSettings {
   voiceNotificationVolume?: number;
   desktopNotifications?: boolean; // native OS notification when a response finishes in the background (default true)
   voiceSttEndpoint?: string;
+  // Composer spellcheck
+  spellcheckEnabled?: boolean; // default true
+  spellcheckLanguage?: string; // default 'en'
+  // Focus mode extras
+  focusModeTimerMinutes?: number; // default 25 (0 = off)
+  focusModeWordGoal?: number; // default 0 (off)
+  // Text-to-speech
+  ttsEnabled?: boolean; // default false
+  ttsVoiceUri?: string; // preferred voice URI
   // Local Whisper.cpp speech-to-text
   whisperEnabled?: boolean; // auto-start local server with the app (default true)
   whisperModel?: string; // model filename, e.g. "ggml-base.en.bin"
+  // Usage budget alerts
+  dailyTokenBudget?: number; // 0 = off
+  monthlyTokenBudget?: number; // 0 = off
 }
 
 export interface Attachment {
@@ -326,6 +341,7 @@ export const IPC = {
   // Chat
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
+  CHAT_QUEUE_MESSAGE: 'chat:queue-message',
   CHAT_STREAM: 'chat:stream', // event from main -> renderer
 
   // Conversations
@@ -339,12 +355,15 @@ export const IPC = {
   CONV_REVERT: 'conv:revert',
   CONV_COMPACT: 'conv:compact',
   CONV_COMPACTED: 'conv:compacted',
+  CONV_TITLE_GENERATED: 'conv:title-generated',
 
   // Usage / cost dashboard
   USAGE_STATS: 'usage:stats',
 
   // Message bookmarks
   MSG_BOOKMARK: 'msg:bookmark',
+  MSG_UPDATE: 'msg:update',
+  MSG_DELETE: 'msg:delete',
   BOOKMARK_LIST: 'bookmark:list',
 
   // Providers

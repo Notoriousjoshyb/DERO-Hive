@@ -4,8 +4,10 @@ import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
   // Chat
-  chatSend: (req: { conversationId: string; providerId: string; model: string; messages: Message[]; systemPrompt?: string; temperature?: number; topP?: number; maxTokens?: number; tools?: ToolDefinition[]; reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> }; attachments?: { type: string; filename: string; mimeType: string; data: string }[] }) =>
+  chatSend: (req: { conversationId: string; providerId: string; model: string; messages: Message[]; systemPrompt?: string; temperature?: number; topP?: number; maxTokens?: number; tools?: ToolDefinition[]; reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> }; attachments?: { type: string; filename: string; mimeType: string; data: string }[]; skipUserPersist?: boolean }) =>
     ipcRenderer.invoke(IPC.CHAT_SEND, req),
+  chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: string | Array<{ type: string; text?: string; image_url?: { url: string }; input_audio?: { data: string; format: string }; file?: { filename: string; data: string; mimeType: string } }>; createdAt: number }) =>
+    ipcRenderer.invoke(IPC.CHAT_QUEUE_MESSAGE, conversationId, message),
   chatAbort: (conversationId: string) => ipcRenderer.invoke(IPC.CHAT_ABORT, conversationId),
   onChatStream: (cb: (e: StreamEvent) => void) => {
     const listener = (_: IpcRendererEvent, data: StreamEvent) => cb(data);
@@ -26,11 +28,17 @@ const api = {
   convCompact: (conversationId: string) => ipcRenderer.invoke(IPC.CONV_COMPACT, conversationId),
   usageStats: () => ipcRenderer.invoke(IPC.USAGE_STATS),
   msgBookmark: (messageId: string, bookmarked: boolean) => ipcRenderer.invoke(IPC.MSG_BOOKMARK, { messageId, bookmarked }),
+  msgUpdate: (messageId: string, content: string) => ipcRenderer.invoke(IPC.MSG_UPDATE, { messageId, content }) as Promise<{ ok: boolean; error?: string }>,
   bookmarkList: () => ipcRenderer.invoke(IPC.BOOKMARK_LIST),
   onConvCompacted: (cb: (data: { conversationId: string; removedCount: number; tokensSaved: number; beforeTokens: number; afterTokens: number }) => void) => {
     const l = (_: IpcRendererEvent, d: any) => cb(d);
     ipcRenderer.on(IPC.CONV_COMPACTED, l);
     return () => ipcRenderer.off(IPC.CONV_COMPACTED, l);
+  },
+  onConvTitleGenerated: (cb: (data: { conversationId: string; title: string }) => void) => {
+    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    ipcRenderer.on(IPC.CONV_TITLE_GENERATED, l);
+    return () => ipcRenderer.off(IPC.CONV_TITLE_GENERATED, l);
   },
 
   // Providers
@@ -160,6 +168,11 @@ const api = {
   winClose: () => ipcRenderer.invoke('window:close'),
   winIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   winToggleFullscreen: () => ipcRenderer.invoke('window:toggleFullscreen'),
+  onFullscreenChanged: (cb: (data: { fullscreen: boolean }) => void) => {
+    const l = (_: IpcRendererEvent, d: { fullscreen: boolean }) => cb(d);
+    ipcRenderer.on('window:fullscreen-changed', l);
+    return () => ipcRenderer.off('window:fullscreen-changed', l);
+  },
 
   // Menu events
   onMenu: (cb: (action: string) => void) => {

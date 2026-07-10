@@ -13,11 +13,13 @@ interface Props {
   canSend: boolean;
   onVoiceResult: (text: string, isFinal: boolean) => void;
   onAttachGh: () => void;
+  onCompare?: () => void;
+  onSchedule?: () => void;
   focusComposer?: () => void;
 }
 
 const EMPTY_FAVS: string[] = [];
-export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh, focusComposer }: Props): JSX.Element {
+export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh, onCompare, onSchedule, focusComposer }: Props): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const providers = useAppStore((s) => s.providers);
   const selectedProviderId = useAppStore((s) => s.selectedProviderId);
@@ -338,6 +340,30 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
 
         <VoiceInput onResult={onVoiceResult} />
 
+        {onCompare && (
+          <button
+            type="button"
+            onClick={onCompare}
+            title="Compare two models side-by-side"
+            className="px-2 py-1 rounded text-[11px] flex items-center gap-1 text-fg-muted hover:text-fg hover:bg-bg-elev transition"
+          >
+            <SplitIcon />
+            <span>Compare</span>
+          </button>
+        )}
+
+        {onSchedule && (
+          <button
+            type="button"
+            onClick={onSchedule}
+            title="Schedule message"
+            className="px-2 py-1 rounded text-[11px] flex items-center gap-1 text-fg-muted hover:text-fg hover:bg-bg-elev transition"
+          >
+            <ClockIcon />
+            <span>Schedule</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={isStreaming ? onStop : onSend}
@@ -423,6 +449,23 @@ function ChevronIcon(): JSX.Element {
 }
 function StopIcon(): JSX.Element {
   return <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>;
+}
+function SplitIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1v14" />
+      <path d="M4 4h4M4 8h4M4 12h4" />
+      <path d="M12 4h2M12 8h2M12 12h2" />
+    </svg>
+  );
+}
+function ClockIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.5" />
+      <path d="M8 4.5v3.5l2.5 2.5" />
+    </svg>
+  );
 }
 function SendIcon(): JSX.Element {
   return (

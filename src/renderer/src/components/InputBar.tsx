@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../stores/app';
 import type { Attachment } from '@shared/types';
 import { ComposerToolbar } from './ComposerToolbar';
 import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
+import { UsageBudgetAlert } from './UsageBudgetAlert';
 import { thinkingOptionsFor } from '@shared/thinkingCapabilities';
 import { resolveAgent } from '@shared/agents';
+import { executeCustomCommand } from '../lib/customSlashCommands';
 
 interface Props {
   conversationId?: string;
@@ -23,6 +25,7 @@ const HELP_HINTS = [
 export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const skills = useAppStore((s) => s.skills);
+  const customCommands = useAppStore((s) => s.customCommands);
   const pendingAttachments = useAppStore((s) => s.pendingAttachments);
   const addAttachment = useAppStore((s) => s.addAttachment);
   const removeAttachment = useAppStore((s) => s.removeAttachment);
@@ -35,8 +38,15 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   const composerFocusMode = useAppStore((s) => s.composerFocusMode);
   const composerPlanMode = useAppStore((s) => s.composerPlanMode);
   const composerReasoning = useAppStore((s) => s.composerReasoning);
+  const pendingUserMessages = useAppStore((s) => s.pendingUserMessages);
+
+  const focusModeTimerMinutes = settings.focusModeTimerMinutes ?? 25;
+  const focusModeWordGoal = settings.focusModeWordGoal ?? 0;
 
   const [text, setText] = useState('');
+  const [scheduled, setScheduled] = useState<{ text: string; fireAt: number; timeoutId: number } | null>(null);
+  const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false);
+  const [scheduleCountdown, setScheduleCountdown] = useState('');
   const [ghModal, setGhModal] = useState<{ url: string } | null>(null);
   const [dragIdx, setDragIdx] = useState<number | null>(null); // chip being reordered
   const [fileDropActive, setFileDropActive] = useState(false); // OS files hovering over the composer
@@ -103,11 +113,75 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     return () => wrap.removeEventListener('mousedown', onMouseDown);
   }, []);
 
-  const submit = async (): Promise<void> => {
-    const content = text.trim();
+  // Update countdown for scheduled messages.
+  useEffect(() => {
+    if (!scheduled) { setScheduleCountdown(''); return; }
+    const update = (): void => {
+      const remaining = Math.max(0, scheduled.fireAt - Date.now());
+      if (remaining === 0) { setScheduleCountdown(''); return; }
+      const seconds = Math.ceil(remaining / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      if (hours > 0) setScheduleCountdown(`${hours}h ${minutes % 60}m`);
+      else if (minutes > 0) setScheduleCountdown(`${minutes}m ${seconds % 60}s`);
+      else setScheduleCountdown(`${seconds}s`);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [scheduled]);
+
+  const scheduleSend = (delayMs: number): void => {
+    const captured = text.trim();
+    if (!captured) return;
+    if (scheduled) clearTimeout(scheduled.timeoutId);
+    const timeoutId = window.setTimeout(() => {
+      setScheduled(null);
+      void submit(captured);
+    }, delayMs);
+    setScheduled({ text: captured, fireAt: Date.now() + delayMs, timeoutId });
+    setText('');
+    setScheduleMenuOpen(false);
+  };
+
+  const cancelScheduled = (): void => {
+    if (!scheduled) return;
+    clearTimeout(scheduled.timeoutId);
+    setText(scheduled.text);
+    setScheduled(null);
+  };
+
+  const submit = async (overrideText?: string): Promise<void> => {
+    const content = (overrideText ?? text).trim();
     if (!content) return;
+    if (!conversationId) return;
     const state = useAppStore.getState();
-    if (state.isStreaming) return;
+
+    const userMsg = {
+      id: crypto.randomUUID(),
+      role: 'user' as const,
+      content: pendingAttachments.length > 0
+        ? [
+            { type: 'text', text: content },
+            ...pendingAttachments.map((a) =>
+              a.type === 'image' ? { type: 'image_url', image_url: { url: `data:${a.mimeType};base64,${a.data}` } } :
+              a.type === 'audio' ? { type: 'input_audio', input_audio: { data: a.data, format: 'mp3' as const } } :
+              { type: 'file', file: { filename: a.filename, data: a.data, mimeType: a.mimeType } }
+            )
+          ]
+        : content,
+      createdAt: Date.now()
+    };
+
+    // If the model is already working, queue the message so it can be inserted
+    // at the next tool-call boundary instead of interrupting the current turn.
+    if (state.isStreaming) {
+      state.queueUserMessage(userMsg as never);
+      await window.hive.chatQueueMessage(conversationId, userMsg as never);
+      setText('');
+      clearAttachments();
+      return;
+    }
 
     let providerId = state.selectedProviderId;
     let model = state.selectedModel;
@@ -139,6 +213,14 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       const rest = m[2];
       const skill = skills.find((s) => s.slashCommand === cmd && s.enabled);
       if (skill) { prompt = `${skill.prompt}\n\n${rest}`; skillName = skill.name; }
+      else {
+        const custom = customCommands.find((c) => c.slashCommand === cmd);
+        if (custom) {
+          const expanded = executeCustomCommand(custom, { text: rest, date: new Date().toLocaleDateString(), time: new Date().toLocaleTimeString() });
+          prompt = `${expanded}\n\n${rest}`;
+          skillName = custom.name;
+        }
+      }
     }
 
     // Run shell command prefixed with !cmd — the whole line after "!" is the command
@@ -183,24 +265,13 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       }
     }
 
-    const userMsg = {
-      id: crypto.randomUUID(),
-      role: 'user' as const,
-      content: pendingAttachments.length > 0
-        ? [
-            { type: 'text', text: prompt },
-            ...pendingAttachments.map((a) =>
-              a.type === 'image' ? { type: 'image_url', image_url: { url: `data:${a.mimeType};base64,${a.data}` } } :
-              a.type === 'audio' ? { type: 'input_audio', input_audio: { data: a.data, format: 'mp3' as const } } :
-              { type: 'file', file: { filename: a.filename, data: a.data, mimeType: a.mimeType } }
-            )
-          ]
-        : prompt,
-      createdAt: Date.now()
-    };
+    // If the user message had a slash skill or shell command, the displayed
+    // message keeps the raw text; the prompt sent to the model is expanded below.
+    const sendContent = skillName || shellMatch ? prompt : userMsg.content;
+    const sendMsg = { ...userMsg, content: sendContent };
     void extractedText;
 
-    useAppStore.setState((s) => ({ currentMessages: [...s.currentMessages, userMsg as never] }));
+    useAppStore.setState((s) => ({ currentMessages: [...s.currentMessages, sendMsg as never] }));
     const messagesToSend = useAppStore.getState().currentMessages;
 
     try {
@@ -316,11 +387,31 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     if (url) setGhModal({ url });
   };
 
+  const wordCount = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
+
   return (
     <div className={`border-t border-border bg-bg p-4 input-bar-offset ${composerFocusMode ? 'fixed inset-x-0 bottom-0 z-40 shadow-2xl' : ''}`}>
       <div className={`mx-auto ${composerFocusMode ? 'max-w-4xl' : 'max-w-3xl'}`}>
         <div className="flex items-center justify-between mb-1 px-1">
-          <div className="flex-1" />
+          <div className="flex items-center gap-3 text-[10px] text-fg-subtle">
+            {isStreaming ? (
+              <StreamingTimer />
+            ) : composerFocusMode ? (
+              <FocusModeStatus
+                timerMinutes={focusModeTimerMinutes}
+                wordGoal={focusModeWordGoal}
+                wordCount={wordCount}
+              />
+            ) : (
+              <span>{wordCount} word{wordCount === 1 ? '' : 's'}</span>
+            )}
+            {pendingUserMessages.length > 0 && (
+              <span className="inline-flex items-center gap-1 text-accent animate-pulse">
+                <span className="w-1 h-1 rounded-full bg-accent" />
+                {pendingUserMessages.length} queued
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <TokenUsageBar />
             <span className="text-fg-subtle/30">|</span>
@@ -389,17 +480,24 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             fileDropActive ? 'border-accent border-dashed bg-accent-soft' : composerFocusMode ? 'border-accent/60' : 'border-border'
           }`}
         >
+          <UsageBudgetAlert />
+          {scheduled && (
+            <div className="px-4 pt-3 flex items-center justify-between text-xs text-fg-subtle">
+              <span>Scheduled in {scheduleCountdown}</span>
+              <button onClick={cancelScheduled} className="text-accent hover:underline">Cancel</button>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
             rows={composerFocusMode ? 8 : 3}
-            spellCheck
+            spellCheck={settings.spellcheckEnabled !== false}
+            lang={settings.spellcheckLanguage || 'en'}
             autoFocus
             tabIndex={0}
             placeholder={hasMessages ? 'Reply…' : PLACEHOLDER}
-            readOnly={isStreaming}
             aria-label="Message input"
             className="w-full resize-none px-4 pt-3 pb-1.5 bg-transparent text-fg placeholder-fg-subtle focus:outline-none text-sm leading-relaxed caret-accent"
           />
@@ -420,9 +518,35 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             onAttach={attachFiles}
             onAttachGh={openGhModal}
             onVoiceResult={onVoiceResult}
+            onCompare={() => useAppStore.getState().openCompare(text)}
+            onSchedule={() => setScheduleMenuOpen(true)}
             canSend={text.trim().length > 0}
             focusComposer={() => textareaRef.current?.focus({ preventScroll: true })}
           />
+          {scheduleMenuOpen && (
+            <div className="px-3 pb-3 flex flex-wrap gap-2">
+              {[
+                { label: '5 min', ms: 5 * 60 * 1000 },
+                { label: '30 min', ms: 30 * 60 * 1000 },
+                { label: '1 hour', ms: 60 * 60 * 1000 },
+                { label: 'Tomorrow', ms: 24 * 60 * 60 * 1000 }
+              ].map((o) => (
+                <button
+                  key={o.label}
+                  onClick={() => scheduleSend(o.ms)}
+                  className="px-2 py-1 rounded text-xs bg-bg-elev border border-border hover:border-accent hover:text-accent transition"
+                >
+                  {o.label}
+                </button>
+              ))}
+              <button
+                onClick={() => setScheduleMenuOpen(false)}
+                className="px-2 py-1 rounded text-xs text-fg-subtle hover:text-fg"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
         {!composerFocusMode && (
           <div className="text-[10px] text-fg-subtle/70 mt-2 text-center">
@@ -486,4 +610,96 @@ function fileToBase64(f: File): Promise<string> {
     r.onerror = () => reject(r.error);
     r.readAsDataURL(f);
   });
+}
+
+function StreamingTimer(): JSX.Element {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    setSeconds(0);
+    const interval = setInterval(() => {
+      setSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const mm = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const ss = (seconds % 60).toString().padStart(2, '0');
+
+  return (
+    <span className="inline-flex items-center gap-1.5 text-accent">
+      <span className="relative flex w-1.5 h-1.5 flex-shrink-0">
+        <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+        <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-accent" />
+      </span>
+      <span className="tabular-nums">Working {mm}:{ss}</span>
+    </span>
+  );
+}
+
+interface FocusModeStatusProps {
+  timerMinutes: number;
+  wordGoal: number;
+  wordCount: number;
+}
+
+function FocusModeStatus({ timerMinutes, wordGoal, wordCount }: FocusModeStatusProps): JSX.Element {
+  const totalSeconds = timerMinutes > 0 ? timerMinutes * 60 : 0;
+  const [remaining, setRemaining] = useState(totalSeconds);
+
+  useEffect(() => {
+    setRemaining(totalSeconds);
+  }, [totalSeconds]);
+
+  useEffect(() => {
+    if (totalSeconds <= 0) return;
+    if (remaining <= 0) return;
+    const interval = setInterval(() => {
+      setRemaining((r) => (r > 0 ? r - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [totalSeconds, remaining]);
+
+  const mm = Math.floor(remaining / 60).toString().padStart(2, '0');
+  const ss = (remaining % 60).toString().padStart(2, '0');
+  const timerDone = totalSeconds > 0 && remaining <= 0;
+  const goalProgress = wordGoal > 0 ? Math.min(100, Math.round((wordCount / wordGoal) * 100)) : 0;
+  const goalMet = wordGoal > 0 && wordCount >= wordGoal;
+
+  return (
+    <span className="inline-flex items-center gap-3">
+      {timerMinutes > 0 && (
+        <span className={`inline-flex items-center gap-1 tabular-nums ${timerDone ? 'text-success' : 'text-accent'}`}>
+          {timerDone ? (
+            <>
+              <span className="w-1.5 h-1.5 rounded-full bg-success" />
+              <span>Done</span>
+            </>
+          ) : (
+            <>
+              <span className="relative flex w-1.5 h-1.5 flex-shrink-0">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+                <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-accent" />
+              </span>
+              <span>{mm}:{ss}</span>
+            </>
+          )}
+        </span>
+      )}
+      {wordGoal > 0 && (
+        <span className={`inline-flex items-center gap-1.5 ${goalMet ? 'text-success' : 'text-fg-subtle'}`}>
+          <span className="w-16 h-1.5 rounded-full bg-bg-elev overflow-hidden">
+            <span
+              className={`block h-full rounded-full ${goalMet ? 'bg-success' : 'bg-accent'}`}
+              style={{ width: `${goalProgress}%` }}
+            />
+          </span>
+          <span className="tabular-nums">{wordCount}/{wordGoal}</span>
+        </span>
+      )}
+      {timerMinutes <= 0 && wordGoal <= 0 && (
+        <span>{wordCount} word{wordCount === 1 ? '' : 's'}</span>
+      )}
+    </span>
+  );
 }

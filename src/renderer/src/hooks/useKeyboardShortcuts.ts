@@ -12,6 +12,7 @@ export function useKeyboardShortcuts(): void {
   const abortChat = useAppStore((s) => s.abortChat);
   const toggleShortcuts = useAppStore((s) => s.toggleShortcuts);
   const setShortcutsOpen = useAppStore((s) => s.setShortcutsOpen);
+  const openCommandPalette = useAppStore((s) => s.openCommandPalette);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
@@ -52,9 +53,9 @@ export function useKeyboardShortcuts(): void {
       if (meta && e.shiftKey && (e.key === 'O' || e.key === 'o')) { e.preventDefault(); void createConversation(); }
       if (meta && !e.shiftKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); void createConversation(); }
       if (meta && e.key === ',') { e.preventDefault(); setSettingsOpen(true); }
-      if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); (document.querySelector('input[placeholder*="Search"]') as HTMLInputElement)?.focus(); }
+      if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); openCommandPalette(); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [toggleSidebar, toggleVision, toggleRightSidebar, toggleCodeTab, createConversation, setSettingsOpen, isStreaming, abortChat, toggleShortcuts, setShortcutsOpen]);
+  }, [toggleSidebar, toggleVision, toggleRightSidebar, toggleCodeTab, createConversation, setSettingsOpen, isStreaming, abortChat, toggleShortcuts, setShortcutsOpen, openCommandPalette]);
 }

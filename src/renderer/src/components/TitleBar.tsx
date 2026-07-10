@@ -5,12 +5,17 @@ import { useAppStore } from '../stores/app';
 export function TitleBar(): JSX.Element {
   const [maximized, setMaximized] = useState(false);
   const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [fullscreen, setFullscreen] = useState(false);
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
   const visionOpen = useAppStore((s) => s.visionOpen);
   const toggleVision = useAppStore((s) => s.toggleVision);
+  const lastStreamErrorAt = useAppStore((s) => s.lastStreamErrorAt);
+  const lastStreamSuccessAt = useAppStore((s) => s.lastStreamSuccessAt);
+
+  const intermittent = online && !!lastStreamErrorAt && (!lastStreamSuccessAt || lastStreamErrorAt > lastStreamSuccessAt) && (Date.now() - lastStreamErrorAt < 30000);
 
   useEffect(() => {
     void window.hive.winIsMaximized().then(setMaximized);
@@ -18,6 +23,11 @@ export function TitleBar(): JSX.Element {
       void window.hive.winIsMaximized().then(setMaximized);
     }, 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const off = window.hive.onFullscreenChanged(({ fullscreen: fs }) => setFullscreen(fs));
+    return () => off();
   }, []);
 
   // Network connectivity indicator — reflects the OS-level connection state.
@@ -30,15 +40,19 @@ export function TitleBar(): JSX.Element {
   }, []);
 
   return (
-    <div className="h-9 bg-bg-sidebar border-b border-border flex items-center justify-between titlebar-drag select-none">
+    <div className={`bg-bg-sidebar border-b border-border flex items-center justify-between titlebar-drag select-none transition-transform duration-200 ${fullscreen ? 'h-0 overflow-hidden border-none -translate-y-full' : 'h-9'}`}>
       <div className="flex items-center gap-2 px-3 text-xs">
         <HiveLogo size={16} />
         <span className="font-semibold tracking-wide text-fg">
           DERO <span className="text-accent">Hive</span>
         </span>
         <span
-          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${online ? 'bg-success' : 'bg-danger animate-pulse'}`}
-          title={online ? 'Online' : 'Offline — no network connection'}
+          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+            !online ? 'bg-danger animate-pulse'
+              : intermittent ? 'bg-warn animate-pulse'
+              : 'bg-success'
+          }`}
+          title={!online ? 'Offline — no network connection' : intermittent ? 'Intermittent connection' : 'Online'}
         />
         <span className="w-px h-4 bg-border mx-1" />
         <div className="flex items-center gap-0.5 titlebar-no-drag">

@@ -17,10 +17,12 @@ interface Group {
 // Full-page gallery of every saved Vision artifact across all conversations.
 export function VisionTab(): JSX.Element {
   const conversations = useAppStore((s) => s.conversations);
+  const currentConversationId = useAppStore((s) => s.currentConversationId);
   const artifactsChangedAt = useAppStore((s) => s.artifactsChangedAt);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [scopeFilter, setScopeFilter] = useState<'all' | 'current'>('all');
   const [openKey, setOpenKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,6 +54,7 @@ export function VisionTab(): JSX.Element {
 
   const visible = groups.filter((g) => {
     if (typeFilter !== 'all' && g.latest.type !== typeFilter) return false;
+    if (scopeFilter === 'current' && g.latest.conversationId !== currentConversationId) return false;
     if (!query) return true;
     const q = query.toLowerCase();
     return artifactLabel(g.latest).toLowerCase().includes(q)
@@ -71,6 +74,9 @@ export function VisionTab(): JSX.Element {
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-1 text-[11px]">
+          <FilterChip active={scopeFilter === 'all'} onClick={() => setScopeFilter('all')}>All chats</FilterChip>
+          <FilterChip active={scopeFilter === 'current'} onClick={() => setScopeFilter('current')}>Current chat</FilterChip>
+          <span className="w-px h-4 bg-border mx-1" />
           <FilterChip active={typeFilter === 'all'} onClick={() => setTypeFilter('all')}>All</FilterChip>
           {types.map((t) => (
             <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)}>{artifactLabel({ type: t })}</FilterChip>

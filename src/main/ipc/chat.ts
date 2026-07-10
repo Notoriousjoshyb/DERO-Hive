@@ -1,5 +1,7 @@
 import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { execSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
 import { IPC, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
 import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
@@ -12,6 +14,36 @@ import { getDefaultWorkspace } from '../utils/paths';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
 
 const activeRequests = new Map<string, AbortController>();
+const queuedUserMessages = new Map<string, Message[]>();
+const MAX_STREAM_RETRIES = 2;
+const STREAM_RETRY_BASE_DELAY_MS = 800;
+
+// Retry a streaming adapter if it fails before producing any events. This
+// smooths over transient network blips without duplicating partial content.
+async function* streamWithRetry<T>(
+  makeStream: () => AsyncIterable<T>,
+  signal: AbortSignal,
+  maxRetries = MAX_STREAM_RETRIES,
+  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS
+): AsyncGenerator<T> {
+  let attempt = 0;
+  while (true) {
+    if (signal.aborted) return;
+    let produced = false;
+    try {
+      for await (const evt of makeStream()) {
+        produced = true;
+        yield evt;
+      }
+      return;
+    } catch (err) {
+      if (signal.aborted) throw err;
+      if (produced || attempt >= maxRetries) throw err;
+      attempt++;
+      await new Promise((r) => setTimeout(r, baseDelayMs * attempt));
+    }
+  }
+}
 
 // Native OS notification when a response finishes or fails while the window is
 // in the background. Toggleable in Settings → General; best-effort only.
@@ -36,6 +68,40 @@ function notifyStreamOutcome(win: BrowserWindow | null, kind: 'done' | 'error', 
   } catch { /* notifications are best-effort */ }
 }
 
+// Build a concise project snapshot: git status and a shallow file tree. This
+// is appended to the system prompt so the assistant has current project context.
+function buildProjectSnapshot(cwd: string): string {
+  const parts: string[] = [];
+  parts.push(`Project directory: ${cwd}`);
+
+  if (existsSync(`${cwd}/.git`)) {
+    try {
+      const status = execSync('git status --short', { cwd, encoding: 'utf-8', timeout: 3000 });
+      if (status.trim()) {
+        parts.push('Git status (changed files):\n' + status.trim().split('\n').slice(0, 30).join('\n'));
+      } else {
+        parts.push('Git status: clean');
+      }
+    } catch {
+      parts.push('Git status: unavailable');
+    }
+  }
+
+  try {
+    const entries = readdirSync(cwd, { withFileTypes: true });
+    const tree: string[] = [];
+    for (const e of entries.slice(0, 40)) {
+      const prefix = e.isDirectory() ? '📁' : '📄';
+      tree.push(`${prefix} ${e.name}`);
+    }
+    if (tree.length) parts.push('File structure:\n' + tree.join('\n'));
+  } catch {
+    /* ignore unreadable directories */
+  }
+
+  return parts.join('\n\n');
+}
+
 export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpManager: McpManager | null): void {
   const tools = new ToolRegistry(mcpManager);
 
@@ -55,6 +121,12 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
     return { ok: true };
   });
 
+  ipcMain.handle(IPC.CHAT_QUEUE_MESSAGE, async (_e, conversationId: string, message: Message) => {
+    const q = queuedUserMessages.get(conversationId) || [];
+    q.push(message);
+    queuedUserMessages.set(conversationId, q);
+  });
+
   ipcMain.handle(IPC.CHAT_SEND, async (_e, req: ChatRequest & { systemPrompt?: string }) => {
     return runChat(req as ChatRequest, getWin, tools);
   });
@@ -67,11 +139,13 @@ async function runChat(
 ): Promise<{ messageId: string }> {
   const abort = new AbortController();
   activeRequests.set(req.conversationId, abort);
+  // Clear any stale queued messages from a previous run.
+  queuedUserMessages.delete(req.conversationId);
   const messageId = randomUUID();
 
   // Persist user message immediately
   const userMsg = req.messages[req.messages.length - 1];
-  if (userMsg && userMsg.role === 'user') {
+  if (userMsg && userMsg.role === 'user' && !req.skipUserPersist) {
     persistMessage(req.conversationId, userMsg);
     updateConversationPreview(req.conversationId, userMsg);
   }
@@ -115,7 +189,7 @@ async function runChat(
       const convSystemPrompt = conv?.system_prompt?.trim();
       const withConv = convSystemPrompt ? `${withAgent}\n\n${convSystemPrompt}` : withAgent;
       const systemPrompt = projectPath
-        ? `${withConv}\n\nThe user has selected a project folder: ${projectPath}\nTreat this directory as the working context for file operations, shell commands, and any code-related tasks. When the user refers to "the project" or "the codebase", they mean this folder.`
+        ? `${withConv}\n\nThe user has selected a project folder: ${projectPath}\nTreat this directory as the working context for file operations, shell commands, and any code-related tasks. When the user refers to "the project" or "the codebase", they mean this folder.\n\n${buildProjectSnapshot(projectPath)}`
         : withConv;
       let messages = req.messages;
 
@@ -231,20 +305,23 @@ async function runChat(
         let assistantReasoning = '';
         const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-        for await (const evt of adapter.stream({
-          conversationId: req.conversationId,
-          cwd,
-          model: req.model,
-          messages: truncateMessagesForContext(currentMessages, modelDef, systemPrompt),
-          tools: availableTools,
-          systemPrompt,
-          temperature: req.temperature,
-          topP: req.topP,
-          maxTokens: req.maxTokens,
-          reasoning: req.reasoning,
-          signal: abort.signal,
-          requestPermission: (permission) => tools.requestPermission(permission)
-        })) {
+        for await (const evt of streamWithRetry(
+          () => adapter.stream({
+            conversationId: req.conversationId,
+            cwd,
+            model: req.model,
+            messages: truncateMessagesForContext(currentMessages, modelDef, systemPrompt),
+            tools: availableTools,
+            systemPrompt,
+            temperature: req.temperature,
+            topP: req.topP,
+            maxTokens: req.maxTokens,
+            reasoning: req.reasoning,
+            signal: abort.signal,
+            requestPermission: (permission) => tools.requestPermission(permission)
+          }),
+          abort.signal
+        )) {
           if (abort.signal.aborted) break;
           if (evt.type === 'delta' && evt.content) {
             assistantContent += evt.content;
@@ -287,10 +364,20 @@ async function runChat(
 
         // If aborted mid-stream, keep the partial message but don't execute
         // tools or start another round.
-        if (abort.signal.aborted || toolCalls.length === 0) {
+        if (abort.signal.aborted) {
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
-          // The user pressed stop on an abort — only notify on real completions.
-          if (!abort.signal.aborted) notifyStreamOutcome(win, 'done', assistantContent);
+          return;
+        }
+
+        // Check for messages the user queued while the model was streaming. If
+        // there are no tool calls and no queued messages, the turn is done. If
+        // there are queued messages, we continue the loop so the assistant can
+        // respond to them, even if there were no tool calls this round.
+        let queued = queuedUserMessages.get(req.conversationId) || [];
+        if (toolCalls.length === 0 && queued.length === 0) {
+          send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+          notifyStreamOutcome(win, 'done', assistantContent);
+          void maybeGenerateTitle(req.conversationId, req.providerId, req.model);
           return;
         }
 
@@ -328,10 +415,20 @@ async function runChat(
         // Persist tool messages
         for (const tr of toolResults) persistMessage(req.conversationId, tr);
 
-        // Continue with the messages + results
-        currentMessages = [...currentMessages, assistantMsg, ...toolResults];
+        // Check again for messages queued while tools were executing, then
+        // persist them and fold them into the conversation for the next round.
+        const queuedAfterTools = queuedUserMessages.get(req.conversationId) || [];
+        if (queuedAfterTools.length > 0) {
+          queuedUserMessages.delete(req.conversationId);
+          queued = queuedAfterTools;
+          for (const qm of queued) persistMessage(req.conversationId, qm);
+        }
+
+        // Continue with the messages + results + queued user messages
+        currentMessages = [...currentMessages, assistantMsg, ...toolResults, ...queued];
 
         // Loop continues — next iteration will call model again with tool results
+        // and any queued user messages.
       }
 
       // Tool-round budget exhausted. Close the turn that is actually streaming
@@ -388,6 +485,49 @@ function updateConversationPreview(conversationId: string, msg: Message): void {
 function updateConversationTokens(conversationId: string, tokens: number): void {
   getDb().prepare('UPDATE conversations SET total_tokens = total_tokens + ? WHERE id = ?')
     .run(tokens, conversationId);
+}
+
+async function maybeGenerateTitle(conversationId: string, providerId: string, model: string): Promise<void> {
+  try {
+    const conv = getDb().prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId) as { title: string } | undefined;
+    if (!conv) return;
+    const isDefault = !conv.title || conv.title === 'New chat' || conv.title === 'New conversation';
+    if (!isDefault) return;
+
+    const rows = getDb().prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC')
+      .all(conversationId) as Array<{ role: string; content: string }>;
+    const userRow = rows.find((r) => r.role === 'user');
+    const assistantRow = rows.find((r) => r.role === 'assistant');
+    if (!userRow || !assistantRow) return;
+
+    const adapter = getAdapter(providerId);
+    if (!adapter) return;
+
+    let title = '';
+    for await (const evt of adapter.stream({
+      conversationId,
+      model,
+      messages: [
+        { id: randomUUID(), role: 'user', content: userRow.content, createdAt: Date.now() },
+        { id: randomUUID(), role: 'assistant', content: assistantRow.content, createdAt: Date.now() }
+      ],
+      systemPrompt: 'Create a concise title (3-6 words) for this conversation. Reply with only the title, no quotes or extra text.',
+      maxTokens: 20,
+      temperature: 0.3
+    })) {
+      if (evt.type === 'delta' && evt.content) title += evt.content;
+      if (evt.type === 'error') break;
+    }
+
+    title = title.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '').slice(0, 60);
+    if (!title) return;
+    getDb().prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), conversationId);
+    BrowserWindow.getAllWindows().forEach((w) => {
+      w.webContents.send(IPC.CONV_TITLE_GENERATED, { conversationId, title });
+    });
+  } catch (err) {
+    logger.warn('chat', 'title generation failed', err);
+  }
 }
 
 // Inline auto-compaction: called from chat loop before sending when context

@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, PromptTemplate, Skill, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
+import { speak } from '../lib/speech';
+import type { CustomSlashCommand } from '../lib/customSlashCommands';
+import { loadCustomSlashCommands } from '../lib/customSlashCommands';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -19,7 +22,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   telemetry: false,
   experimentalFeatures: false,
   voiceNotificationSounds: true,
-  voiceNotificationVolume: 0.5
+  voiceNotificationVolume: 0.5,
+  spellcheckEnabled: true,
+  spellcheckLanguage: 'en',
+  focusModeTimerMinutes: 25,
+  focusModeWordGoal: 0,
+  ttsEnabled: false,
+  dailyTokenBudget: 0,
+  monthlyTokenBudget: 0
 };
 
 export interface QueueItem {
@@ -115,6 +125,8 @@ interface AppState {
   streamingContent: string;
   chatError?: string;
   setChatError: (msg: string | null) => void;
+  lastStreamErrorAt?: number;
+  lastStreamSuccessAt?: number;
   pendingToolResults: Map<string, { result: string; isError: boolean; durationMs: number }>;
   startStreaming: (id: string) => void;
   abortChat: () => Promise<void>;
@@ -123,6 +135,15 @@ interface AppState {
   setStreamingMessageId: (id?: string) => void;
   finishStreaming: () => void;
   recordToolResult: (messageId: string, toolCallId: string, result: string, isError: boolean, durationMs: number) => void;
+
+  // Messages typed while the model is working, queued for the next tool boundary.
+  pendingUserMessages: Message[];
+  queueUserMessage: (m: Message) => void;
+  clearPendingUserMessages: () => void;
+
+  // Messages
+  updateMessage: (messageId: string, content: string) => Promise<void>;
+  regenerateFrom: (messageId: string, opts?: { providerId?: string; model?: string }) => Promise<void>;
 
   // Pending permissions
   pendingPermissions: PendingPermission[];
@@ -140,6 +161,10 @@ interface AppState {
   // Skills
   skills: Skill[];
   loadSkills: () => Promise<void>;
+
+  // Custom slash commands from .hive/commands
+  customCommands: CustomSlashCommand[];
+  loadCustomCommands: () => Promise<void>;
 
   // Prompt library
   prompts: PromptTemplate[];
@@ -202,12 +227,23 @@ interface AppState {
   agentsEditorOpen: boolean;
   setAgentsEditorOpen: (open: boolean) => void;
 
+  // Side-by-side model comparison
+  compareOpen: boolean;
+  comparePrompt: string;
+  openCompare: (prompt?: string) => void;
+  closeCompare: () => void;
+
   // Full-text search dialog (Ctrl+Shift+F)
   searchDialogOpen: boolean;
   setSearchDialogOpen: (open: boolean) => void;
   // After opening a conversation from search results, scroll to this message.
   pendingScrollMessageId: string | null;
   setPendingScrollMessageId: (id: string | null) => void;
+
+  // Command palette (Ctrl+K)
+  commandPaletteOpen: boolean;
+  openCommandPalette: () => void;
+  closeCommandPalette: () => void;
 
   // Bump to make the sidebar Bookmarks section reload
   bookmarksChangedAt: number;
@@ -421,7 +457,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   streamingContent: '',
   streamingReasoning: '',
   chatError: undefined,
-  setChatError: (msg) => set({ chatError: msg || undefined }),
+  setChatError: (msg) => set({
+    chatError: msg || undefined,
+    lastStreamErrorAt: msg && navigator.onLine ? Date.now() : undefined
+  }),
   pendingToolResults: new Map(),
   startStreaming: (id) => set({
     isStreaming: true,
@@ -429,6 +468,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     streamingContent: '',
     streamingReasoning: '',
     chatError: undefined,
+    lastStreamErrorAt: undefined,
     pendingToolResults: new Map()
   }),
   abortChat: async () => {
@@ -439,17 +479,64 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendStreamDelta: (content) => set((s) => ({ streamingContent: s.streamingContent + content })),
   appendStreamReasoning: (r) => set((s) => ({ streamingReasoning: s.streamingReasoning + r })),
   setStreamingMessageId: (id) => set({ streamingMessageId: id }),
-  finishStreaming: () => set({
-    isStreaming: false,
-    streamingMessageId: undefined,
-    streamingContent: '',
-    streamingReasoning: '',
-    lastStreamFinishedAt: Date.now()
-  }),
+  finishStreaming: () => {
+    const state = get();
+    if (state.settings.ttsEnabled && state.streamingContent) {
+      speak(state.streamingContent, state.settings.ttsVoiceUri);
+    }
+    set({
+      isStreaming: false,
+      streamingMessageId: undefined,
+      streamingContent: '',
+      streamingReasoning: '',
+      lastStreamSuccessAt: Date.now(),
+      lastStreamFinishedAt: Date.now(),
+      pendingUserMessages: []
+    });
+  },
   recordToolResult: (messageId, toolCallId, result, isError, durationMs) => {
     const map = new Map(get().pendingToolResults);
     map.set(`${messageId}:${toolCallId}`, { result, isError, durationMs });
     set({ pendingToolResults: map });
+  },
+
+  pendingUserMessages: [],
+  queueUserMessage: (m) => set((s) => ({ pendingUserMessages: [...s.pendingUserMessages, m] })),
+  clearPendingUserMessages: () => set({ pendingUserMessages: [] }),
+
+  updateMessage: async (messageId, content) => {
+    await window.hive.msgUpdate(messageId, content);
+    const currentId = get().currentConversationId;
+    if (currentId) await get().selectConversation(currentId);
+  },
+  regenerateFrom: async (messageId, opts = {}) => {
+    const currentId = get().currentConversationId;
+    if (!currentId) return;
+    const conv = await window.hive.convGet(currentId);
+    if (!conv) return;
+    const idx = conv.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) return;
+    const target = conv.messages[idx];
+    let revertToId = messageId;
+    if (target.role !== 'user') {
+      // Find the most recent user message before this one.
+      const userIdx = conv.messages.slice(0, idx).map((m) => m.role).lastIndexOf('user');
+      if (userIdx < 0) return;
+      revertToId = conv.messages[userIdx].id;
+    }
+    const revert = await window.hive.convRevert(currentId, revertToId);
+    if (!revert.ok) return;
+    const fresh = await window.hive.convGet(currentId);
+    if (!fresh) return;
+    const messages = fresh.messages;
+    if (messages.length === 0 || messages[messages.length - 1].role !== 'user') return;
+    await window.hive.chatSend({
+      conversationId: currentId,
+      providerId: opts.providerId || conv.providerId || get().selectedProviderId || '',
+      model: opts.model || conv.model || get().selectedModel || '',
+      messages,
+      skipUserPersist: true
+    });
   },
 
   pendingPermissions: [],
@@ -469,6 +556,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSkills: async () => {
     const skills = await window.hive.skillList();
     set({ skills });
+  },
+
+  customCommands: [],
+  loadCustomCommands: async () => {
+    const commands = await loadCustomSlashCommands();
+    set({ customCommands: commands });
   },
 
   prompts: [],
@@ -492,6 +585,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteProject: async (id) => {
     await window.hive.projectDelete(id);
     await get().loadProjects();
+    await get().loadConversations();
   },
 
   tools: [],
@@ -575,10 +669,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentsEditorOpen: false,
   setAgentsEditorOpen: (open) => set({ agentsEditorOpen: open }),
 
+  compareOpen: false,
+  comparePrompt: '',
+  openCompare: (prompt = '') => set({ compareOpen: true, comparePrompt: prompt }),
+  closeCompare: () => set({ compareOpen: false }),
+
   searchDialogOpen: false,
   setSearchDialogOpen: (open) => set({ searchDialogOpen: open }),
   pendingScrollMessageId: null,
   setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),
+  commandPaletteOpen: false,
+  openCommandPalette: () => set({ commandPaletteOpen: true }),
+  closeCommandPalette: () => set({ commandPaletteOpen: false }),
 
   bookmarksChangedAt: 0,
   notifyBookmarksChanged: () => set({ bookmarksChangedAt: Date.now() }),

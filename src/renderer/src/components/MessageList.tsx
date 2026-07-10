@@ -24,15 +24,16 @@ export function MessageList(): JSX.Element {
     return () => cancelAnimationFrame(raf);
   }, [pendingScrollMessageId, messages, setPendingScrollMessageId]);
 
+  const total = messages.length;
   return (
     <>
       {messages.map((m, i) => (
-        <Message
-          key={m.id}
-          message={m}
-          isLast={i === messages.length - 1}
-          toolDefs={tools}
-        />
+        <div key={m.id} className={i < total - 2 ? 'focus-zen-dim' : ''}>
+          <Message
+            message={m}
+            toolDefs={tools}
+          />
+        </div>
       ))}
     </>
   );

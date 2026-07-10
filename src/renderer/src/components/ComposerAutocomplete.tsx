@@ -12,7 +12,7 @@ interface TriggerState {
 }
 
 interface FileMatch { path: string; rel: string; filename: string }
-interface SkillMatch { id: string; name: string; slashCommand: string; description: string }
+interface SkillMatch { id: string; name: string; slashCommand: string; description: string; isCustom?: boolean; source?: string }
 interface GhMatch { type: 'issue' | 'pr'; number: number; title: string; state: 'open' | 'closed' | 'merged'; author: string; url: string; repo: string }
 
 interface Props {
@@ -71,6 +71,7 @@ export function ComposerAutocomplete({ text, setText, textareaRef, keyHandlerRef
   const [ghCards, setGhCards] = useState<GhMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const skills = useAppStore((s) => s.skills);
+  const customCommands = useAppStore((s) => s.customCommands);
   const prompts = useAppStore((s) => s.prompts);
   const setting = useAppStore((s) => s.settings);
 
@@ -121,12 +122,21 @@ export function ComposerAutocomplete({ text, setText, textareaRef, keyHandlerRef
     if (!trigger) return [];
     const q = trigger.query;
     if (trigger.kind === 'skills') {
-      return skills
+      const q = trigger.query;
+      const skillItems = skills
         .filter((s) => s.enabled)
         .map((s) => ({ item: s, score: Math.max(fuzzyScore(q, s.slashCommand), fuzzyScore(q, s.name)) }))
         .filter((r) => r.score >= 0)
-        .sort((a, b) => b.score - a.score)
         .map((r) => r.item);
+      const commandItems = customCommands
+        .map((c) => ({ item: { id: c.id, name: c.name, slashCommand: c.slashCommand, description: c.description || 'Custom command', isCustom: true, source: c.source }, score: Math.max(fuzzyScore(q, c.slashCommand), fuzzyScore(q, c.name)) }))
+        .filter((r) => r.score >= 0)
+        .map((r) => r.item);
+      return [...skillItems, ...commandItems].sort((a, b) => {
+        const aScore = Math.max(fuzzyScore(q, a.slashCommand), fuzzyScore(q, a.name));
+        const bScore = Math.max(fuzzyScore(q, b.slashCommand), fuzzyScore(q, b.name));
+        return bScore - aScore;
+      });
     }
     if (trigger.kind === 'shell') {
       return q ? [] : [{ id: 'shell-hint', label: 'Run shell command and paste output as context', action: 'shellHint' }];
@@ -274,6 +284,9 @@ export function ComposerAutocomplete({ text, setText, textareaRef, keyHandlerRef
             <>
               <span className="text-accent font-mono text-sm">{(m as SkillMatch).slashCommand}</span>
               <span className="text-fg text-sm truncate">{(m as SkillMatch).name}</span>
+              {(m as SkillMatch).isCustom && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-bg-input border border-border text-fg-subtle flex-shrink-0">Custom</span>
+              )}
               <span className="text-[10px] text-fg-subtle truncate flex-1">{(m as SkillMatch).description}</span>
             </>
           )}

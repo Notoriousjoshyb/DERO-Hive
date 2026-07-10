@@ -53,7 +53,98 @@ export function applyAppearance(settings: AppSettings): void {
   document.body.style.fontFamily = INTERFACE_FONT_STACKS[interfaceFont];
 
   applyAccent(settings.accentColor);
+  applyThemePreset(settings.themePreset);
   applyCustomCss(settings.customCss);
+}
+
+const THEME_PRESETS: Record<string, string> = {
+  solarized: `:root {
+    --bg: #002b36;
+    --bg-elev: #073642;
+    --bg-sidebar: #073642;
+    --bg-input: #002b36;
+    --fg: #839496;
+    --fg-muted: #93a1a1;
+    --fg-subtle: #586e75;
+    --border: #073642;
+    --border-strong: #586e75;
+    --accent: #b58900;
+    --accent-hover: #cb4b16;
+    --accent-soft: rgba(181, 137, 0, 0.15);
+    --accent-glow: rgba(181, 137, 0, 0.35);
+    --user-bubble: #073642;
+    --code-bg: #002b36;
+  }`,
+  nord: `:root {
+    --bg: #2e3440;
+    --bg-elev: #3b4252;
+    --bg-sidebar: #2e3440;
+    --bg-input: #3b4252;
+    --fg: #d8dee9;
+    --fg-muted: #81a1c1;
+    --fg-subtle: #5e81ac;
+    --border: #434c5e;
+    --border-strong: #4c566a;
+    --accent: #88c0d0;
+    --accent-hover: #8fbcbb;
+    --accent-soft: rgba(136, 192, 208, 0.15);
+    --accent-glow: rgba(136, 192, 208, 0.35);
+    --user-bubble: #3b4252;
+    --code-bg: #2e3440;
+  }`,
+  catppuccin: `:root {
+    --bg: #1e1e2e;
+    --bg-elev: #313244;
+    --bg-sidebar: #181825;
+    --bg-input: #313244;
+    --fg: #cdd6f4;
+    --fg-muted: #a6adc8;
+    --fg-subtle: #6c7086;
+    --border: #45475a;
+    --border-strong: #585b70;
+    --accent: #f38ba8;
+    --accent-hover: #fab387;
+    --accent-soft: rgba(243, 139, 168, 0.15);
+    --accent-glow: rgba(243, 139, 168, 0.35);
+    --user-bubble: #313244;
+    --code-bg: #1e1e2e;
+  }`,
+  gruvbox: `:root {
+    --bg: #282828;
+    --bg-elev: #3c3836;
+    --bg-sidebar: #282828;
+    --bg-input: #3c3836;
+    --fg: #ebdbb2;
+    --fg-muted: #d5c4a1;
+    --fg-subtle: #a89984;
+    --border: #504945;
+    --border-strong: #665c64;
+    --accent: #b8bb26;
+    --accent-hover: #98971a;
+    --accent-soft: rgba(184, 187, 38, 0.15);
+    --accent-glow: rgba(184, 187, 38, 0.35);
+    --user-bubble: #3c3836;
+    --code-bg: #282828;
+  }`
+};
+
+export function applyThemePreset(preset?: string): void {
+  let el = document.getElementById('hive-theme-preset') as HTMLStyleElement | null;
+  if (!preset || !THEME_PRESETS[preset]) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'hive-theme-preset';
+  }
+  el.textContent = THEME_PRESETS[preset];
+  const customCss = document.getElementById('hive-custom-css');
+  if (customCss?.parentNode) {
+    customCss.parentNode.insertBefore(el, customCss);
+  } else {
+    document.head.appendChild(el);
+  }
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {

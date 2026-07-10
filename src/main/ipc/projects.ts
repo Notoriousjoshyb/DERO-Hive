@@ -26,7 +26,12 @@ export function registerProjectHandlers(): void {
   });
 
   ipcMain.handle(IPC.PROJECT_DELETE, (_e, id: string) => {
-    getDb().prepare('DELETE FROM projects WHERE id = ?').run(id);
+    const db = getDb();
+    db.transaction(() => {
+      // Orphan the project's conversations so the foreign key doesn't block deletion
+      db.prepare('UPDATE conversations SET project_id = NULL WHERE project_id = ?').run(id);
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    })();
     logger.info('project', `deleted ${id}`);
   });
 }

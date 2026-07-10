@@ -4,16 +4,17 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
-import type { Message as Msg, ToolDefinition } from '@shared/types';
+import type { Message as Msg, ProviderConfig, ToolDefinition } from '@shared/types';
 import { useAppStore } from '../stores/app';
 import { ToolCallCard } from './ToolCallCard';
 import { MermaidBlock } from './MermaidBlock';
+import { CodeRunner } from './CodeRunner';
 import { extractArtifacts } from '../lib/artifacts';
 import { extractThinking } from '../lib/thinking';
+import { isRunnableLanguage } from '../lib/codeRunner';
 
 interface Props {
   message: Msg;
-  isLast?: boolean;
   toolDefs: ToolDefinition[];
 }
 
@@ -23,8 +24,17 @@ export function Message({ message }: Props): JSX.Element {
   const currentConversationId = useAppStore((s) => s.currentConversationId);
   const forkConversation = useAppStore((s) => s.forkConversation);
   const revertConversation = useAppStore((s) => s.revertConversation);
+  const updateMessage = useAppStore((s) => s.updateMessage);
+  const regenerateFrom = useAppStore((s) => s.regenerateFrom);
+  const providers = useAppStore((s) => s.providers);
+  const selectedProviderId = useAppStore((s) => s.selectedProviderId);
+  const selectedModel = useAppStore((s) => s.selectedModel);
   const [msgCopied, setMsgCopied] = useState(false);
   const [bookmarked, setBookmarked] = useState(!!message.bookmarked);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(messageContentToText(message.content));
+  const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const [regenModel, setRegenModel] = useState<{ providerId: string; modelId: string } | null>(null);
 
   // Keep local star state in sync when the conversation reloads from DB.
   useEffect(() => {
@@ -99,20 +109,71 @@ export function Message({ message }: Props): JSX.Element {
     await revertConversation(message.id);
   };
 
+  const startEditing = (): void => {
+    setEditText(messageContentToText(message.content));
+    setIsEditing(true);
+  };
+
+  const saveEdit = async (): Promise<void> => {
+    if (!editText.trim()) return;
+    setIsEditing(false);
+    await updateMessage(message.id, editText);
+  };
+
+  const cancelEdit = (): void => {
+    setEditText(messageContentToText(message.content));
+    setIsEditing(false);
+  };
+
+  const currentRegenModel = regenModel || (selectedProviderId && selectedModel ? { providerId: selectedProviderId, modelId: selectedModel } : null);
+
+  const doRegenerate = async (providerId?: string, model?: string): Promise<void> => {
+    setRegenerateOpen(false);
+    await regenerateFrom(message.id, { providerId, model });
+  };
+
   if (message.role === 'user') {
     return (
       <div data-message-id={message.id} className="group flex flex-col items-end animate-msg-in">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-bg-bubble border border-border/60 px-4 py-2.5 shadow-elev-sm select-text message-content">
-          <UserContent content={message.content} />
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-bg-bubble border border-border/60 px-4 py-2.5 shadow-elev-sm select-text message-content w-full">
+          {isEditing ? (
+            <div className="w-full">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                rows={Math.max(2, editText.split('\n').length)}
+                className="w-full resize-none bg-transparent text-sm text-fg leading-relaxed focus:outline-none"
+                autoFocus
+              />
+              <div className="flex items-center justify-end gap-2 mt-2">
+                <button
+                  onClick={cancelEdit}
+                  className="text-[10px] px-2 py-1 rounded hover:bg-bg-elev text-fg-subtle"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveEdit()}
+                  className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover"
+                >
+                  Save & regenerate
+                </button>
+              </div>
+            </div>
+          ) : (
+            <UserContent content={message.content} />
+          )}
         </div>
-        {currentConversationId && (
+        {currentConversationId && !isEditing && (
           <MessageActions
             copied={msgCopied}
             bookmarked={bookmarked}
+            isUser
             onCopy={() => void copyMessage()}
             onFork={() => void forkFromHere()}
             onRevert={() => void revertToHere()}
             onBookmark={() => void toggleBookmark()}
+            onEdit={startEditing}
           />
         )}
       </div>
@@ -192,26 +253,41 @@ export function Message({ message }: Props): JSX.Element {
       )}
 
       {currentConversationId && (
-        <MessageActions
-          copied={msgCopied}
-          bookmarked={bookmarked}
-          onCopy={() => void copyMessage()}
-          onFork={() => void forkFromHere()}
-          onRevert={() => void revertToHere()}
-          onBookmark={() => void toggleBookmark()}
-        />
+        <>
+          <MessageActions
+            copied={msgCopied}
+            bookmarked={bookmarked}
+            onCopy={() => void copyMessage()}
+            onFork={() => void forkFromHere()}
+            onRevert={() => void revertToHere()}
+            onBookmark={() => void toggleBookmark()}
+            onRegenerate={() => setRegenerateOpen(true)}
+          />
+          {regenerateOpen && (
+            <RegeneratePanel
+              providers={providers}
+              selectedModel={currentRegenModel}
+              onSelect={setRegenModel}
+              onRegenerate={() => void doRegenerate(currentRegenModel?.providerId, currentRegenModel?.modelId)}
+              onClose={() => setRegenerateOpen(false)}
+            />
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function MessageActions({ copied, bookmarked, onCopy, onFork, onRevert, onBookmark }: {
+function MessageActions({ copied, bookmarked, isUser, onCopy, onFork, onRevert, onBookmark, onEdit, onRegenerate }: {
   copied: boolean;
   bookmarked: boolean;
+  isUser?: boolean;
   onCopy: () => void;
   onFork: () => void;
   onRevert: () => void;
   onBookmark: () => void;
+  onEdit?: () => void;
+  onRegenerate?: () => void;
 }): JSX.Element {
   return (
     <div className={`${bookmarked ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 transition-opacity mt-1.5 flex items-center gap-2`}>
@@ -223,6 +299,26 @@ function MessageActions({ copied, bookmarked, onCopy, onFork, onRevert, onBookma
         {copied ? <CheckIcon /> : <CopyIcon />}
         {copied ? 'Copied' : 'Copy'}
       </button>
+      {isUser && onEdit && (
+        <button
+          onClick={onEdit}
+          className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-accent hover:bg-bg-elev px-1.5 py-0.5 rounded transition-colors"
+          title="Edit message"
+        >
+          <EditIcon />
+          Edit
+        </button>
+      )}
+      {!isUser && onRegenerate && (
+        <button
+          onClick={onRegenerate}
+          className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-accent hover:bg-bg-elev px-1.5 py-0.5 rounded transition-colors"
+          title="Regenerate response"
+        >
+          <RefreshIcon />
+          Regenerate
+        </button>
+      )}
       <button
         onClick={onFork}
         className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-accent hover:bg-bg-elev px-1.5 py-0.5 rounded transition-colors"
@@ -253,6 +349,72 @@ function MessageActions({ copied, bookmarked, onCopy, onFork, onRevert, onBookma
   );
 }
 
+function RegeneratePanel({
+  providers,
+  selectedModel,
+  onSelect,
+  onRegenerate,
+  onClose
+}: {
+  providers: ProviderConfig[];
+  selectedModel: { providerId: string; modelId: string } | null;
+  onSelect: (m: { providerId: string; modelId: string }) => void;
+  onRegenerate: () => void;
+  onClose: () => void;
+}): JSX.Element {
+  const options = useMemo(() => {
+    const out: { key: string; providerName: string; modelName: string; providerId: string; modelId: string }[] = [];
+    for (const p of providers) {
+      for (const m of p.models) {
+        out.push({
+          key: `${p.id}:${m.id}`,
+          providerName: p.name,
+          modelName: m.name,
+          providerId: p.id,
+          modelId: m.id
+        });
+      }
+    }
+    return out;
+  }, [providers]);
+
+  const currentKey = selectedModel ? `${selectedModel.providerId}:${selectedModel.modelId}` : '';
+
+  return (
+    <div className="mt-2 p-2 bg-bg-elev border border-border rounded-lg shadow-md flex flex-col gap-2 max-w-sm">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-fg-subtle font-medium">Regenerate with model</span>
+        <button onClick={onClose} className="text-fg-subtle hover:text-fg">×</button>
+      </div>
+      <select
+        className="input text-xs"
+        value={currentKey}
+        onChange={(e) => {
+          const opt = options.find((o) => o.key === e.target.value);
+          if (opt) onSelect({ providerId: opt.providerId, modelId: opt.modelId });
+        }}
+      >
+        <option value="">Select model…</option>
+        {options.map((o) => (
+          <option key={o.key} value={o.key}>
+            {o.providerName} — {o.modelName}
+          </option>
+        ))}
+      </select>
+      <div className="flex items-center gap-2 justify-end">
+        <button onClick={onClose} className="text-[10px] px-2 py-1 rounded hover:bg-bg-input text-fg-subtle">Cancel</button>
+        <button
+          onClick={onRegenerate}
+          disabled={!currentKey}
+          className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+        >
+          Regenerate
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function StarIcon({ filled }: { filled: boolean }): JSX.Element {
   return (
     <svg width="10" height="10" viewBox="0 0 12 12" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
@@ -273,6 +435,24 @@ function RevertIcon(): JSX.Element {
   return (
     <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 6h8M5 3L2 6l3 3" />
+    </svg>
+  );
+}
+
+function EditIcon(): JSX.Element {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 8.5V10h1.5L9 4.5 7.5 3 2 8.5z" />
+      <path d="M7 3l2 2" />
+    </svg>
+  );
+}
+
+function RefreshIcon(): JSX.Element {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 6c0 2.2-1.8 4-4 4S1 8.2 1 6s1.8-4 4-4 4 1.8 4 4z" />
+      <path d="M9 2v2.5H6.5" />
     </svg>
   );
 }
@@ -346,6 +526,8 @@ function UserContent({ content }: { content: Msg['content'] }): JSX.Element {
 
 function CodeBlock({ language, code }: { language: string; code: string }): JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [runnerOpen, setRunnerOpen] = useState(false);
+  const runnable = isRunnableLanguage(language);
 
   const copy = async (): Promise<void> => {
     try {
@@ -359,18 +541,39 @@ function CodeBlock({ language, code }: { language: string; code: string }): JSX.
     <div className="my-3 rounded-[10px] overflow-hidden border border-border bg-bg-code shadow-elev-sm">
       <div className="flex items-center justify-between px-3 py-1.5 bg-bg-sidebar/80 border-b border-border">
         <span className="text-[10px] uppercase tracking-wider text-fg-subtle font-mono font-medium">{language}</span>
-        <button
-          onClick={() => void copy()}
-          className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-fg px-1.5 py-0.5 rounded hover:bg-bg-elev transition"
-        >
-          {copied ? <CheckIcon /> : <CopyIcon />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        <div className="flex items-center gap-1">
+          {runnable && (
+            <button
+              onClick={() => setRunnerOpen(!runnerOpen)}
+              className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-accent px-1.5 py-0.5 rounded hover:bg-bg-elev transition"
+              title={runnerOpen ? 'Hide output panel' : 'Run this code in a sandboxed worker'}
+            >
+              <PlayIcon />
+              {runnerOpen ? 'Hide' : 'Run'}
+            </button>
+          )}
+          <button
+            onClick={() => void copy()}
+            className="inline-flex items-center gap-1 text-[10px] text-fg-subtle hover:text-fg px-1.5 py-0.5 rounded hover:bg-bg-elev transition"
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
       </div>
       <pre className="p-3 overflow-x-auto text-xs leading-relaxed">
         <code className={`language-${language}`}>{code}</code>
       </pre>
+      {runnerOpen && <CodeRunner language={language} code={code} onClose={() => setRunnerOpen(false)} />}
     </div>
+  );
+}
+
+function PlayIcon(): JSX.Element {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
+      <path d="M3 2l7 4-7 4z" />
+    </svg>
   );
 }
 

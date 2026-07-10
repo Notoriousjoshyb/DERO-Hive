@@ -157,15 +157,37 @@ export function GeneralPanel(): JSX.Element {
           </div>
         </Field>
 
+        <Field label="Theme preset" hint="Override the light/dark palette with a curated colour scheme.">
+          <select
+            value={settings.themePreset || ''}
+            onChange={(e) => updateSettings({ themePreset: e.target.value || undefined })}
+            className="input"
+          >
+            <option value="">Default</option>
+            <option value="solarized">Solarized Dark</option>
+            <option value="nord">Nord</option>
+            <option value="catppuccin">Catppuccin Mocha</option>
+            <option value="gruvbox">Gruvbox Dark</option>
+          </select>
+        </Field>
+
         <Field label="Custom CSS" hint="Injected after the app's styles — targets any selector. Leave empty to disable.">
-          <textarea
-            value={settings.customCss || ''}
-            onChange={(e) => updateSettings({ customCss: e.target.value || undefined })}
-            placeholder={'.prose-hive { line-height: 1.8; }\n[data-message-id] { border-radius: 4px; }'}
-            rows={5}
-            spellCheck={false}
-            className="input w-full resize-y font-mono text-xs leading-relaxed"
-          />
+          <div className="flex flex-col items-end gap-2">
+            <textarea
+              value={settings.customCss || ''}
+              onChange={(e) => updateSettings({ customCss: e.target.value || undefined })}
+              placeholder={'.prose-hive { line-height: 1.8; }\n[data-message-id] { border-radius: 4px; }'}
+              rows={5}
+              spellCheck={false}
+              className="input w-full resize-y font-mono text-xs leading-relaxed"
+            />
+            <button
+              onClick={() => void loadCustomCssFromFile(updateSettings)}
+              className="btn-secondary text-xs px-2 py-1"
+            >
+              Load from file
+            </button>
+          </div>
         </Field>
       </Section>
 
@@ -240,9 +262,68 @@ export function GeneralPanel(): JSX.Element {
             <option value="never">Never ask</option>
           </select>
         </Field>
+        <Field label="Spellcheck" hint="Use the browser/OS spellchecker on the composer input.">
+          <input type="checkbox" checked={settings.spellcheckEnabled !== false} onChange={(e) => updateSettings({ spellcheckEnabled: e.target.checked })} className="accent-accent w-4 h-4" />
+        </Field>
+        {settings.spellcheckEnabled !== false && (
+          <Field label="Spellcheck language">
+            <select
+              value={settings.spellcheckLanguage || 'en'}
+              onChange={(e) => updateSettings({ spellcheckLanguage: e.target.value })}
+              className="input"
+            >
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+              <option value="ru">Russian</option>
+              <option value="zh">Chinese</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+            </select>
+          </Field>
+        )}
+      </Section>
+
+      <Section title="Focus mode">
+        <Field label="Pomodoro timer" hint="Minutes for the focus-mode countdown. 0 disables the timer.">
+          <select
+            value={settings.focusModeTimerMinutes ?? 25}
+            onChange={(e) => updateSettings({ focusModeTimerMinutes: parseInt(e.target.value, 10) })}
+            className="input"
+          >
+            <option value={0}>Off</option>
+            <option value={15}>15 minutes</option>
+            <option value={25}>25 minutes</option>
+            <option value={45}>45 minutes</option>
+            <option value={50}>50 minutes</option>
+            <option value={60}>60 minutes</option>
+          </select>
+        </Field>
+        <Field label="Word-count goal" hint="Target number of words while in focus mode. 0 disables the goal.">
+          <Stepper
+            value={settings.focusModeWordGoal ?? 0}
+            defaultValue={0}
+            min={0}
+            max={10000}
+            step={100}
+            unit="words"
+            onChange={(v) => updateSettings({ focusModeWordGoal: v })}
+          />
+        </Field>
       </Section>
 
       <Section title="Voice">
+        <Field label="Text-to-speech" hint="Speak assistant responses when they finish.">
+          <input type="checkbox" checked={settings.ttsEnabled ?? false} onChange={(e) => updateSettings({ ttsEnabled: e.target.checked })} className="accent-accent w-4 h-4" />
+        </Field>
+        {settings.ttsEnabled && (
+          <Field label="TTS voice">
+            <TtsVoiceSelector value={settings.ttsVoiceUri} onChange={(voiceUri) => updateSettings({ ttsVoiceUri: voiceUri || undefined })} />
+          </Field>
+        )}
         <div className="rounded-lg border border-border bg-bg-elev/50 p-3 space-y-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -332,6 +413,31 @@ export function GeneralPanel(): JSX.Element {
         </div>
       </Section>
 
+      <Section title="Usage & budget">
+        <Field label="Daily token budget" hint="Show a warning when today's token usage exceeds this threshold. 0 disables the alert.">
+          <Stepper
+            value={settings.dailyTokenBudget || 0}
+            defaultValue={0}
+            min={0}
+            max={10000000}
+            step={10000}
+            unit=""
+            onChange={(v) => void updateSettings({ dailyTokenBudget: v })}
+          />
+        </Field>
+        <Field label="Monthly token budget" hint="Show a warning when this month's token usage exceeds this threshold. 0 disables the alert.">
+          <Stepper
+            value={settings.monthlyTokenBudget || 0}
+            defaultValue={0}
+            min={0}
+            max={100000000}
+            step={100000}
+            unit=""
+            onChange={(v) => void updateSettings({ monthlyTokenBudget: v })}
+          />
+        </Field>
+      </Section>
+
       <Section title="About">
         <div className="text-sm text-fg-muted">
           DERO Hive v0.1.0 — A feature-rich AI harness.
@@ -361,6 +467,43 @@ export function GeneralPanel(): JSX.Element {
       `}</style>
     </div>
   );
+}
+
+function TtsVoiceSelector({ value, onChange }: { value?: string; onChange: (voiceUri?: string) => void }): JSX.Element {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    const update = () => setVoices(window.speechSynthesis?.getVoices() || []);
+    update();
+    window.speechSynthesis?.addEventListener('voiceschanged', update);
+    return () => window.speechSynthesis?.removeEventListener('voiceschanged', update);
+  }, []);
+
+  return (
+    <select
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      className="input"
+    >
+      <option value="">Default system voice</option>
+      {voices.map((v) => (
+        <option key={v.voiceURI} value={v.voiceURI}>
+          {v.name} {v.lang ? `(${v.lang})` : ''}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+async function loadCustomCssFromFile(updateSettings: (s: Partial<AppSettings>) => Promise<void>): Promise<void> {
+  try {
+    const path = await window.hive.fsPickFile([{ name: 'CSS files', extensions: ['css'] }]);
+    if (!path) return;
+    const { content } = await window.hive.fsRead(path, { encoding: 'utf-8' });
+    await updateSettings({ customCss: content || undefined });
+  } catch (err) {
+    console.error('Failed to load custom CSS', err);
+  }
 }
 
 function WhisperBadge({ status }: { status: WhisperStatus | null }): JSX.Element {

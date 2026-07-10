@@ -25,7 +25,8 @@ import type {
 declare global {
   interface Window {
     hive: {
-      chatSend: (req: ChatRequest & { attachments?: Array<{ type: string; filename: string; mimeType: string; data: string }> }) => Promise<{ messageId: string }>;
+      chatSend: (req: ChatRequest & { attachments?: Array<{ type: string; filename: string; mimeType: string; data: string }>; skipUserPersist?: boolean }) => Promise<{ messageId: string }>;
+      chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: string | Array<{ type: string; text?: string; image_url?: { url: string }; input_audio?: { data: string; format: string }; file?: { filename: string; data: string; mimeType: string } }>; createdAt: number }) => Promise<void>;
       chatAbort: (id: string) => Promise<{ ok: boolean }>;
       onChatStream: (cb: (e: StreamEvent) => void) => () => void;
 
@@ -37,6 +38,7 @@ declare global {
       convSearch: (q: string) => Promise<SearchResult[]>;
       usageStats: () => Promise<UsageStats>;
       msgBookmark: (messageId: string, bookmarked: boolean) => Promise<{ ok: boolean }>;
+      msgUpdate: (messageId: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       bookmarkList: () => Promise<BookmarkEntry[]>;
       promptList: () => Promise<PromptTemplate[]>;
       promptSave: (p: PromptTemplate) => Promise<{ ok: boolean }>;
@@ -45,6 +47,7 @@ declare global {
       convRevert: (conversationId: string, messageId: string) => Promise<{ ok: boolean; error?: string; keptCount?: number }>;
       convCompact: (conversationId: string) => Promise<{ removedCount: number; summaryText: string; beforeTokens: number; afterTokens: number; tokensSaved: number } | null>;
       onConvCompacted: (cb: (data: { conversationId: string; removedCount: number; tokensSaved: number; beforeTokens: number; afterTokens: number }) => void) => () => void;
+      onConvTitleGenerated: (cb: (data: { conversationId: string; title: string }) => void) => () => void;
 
       providerList: () => Promise<{ configured: ProviderConfig[]; presets: ProviderPreset[] }>;
       providerSave: (cfg: ProviderConfig & { apiKey?: string }) => Promise<ProviderConfig>;
@@ -135,6 +138,7 @@ declare global {
       winClose: () => Promise<void>;
       winIsMaximized: () => Promise<boolean>;
       winToggleFullscreen: () => Promise<boolean>;
+      onFullscreenChanged: (cb: (data: { fullscreen: boolean }) => void) => () => void;
 
       onMenu: (cb: (action: string) => void) => () => void;
       onProjectOpened: (cb: (path: string) => void) => () => void;

@@ -169,6 +169,15 @@ input:focus-visible, textarea:focus-visible {
   border-radius: 10px;
 }
 
+/* Focus mode: dim older messages so the last couple of turns stay prominent. */
+body.focus-mode .focus-zen-dim {
+  opacity: 0.32;
+  transition: opacity 0.25s ease;
+}
+body.focus-mode .focus-zen-dim:hover {
+  opacity: 1;
+}
+
 /* Streaming label shimmer */
 @keyframes shimmer-text {
   0% { background-position: 200% center; }
@@ -335,6 +344,25 @@ input:focus-visible, textarea:focus-visible {
 .code-editor-textarea { caret-color: #aeafad; }
 .code-editor-textarea::selection { background: #264f78; }
 .code-editor-textarea::-moz-selection { background: #264f78; }
+
+.code-editor-gutter {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(128, 128, 128, 0.45);
+  text-align: right;
+  border-right: 1px solid rgba(128, 128, 128, 0.1);
+  background: rgba(0, 0, 0, 0.14);
+}
+.code-editor-lines {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent calc(13px * 1.55),
+    rgba(128, 128, 128, 0.06) calc(13px * 1.55),
+    rgba(128, 128, 128, 0.06) calc(13px * 1.55 + 1px)
+  );
+}
 
 /* ——— Editor themes (selectable in Settings → Appearance) ——— */
 /* VSCode Dark+ */

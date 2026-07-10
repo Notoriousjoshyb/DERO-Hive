@@ -1,4 +1,4 @@
-# DERO Hive
+﻿# DERO Hive
 
 DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP servers, projects, and DERO development.
 
@@ -8,6 +8,7 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - Persistent Codex ACP sessions with ChatGPT browser sign-in; no OpenAI API key is required for ChatGPT subscription use.
 - Per-model thinking controls. Known provider/model capabilities take precedence; unavailable capability metadata falls back to Medium reasoning.
 - Streaming chat with reasoning output, conversation history, token/context indicators, attachments (drag-and-drop with reordering), and project-aware working directories.
+- Side-by-side model comparison with streaming output, independent cancellation, error states, model swapping, and keyboard-friendly controls.
 - Conversation power features: fork/revert from any message, full-text search (Ctrl+Shift+F) with jump-to-message, bookmarks, archiving, per-conversation system prompts, and Markdown/JSON export.
 - Composer agents (persona presets, built-in + custom), a prompt library inserted via `#` with `{{clipboard}}`/`{{date}}` variables, and fuzzy `/` skill + `@` file autocomplete.
 - Inline Mermaid diagrams and KaTeX math in chat; token & estimated-cost usage dashboard; native desktop notifications when responses finish in the background.
@@ -50,7 +51,7 @@ npm run build:win
 
 ## Providers
 
-Use **Settings → Providers** to add a provider. API-backed providers fetch their model list after being saved.
+Use **Settings â†’ Providers** to add a provider. API-backed providers fetch their model list after being saved.
 
 | Provider | Authentication | Notes |
 |---|---|---|
@@ -64,7 +65,7 @@ Use **Settings → Providers** to add a provider. API-backed providers fetch the
 
 ### Codex (ChatGPT) setup
 
-1. Add **Codex (ChatGPT)** in Settings → Providers and save it.
+1. Add **Codex (ChatGPT)** in Settings â†’ Providers and save it.
 2. Complete the browser sign-in if Codex has no reusable local login session.
 3. DERO Hive automatically imports the available Codex models and their reported thinking levels.
 
@@ -101,7 +102,7 @@ scripts/                  Resource setup and Codex ACP patch scripts
 
 | Variable | Purpose |
 |---|---|
-| `DERO_HIVE_DATA_DIR` | Overrides DERO Hive’s local app-data directory. |
+| `DERO_HIVE_DATA_DIR` | Overrides DERO Hiveâ€™s local app-data directory. |
 | `CODEX_PATH` | Optional custom Codex executable used by ACP. |
 
 ## Acknowledgments
@@ -137,3 +138,4 @@ DERO Hive is possible because of these open-source projects and services. This l
 ## License
 
 MIT. See the repository license for details.
+

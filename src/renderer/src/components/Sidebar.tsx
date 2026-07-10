@@ -489,6 +489,59 @@ function ConvItem({
     }
   };
 
+  const handleExportPdf = async (): Promise<void> => {
+    try {
+      const data = await window.hive.convGet(conv.id);
+      if (!data?.messages) return;
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>${escapeHtml(data.title || 'Untitled')}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.6; }
+            h1 { font-size: 24px; margin-bottom: 24px; }
+            .msg { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #eee; }
+            .role { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin-bottom: 4px; }
+            pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; }
+            code { font-family: ui-monospace, monospace; font-size: 13px; }
+            blockquote { border-left: 3px solid #ccc; margin: 0; padding-left: 12px; color: #555; }
+            @media print { body { margin: 0; } .no-print { display: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="no-print" style="margin-bottom: 24px;">
+            <button onclick="window.print()" style="padding: 8px 16px; font-size: 14px; cursor: pointer;">Print / Save as PDF</button>
+            <span style="margin-left: 12px; color: #666; font-size: 13px;">Choose "Save as PDF" as the printer.</span>
+          </div>
+          <h1>${escapeHtml(data.title || 'Untitled')}</h1>
+          ${data.messages.map((m) => `
+            <div class="msg">
+              <div class="role">${m.role}</div>
+              <div>${escapeHtml(typeof m.content === 'string' ? m.content : '[multimedia message]')}</div>
+            </div>
+          `).join('')}
+        </body>
+        </html>
+      `;
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.width = '1px';
+      iframe.style.height = '1px';
+      iframe.style.opacity = '0';
+      iframe.style.pointerEvents = 'none';
+      document.body.appendChild(iframe);
+      iframe.contentDocument?.open();
+      iframe.contentDocument?.write(html);
+      iframe.contentDocument?.close();
+      iframe.contentWindow?.print();
+      setTimeout(() => iframe.remove(), 1000);
+    } catch (e) {
+      console.error('Export PDF failed:', e);
+    }
+  };
+
   const handleContextMenu = (e: React.MouseEvent): void => {
     e.preventDefault();
     e.stopPropagation();
@@ -626,6 +679,11 @@ function ConvItem({
               label="Export JSON"
               onClick={() => { void handleExportJson(); setMenuOpen(false); }}
             />
+            <MenuButton
+              icon={<ExportIcon />}
+              label="Export PDF"
+              onClick={() => { void handleExportPdf(); setMenuOpen(false); }}
+            />
             <div className="border-t border-border my-1" />
             <MenuButton
               icon={<DeleteIcon />}
@@ -669,6 +727,11 @@ function ConvItem({
               icon={<ExportIcon />}
               label="Export JSON"
               onClick={() => { void handleExportJson(); closeMenus(); }}
+            />
+            <MenuButton
+              icon={<ExportIcon />}
+              label="Export PDF"
+              onClick={() => { void handleExportPdf(); closeMenus(); }}
             />
             <MenuButton
               icon={<PromptIcon />}

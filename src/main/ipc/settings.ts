@@ -21,7 +21,14 @@ const DEFAULTS: AppSettings = {
   experimentalFeatures: false,
   voiceNotificationSounds: true,
   voiceNotificationVolume: 0.5,
-  codeTheme: 'vscode'
+  codeTheme: 'vscode',
+  spellcheckEnabled: true,
+  spellcheckLanguage: 'en',
+  focusModeTimerMinutes: 25,
+  focusModeWordGoal: 0,
+  ttsEnabled: false,
+  dailyTokenBudget: 0,
+  monthlyTokenBudget: 0
 };
 
 export function registerSettingsHandlers(): void {
