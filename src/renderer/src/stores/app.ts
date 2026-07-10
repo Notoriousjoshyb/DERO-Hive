@@ -386,8 +386,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentConversationId: undefined,
   currentMessages: [],
   loadConversations: async () => {
-    const conversations = await window.hive.convList();
-    set({ conversations });
+    const [active, archived] = await Promise.all([
+      window.hive.convList(),
+      window.hive.convList({ archived: true })
+    ]);
+    set({ conversations: [...active, ...archived] });
   },
   selectConversation: async (id) => {
     if (!id) {

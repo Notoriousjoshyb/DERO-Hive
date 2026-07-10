@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type Attachment, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -16,7 +16,7 @@ const api = {
   },
 
   // Conversations
-  convList: () => ipcRenderer.invoke(IPC.CONV_LIST),
+  convList: (opts?: { archived?: boolean }) => ipcRenderer.invoke(IPC.CONV_LIST, opts),
   convGet: (id: string) => ipcRenderer.invoke(IPC.CONV_GET, id),
   convCreate: (data: Partial<Conversation>) => ipcRenderer.invoke(IPC.CONV_CREATE, data),
   convUpdate: (id: string, data: Partial<Conversation>) => ipcRenderer.invoke(IPC.CONV_UPDATE, { id, data }),
@@ -147,8 +147,9 @@ const api = {
   version: () => ipcRenderer.invoke(IPC.APP_VERSION),
   updateCheck: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => ipcRenderer.invoke(IPC.UPDATE_INSTALL, a),
-  browserBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SET_ENABLED, enabled) as Promise<{ enabled: boolean; port: number; pairingCode?: string }>,
-  browserBridgeStatus: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_STATUS) as Promise<{ enabled: boolean; port: number; pairingCode?: string }>,
+  browserBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SET_ENABLED, enabled) as Promise<BrowserBridgeStatus>,
+  browserBridgeStatus: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_STATUS) as Promise<BrowserBridgeStatus>,
+  browserBridgeRevokePairing: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_REVOKE) as Promise<BrowserBridgeStatus>,
   browserBridgeBind: (requestId: string, conversationId: string) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_BIND, requestId, conversationId) as Promise<{ ok: boolean }>,
   onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => {
     const l = (_: IpcRendererEvent, data: { detail: string; requestId?: string; providerId?: string; model?: string }) => cb(data);

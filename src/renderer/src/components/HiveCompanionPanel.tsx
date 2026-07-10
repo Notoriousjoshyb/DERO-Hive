@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '../stores/app';
+import type { BrowserBridgeStatus } from '@shared/types';
 
 type ContextMode = 'chat' | 'workspace' | 'pinned';
 
@@ -8,13 +9,6 @@ interface ContextNote {
   title: string;
   url: string;
   text: string;
-}
-
-interface BrowserBridgeStatus {
-  enabled: boolean;
-  port: number;
-  pairingCode?: string;
-  paired?: boolean;
 }
 
 const QUICK_ACTIONS = [
@@ -31,7 +25,7 @@ export function HiveCompanionPanel(): JSX.Element {
   const [notes, setNotes] = useState<ContextNote[]>([]);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ title: '', url: '', text: '' });
-  const [bridge, setBridge] = useState<BrowserBridgeStatus>({ enabled: false, port: 43120 });
+  const [bridge, setBridge] = useState<BrowserBridgeStatus>({ enabled: false, port: 43120, paired: false });
 
   useEffect(() => {
     let active = true;
@@ -71,6 +65,10 @@ export function HiveCompanionPanel(): JSX.Element {
     setAdding(false);
   };
 
+  const resetPairing = async (): Promise<void> => {
+    setBridge(await window.hive.browserBridgeRevokePairing());
+  };
+
   const included = mode === 'chat' ? (chatExcerpt ? 1 : 0) : mode === 'pinned' ? notes.length : (chatExcerpt ? 1 : 0) + notes.length;
 
   return (
@@ -104,6 +102,11 @@ export function HiveCompanionPanel(): JSX.Element {
             </div>
           ) : (
             <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">{bridge.paired ? 'The saved extension credential reconnects automatically after restarts.' : 'Open the Browser Companion settings to finish pairing.'}</p>
+          )}
+          {bridge.enabled && (
+            <button onClick={() => void resetPairing()} className="mt-2 text-[10px] text-fg-subtle underline-offset-2 hover:text-fg hover:underline">
+              {bridge.paired ? 'Reset browser pairing' : 'Generate a new code'}
+            </button>
           )}
         </section>
 

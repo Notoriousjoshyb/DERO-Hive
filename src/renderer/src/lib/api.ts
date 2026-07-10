@@ -1,5 +1,6 @@
 import type {
   BookmarkEntry,
+  BrowserBridgeStatus,
   ChatRequest,
   Attachment,
   Conversation,
@@ -36,7 +37,7 @@ declare global {
       chatAbort: (id: string) => Promise<{ ok: boolean }>;
       onChatStream: (cb: (e: StreamEvent) => void) => () => void;
 
-      convList: () => Promise<Conversation[]>;
+      convList: (opts?: { archived?: boolean }) => Promise<Conversation[]>;
       convGet: (id: string) => Promise<(Conversation & { messages: Message[] }) | null>;
       convCreate: (data: Partial<Conversation>) => Promise<{ id: string }>;
       convUpdate: (id: string, data: Partial<Conversation>) => Promise<{ ok: boolean }>;
@@ -148,8 +149,9 @@ declare global {
         noReleases?: boolean; error?: string;
       }>;
       updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => Promise<{ ok: boolean; launched?: boolean; error?: string }>;
-      browserBridgeSetEnabled: (enabled: boolean) => Promise<{ enabled: boolean; port: number; pairingCode?: string }>;
-      browserBridgeStatus: () => Promise<{ enabled: boolean; port: number; pairingCode?: string }>;
+      browserBridgeSetEnabled: (enabled: boolean) => Promise<BrowserBridgeStatus>;
+      browserBridgeStatus: () => Promise<BrowserBridgeStatus>;
+      browserBridgeRevokePairing: () => Promise<BrowserBridgeStatus>;
       browserBridgeBind: (requestId: string, conversationId: string) => Promise<{ ok: boolean }>;
       onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => () => void;
       browserBridgeReportSelection: (providerId?: string, model?: string) => Promise<{ ok: boolean }>;

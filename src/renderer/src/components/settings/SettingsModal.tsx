@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GeneralPanel } from './GeneralPanel';
 import { ProvidersPanel } from './ProvidersPanel';
 import { McpPanel } from './McpPanel';
@@ -28,14 +28,25 @@ const TABS: Array<{ id: Tab; label: string }> = [
 export function SettingsModal({ onClose }: Props): JSX.Element {
   const [tab, setTab] = useState<Tab>('general');
 
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-6 animate-fade-in" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
         className="bg-bg-elev border border-border rounded-2xl shadow-elev-lg w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-border">
-          <h2 className="text-lg font-semibold tracking-tight">Settings</h2>
+          <h2 id="settings-title" className="text-lg font-semibold tracking-tight">Settings</h2>
           <button
             onClick={onClose}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-fg-muted hover:text-fg hover:bg-bg-input transition"
@@ -47,7 +58,7 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
           </button>
         </div>
         <div className="flex flex-1 overflow-hidden">
-          <nav className="w-48 border-r border-border bg-bg-sidebar/50 py-3 px-2 space-y-0.5">
+          <nav aria-label="Settings sections" className="w-48 border-r border-border bg-bg-sidebar/50 py-3 px-2 space-y-0.5">
             {TABS.map((t) => (
               <button
                 key={t.id}
