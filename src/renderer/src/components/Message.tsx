@@ -470,7 +470,7 @@ function reactNodeToText(node: React.ReactNode): string {
 function messageContentToText(content: Msg['content']): string {
   if (typeof content === 'string') return content;
   return content
-    .map((p) => (p.type === 'text' ? p.text : p.type === 'file' ? p.file.filename : ''))
+    .map((p) => (p.type === 'text' ? p.text : p.type === 'file' ? p.file.filename : p.type === 'attachment_ref' ? p.attachment.filename : ''))
     .filter(Boolean)
     .join('\n');
 }
@@ -515,6 +515,17 @@ function UserContent({ content }: { content: Msg['content'] }): JSX.Element {
                 <path d="M7 1v2h2" />
               </svg>
               {p.file.filename}
+            </div>
+          );
+        }
+        if (p.type === 'attachment_ref') {
+          return (
+            <div key={i} className="inline-flex items-center gap-1.5 text-xs text-fg-muted bg-bg-elev border border-border rounded-md px-2 py-1">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+                <path d="M3 1h4l2 2v8H3z" />
+                <path d="M7 1v2h2" />
+              </svg>
+              {p.attachment.filename}
             </div>
           );
         }

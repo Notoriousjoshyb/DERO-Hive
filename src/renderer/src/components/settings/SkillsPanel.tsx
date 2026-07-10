@@ -1,25 +1,57 @@
 import { useState } from 'react';
 import { useAppStore } from '../../stores/app';
-import type { Skill } from '@shared/types';
+import type { Skill, SkillImportPreview } from '@shared/types';
 
 export function SkillsPanel(): JSX.Element {
   const skills = useAppStore((s) => s.skills);
   const saveSkill = async (s: Skill): Promise<void> => { await window.hive.skillSave(s); void useAppStore.getState().loadSkills(); };
   const deleteSkill = async (id: string): Promise<void> => { await window.hive.skillDelete(id); void useAppStore.getState().loadSkills(); };
   const [editing, setEditing] = useState<Skill | null>(null);
+  const [importPreview, setImportPreview] = useState<SkillImportPreview | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  const pickSkill = async (): Promise<void> => {
+    setImportError(null);
+    const result = await window.hive.skillImportPick();
+    if (result.ok) setImportPreview(result.preview);
+    else if (!result.cancelled) setImportError(result.error || 'Skill preview failed.');
+  };
+
+  const importSkill = async (): Promise<void> => {
+    if (!importPreview) return;
+    setImporting(true);
+    setImportError(null);
+    const result = await window.hive.skillImport(importPreview.sourceDir);
+    setImporting(false);
+    if (!result.ok) {
+      setImportError(result.error);
+      return;
+    }
+    setImportPreview(null);
+    await useAppStore.getState().loadSkills();
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Skills</h3>
-          <p className="text-xs text-fg-muted mt-1">Reusable prompt templates invoked with slash commands.</p>
+          <p className="text-xs text-fg-muted mt-1">
+            Reusable prompt templates invoked with slash commands. Drop Agent Skills folders (SKILL.md) into the skills folder and rescan.
+          </p>
         </div>
-        <button onClick={() => setEditing({
-          id: `skill-${Date.now()}`, name: '', description: '',
-          slashCommand: '/', prompt: '', enabled: true, category: 'custom'
-        })} className="btn-primary">+ New skill</button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => void pickSkill()} className="btn-secondary">Import folder</button>
+          <button onClick={() => void window.hive.skillOpenDir()} className="btn-secondary">Open skills folder</button>
+          <button onClick={() => { void window.hive.skillRescan().then(() => useAppStore.getState().loadSkills()); }} className="btn-secondary">Rescan</button>
+          <button onClick={() => setEditing({
+            id: `skill-${Date.now()}`, name: '', description: '',
+            slashCommand: '/', prompt: '', enabled: true, category: 'custom'
+          })} className="btn-primary">+ New skill</button>
+        </div>
       </div>
+      {importError && !importPreview && <p className="text-xs text-danger">{importError}</p>}
 
       <div className="space-y-2">
         {skills.map((s) => (
@@ -30,6 +62,7 @@ export function SkillsPanel(): JSX.Element {
                   <span className="font-mono text-accent text-sm">{s.slashCommand}</span>
                   <span className="font-medium">{s.name}</span>
                   {s.builtin && <span className="text-[10px] uppercase text-fg-subtle">built-in</span>}
+                  {s.category === 'user' && <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-accent-soft text-accent">folder</span>}
                   {!s.enabled && <span className="text-[10px] uppercase text-danger">disabled</span>}
                 </div>
                 <div className="text-xs text-fg-muted mt-0.5">{s.description}</div>
@@ -39,8 +72,14 @@ export function SkillsPanel(): JSX.Element {
                 <label className="flex items-center gap-1 text-xs text-fg-muted">
                   <input type="checkbox" checked={s.enabled} onChange={(e) => void saveSkill({ ...s, enabled: e.target.checked })} className="accent-accent" />
                 </label>
-                <button onClick={() => setEditing(s)} className="btn-secondary">Edit</button>
-                <button onClick={() => { if (confirm(`Delete ${s.name}?`)) void deleteSkill(s.id); }} className="btn-secondary text-danger">×</button>
+                {s.sourceDir ? (
+                  <span className="text-[10px] text-fg-subtle" title={s.sourceDir}>managed on disk</span>
+                ) : (
+                  <>
+                    <button onClick={() => setEditing(s)} className="btn-secondary">Edit</button>
+                    <button onClick={() => { if (confirm(`Delete ${s.name}?`)) void deleteSkill(s.id); }} className="btn-secondary text-danger">×</button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -48,6 +87,15 @@ export function SkillsPanel(): JSX.Element {
       </div>
 
       {editing && <SkillEditor skill={editing} onClose={() => setEditing(null)} onSave={async (s) => { await saveSkill(s); setEditing(null); }} />}
+      {importPreview && (
+        <ImportSkillModal
+          preview={importPreview}
+          error={importError}
+          importing={importing}
+          onClose={() => { setImportPreview(null); setImportError(null); }}
+          onImport={() => void importSkill()}
+        />
+      )}
 
       <style>{`
         .btn-primary { background: #d97757; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; }
@@ -56,6 +104,42 @@ export function SkillsPanel(): JSX.Element {
         .input { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; font-size: 13px; }
         .input:focus { outline: none; border-color: var(--accent); }
       `}</style>
+    </div>
+  );
+}
+
+function ImportSkillModal({ preview, error, importing, onClose, onImport }: {
+  preview: SkillImportPreview;
+  error: string | null;
+  importing: boolean;
+  onClose: () => void;
+  onImport: () => void;
+}): JSX.Element {
+  const promptPreview = preview.prompt.length > 4000
+    ? `${preview.prompt.slice(0, 4000)}\n…`
+    : preview.prompt;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="skill-import-title" className="bg-bg-elev border border-border rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div>
+          <h3 id="skill-import-title" className="font-semibold">Import {preview.slashCommand}</h3>
+          <p className="text-xs text-fg-muted mt-1">{preview.description}</p>
+        </div>
+        <div className="text-[11px] text-fg-subtle break-all">{preview.sourceDir}</div>
+        {preview.warnings.length > 0 && (
+          <div className="rounded-md border border-warn/40 bg-warn/10 p-3 text-xs text-warn space-y-1">
+            {preview.warnings.map((warning) => <div key={warning}>{warning}</div>)}
+          </div>
+        )}
+        <p className="text-xs text-fg-muted">Only SKILL.md will be copied. Hive will not copy or execute scripts or other bundled files.</p>
+        <pre className="max-h-64 overflow-auto rounded-md bg-bg p-3 text-[11px] whitespace-pre-wrap text-fg-muted">{promptPreview}</pre>
+        {error && <p className="text-xs text-danger">{error}</p>}
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="btn-secondary" disabled={importing}>Cancel</button>
+          <button onClick={onImport} className="btn-primary" disabled={importing} autoFocus>{importing ? 'Importing…' : 'Import skill'}</button>
+        </div>
+      </div>
     </div>
   );
 }

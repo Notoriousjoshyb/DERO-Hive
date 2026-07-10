@@ -2,6 +2,8 @@ import { ipcMain } from 'electron';
 import { IPC, type Project } from '@shared/types';
 import { getDb } from '../db/client';
 import { logger } from '../utils/logger';
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 export function registerProjectHandlers(): void {
   ipcMain.handle(IPC.PROJECT_LIST, () => {
@@ -10,6 +12,7 @@ export function registerProjectHandlers(): void {
   });
 
   ipcMain.handle(IPC.PROJECT_SAVE, (_e, project: Project) => {
+    const projectPath = validateProjectPath(project.path);
     const now = Date.now();
     getDb().prepare(`
       INSERT INTO projects (id, name, icon, color, path, created_at, updated_at)
@@ -20,7 +23,7 @@ export function registerProjectHandlers(): void {
         color = excluded.color,
         path = excluded.path,
         updated_at = excluded.updated_at
-    `).run(project.id, project.name, project.icon, project.color || null, project.path, project.createdAt, now);
+    `).run(project.id, project.name, project.icon, project.color || null, projectPath, project.createdAt, now);
     logger.info('project', `saved ${project.name} (id=${project.id})`);
     return rowToProject(getDb().prepare('SELECT * FROM projects WHERE id = ?').get(project.id) as Record<string, unknown>);
   });
@@ -34,6 +37,17 @@ export function registerProjectHandlers(): void {
     })();
     logger.info('project', `deleted ${id}`);
   });
+}
+
+export function validateProjectPath(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Project path is required');
+  const projectPath = resolve(value.trim());
+  try {
+    if (!statSync(projectPath).isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw new Error(`Project path is not an existing directory: ${projectPath}`);
+  }
+  return projectPath;
 }
 
 function rowToProject(row: Record<string, unknown>): Project {

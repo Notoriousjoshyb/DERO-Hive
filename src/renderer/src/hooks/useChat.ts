@@ -89,12 +89,9 @@ export function useChat(): void {
       }
     });
 
+    // Session grants live in the main process, per tool. A request only reaches
+    // the renderer when it still needs a decision.
     const offPermission = window.hive.onToolPermissionRequest((req) => {
-      // Session-scoped "don't ask again": approve silently without a dialog.
-      if (useAppStore.getState().sessionAutoAllowTools) {
-        void window.hive.toolPermissionDecide({ requestId: req.requestId, decision: 'allow' });
-        return;
-      }
       addPendingPermission(req);
     });
 

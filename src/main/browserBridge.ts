@@ -1,8 +1,8 @@
 import { createServer, type Server, type ServerResponse, type IncomingMessage } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
-import { getDb } from './db/client';
+import { getDb, getSetting, setSetting } from './db/client';
 import { onChatStreamEvent } from './ipc/chat';
 import type { StreamEvent } from '../shared/types';
 import type { WhisperManager } from './whisper/manager';
@@ -13,6 +13,13 @@ const MAX_AUDIO_BODY_BYTES = 40_000_000;
 const RUN_IDLE_SWEEP_MS = 60_000;
 const RUN_TTL_MS = 10 * 60_000;
 const SSE_KEEPALIVE_MS = 15_000;
+const PAIRING_SETTING = 'browserBridgePairing';
+const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-p]{32}$/;
+
+interface StoredPairing {
+  tokenHash: string;
+  origin: string;
+}
 
 interface BrowserContextPayload {
   task?: string;
@@ -50,7 +57,9 @@ interface Run {
 
 export class BrowserBridge {
   private server: Server | null = null;
-  private token = '';
+  private pairingCode = '';
+  private tokenHash = '';
+  private pairedOrigin = '';
   private readonly runs = new Map<string, Run>();
   private readonly unsubscribeStream: () => void;
   private sweeper: NodeJS.Timeout | null = null;
@@ -76,11 +85,16 @@ export class BrowserBridge {
     return { ok: true };
   }
 
-  status(): { enabled: boolean; port: number; pairingCode?: string } {
-    return { enabled: Boolean(this.server), port: PORT, pairingCode: this.server ? this.token : undefined };
+  status(): { enabled: boolean; port: number; pairingCode?: string; paired: boolean } {
+    return {
+      enabled: Boolean(this.server),
+      port: PORT,
+      pairingCode: this.server && this.pairingCode ? this.pairingCode : undefined,
+      paired: Boolean(this.tokenHash && this.pairedOrigin)
+    };
   }
 
-  async setEnabled(enabled: boolean): Promise<{ enabled: boolean; port: number; pairingCode?: string }> {
+  async setEnabled(enabled: boolean): Promise<{ enabled: boolean; port: number; pairingCode?: string; paired: boolean }> {
     if (enabled && !this.server) await this.start();
     if (!enabled && this.server) await this.stop();
     return this.status();
@@ -89,7 +103,7 @@ export class BrowserBridge {
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
-    this.token = '';
+    this.pairingCode = '';
     for (const run of this.runs.values()) this.closeClient(run);
     this.runs.clear();
     if (this.sweeper) { clearInterval(this.sweeper); this.sweeper = null; }
@@ -102,8 +116,28 @@ export class BrowserBridge {
     this.unsubscribeStream();
   }
 
+  /** Revoke the saved extension credential and issue a fresh one-time code.
+   *  IPC/UI wiring can call this without changing the HTTP protocol. */
+  revokePairing(): { enabled: boolean; port: number; pairingCode?: string; paired: boolean } {
+    this.tokenHash = '';
+    this.pairedOrigin = '';
+    for (const run of this.runs.values()) this.closeClient(run);
+    setSetting(PAIRING_SETTING, null);
+    this.pairingCode = makePairingCode();
+    return this.status();
+  }
+
   private async start(): Promise<void> {
-    this.token = randomBytes(18).toString('base64url');
+    const saved = getSetting<StoredPairing | null>(PAIRING_SETTING, null);
+    if (isStoredPairing(saved)) {
+      this.tokenHash = saved.tokenHash;
+      this.pairedOrigin = saved.origin;
+      this.pairingCode = '';
+    } else {
+      this.tokenHash = '';
+      this.pairedOrigin = '';
+      this.pairingCode = makePairingCode();
+    }
     const server = createServer((request, response) => this.route(request, response));
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -115,24 +149,43 @@ export class BrowserBridge {
   }
 
   private route(request: IncomingMessage, response: ServerResponse): void {
-    response.setHeader('Access-Control-Allow-Origin', '*');
-    response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+    if (!isAllowedBridgeHost(request.headers.host)) { json(response, 403, { error: 'Invalid host' }); return; }
     const url = new URL(request.url || '/', `http://127.0.0.1:${PORT}`);
-    // The bridge is loopback-only and runs for the lifetime of the app. A
-    // browser extension can obtain the ephemeral pairing token from this
-    // route, avoiding manual copy/paste without exposing the bridge to the
-    // network or to ordinary webpages.
-    if (request.method === 'GET' && url.pathname === '/v1/pair') {
-      json(response, 200, { token: this.token });
+    const origin = allowedExtensionOrigin(request.headers.origin);
+    const pairingRoute = url.pathname === '/v1/pair';
+    if (!origin) { json(response, 403, { error: 'Invalid origin' }); return; }
+
+    if (request.method === 'OPTIONS') {
+      if (!pairingRoute && origin !== this.pairedOrigin) { json(response, 403, { error: 'Not paired' }); return; }
+      setCors(response, origin);
+      response.writeHead(204);
+      response.end();
       return;
     }
-    // EventSource cannot set an Authorization header, so the stream route also
-    // accepts the pairing token as a query parameter (loopback-only traffic).
-    const bearer = request.headers.authorization === `Bearer ${this.token}`;
-    const queryToken = url.searchParams.get('token') === this.token;
-    if (!bearer && !queryToken) { json(response, 401, { error: 'Not paired' }); return; }
+
+    if (pairingRoute) {
+      setCors(response, origin);
+      if (request.method !== 'POST') { json(response, 405, { error: 'Pairing requires POST' }); return; }
+      void readBody(request, 2048).then((body) => {
+        const code = normalizePairingCode((JSON.parse(body) as { code?: unknown }).code);
+        if (!this.pairingCode || !safeEqualText(code, normalizePairingCode(this.pairingCode))) {
+          json(response, 401, { error: 'Incorrect or expired pairing code' });
+          return;
+        }
+        const token = randomBytes(32).toString('base64url');
+        this.tokenHash = hashClientToken(token);
+        this.pairedOrigin = origin;
+        this.pairingCode = '';
+        setSetting(PAIRING_SETTING, { tokenHash: this.tokenHash, origin });
+        json(response, 200, { token });
+      }).catch(() => json(response, 400, { error: 'Invalid pairing payload' }));
+      return;
+    }
+
+    if (origin !== this.pairedOrigin) { json(response, 403, { error: 'Extension origin is not paired' }); return; }
+    setCors(response, origin);
+    const bearer = readBearer(request.headers.authorization);
+    if (!bearer || !clientTokenMatches(bearer, this.tokenHash)) { json(response, 401, { error: 'Not paired' }); return; }
 
     if (request.method === 'GET' && url.pathname === '/health') { json(response, 200, { ok: true }); return; }
     if (request.method === 'GET' && url.pathname === '/v1/models') { this.handleModels(response); return; }
@@ -266,6 +319,63 @@ export class BrowserBridge {
       if (now - run.touchedAt > RUN_TTL_MS) { this.closeClient(run); this.runs.delete(id); }
     }
   }
+}
+
+export function isAllowedBridgeHost(host: unknown): boolean {
+  return typeof host === 'string' && host.toLowerCase() === `127.0.0.1:${PORT}`;
+}
+
+export function allowedExtensionOrigin(origin: unknown): string | null {
+  return typeof origin === 'string' && EXTENSION_ORIGIN.test(origin) ? origin : null;
+}
+
+export function hashClientToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+export function clientTokenMatches(token: string, expectedHash: string): boolean {
+  if (!/^[a-f0-9]{64}$/.test(expectedHash)) return false;
+  return timingSafeEqual(Buffer.from(hashClientToken(token), 'hex'), Buffer.from(expectedHash, 'hex'));
+}
+
+function isStoredPairing(value: unknown): value is StoredPairing {
+  if (!value || typeof value !== 'object') return false;
+  const pairing = value as Partial<StoredPairing>;
+  return typeof pairing.tokenHash === 'string'
+    && /^[a-f0-9]{64}$/.test(pairing.tokenHash)
+    && allowedExtensionOrigin(pairing.origin) !== null;
+}
+
+function makePairingCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(8);
+  const raw = Array.from(bytes, (byte) => alphabet[byte & 31]).join('');
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+}
+
+function normalizePairingCode(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const compact = value.toUpperCase().replace('-', '');
+  return /^[A-Z2-9]{8}$/.test(compact) ? compact : '';
+}
+
+function safeEqualText(left: string, right: string): boolean {
+  return timingSafeEqual(
+    createHash('sha256').update(left, 'utf8').digest(),
+    createHash('sha256').update(right, 'utf8').digest()
+  );
+}
+
+function readBearer(header: unknown): string | null {
+  if (typeof header !== 'string') return null;
+  return /^Bearer ([A-Za-z0-9_-]{43})$/.exec(header)?.[1] ?? null;
+}
+
+function setCors(response: ServerResponse, origin: string): void {
+  response.setHeader('Access-Control-Allow-Origin', origin);
+  response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Vary', 'Origin');
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {

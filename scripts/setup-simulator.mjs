@@ -28,6 +28,27 @@ function run(cmd, args, cwd) {
   return spawnSync(cmd, args, { cwd, stdio: 'inherit' });
 }
 
+/** Turn a spawnSync result into something worth reading. A missing binary sets
+ *  `error` and leaves `status` null, which is otherwise indistinguishable from
+ *  a non-zero exit. */
+function describeFailure(result) {
+  if (result.error) return result.error.message;
+  if (result.signal) return `killed by ${result.signal}`;
+  return `exit ${result.status}`;
+}
+
+/**
+ * Windows ships bsdtar as %SystemRoot%\System32\tar.exe, but a bare `tar` may
+ * instead resolve to Git-for-Windows' GNU tar — which is on PATH on any machine
+ * with git, and which this app requires. Prefer bsdtar by absolute path when it
+ * is there, because the two disagree about drive letters (see extraction below).
+ */
+function tarCommand() {
+  if (process.platform !== 'win32') return 'tar';
+  const bsdtar = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  return existsSync(bsdtar) ? bsdtar : 'tar';
+}
+
 function hasGo() {
   return spawnSync('go', ['version'], { stdio: 'ignore' }).status === 0;
 }
@@ -46,22 +67,26 @@ async function main() {
   const work = join(tmpdir(), `hive-derohe-${Date.now()}`);
   try {
     mkdirSync(work, { recursive: true });
-    const tarball = join(work, 'derohe.tar.gz');
+    const archive = 'derohe.tar.gz';
     console.log(`[simulator] downloading ${DEROHE_TARBALL}`);
     const res = await fetch(DEROHE_TARBALL, { redirect: 'follow' });
     if (!res.ok || !res.body) throw new Error(`download failed: ${res.status} ${res.statusText}`);
-    await pipeline(res.body, createWriteStream(tarball));
+    await pipeline(res.body, createWriteStream(join(work, archive)));
 
-    // Windows ships bsdtar as C:\Windows\System32\tar.exe; unix has tar.
-    const r1 = run('tar', ['-xzf', tarball, '-C', work]);
-    if (r1.status !== 0) throw new Error('tar extract failed');
+    // Extract from inside `work` with a relative archive name. GNU tar reads
+    // `host:path` as a remote archive, so an absolute Windows path makes it try
+    // to reach a host named after the drive letter:
+    //   tar (child): Cannot connect to C: resolve failed
+    // Never handing it a colon sidesteps that, and bsdtar is happy either way.
+    const r1 = run(tarCommand(), ['-xzf', archive], work);
+    if (r1.status !== 0) throw new Error(`tar extract failed: ${describeFailure(r1)}`);
 
     const srcDir = readdirSync(work).map((n) => join(work, n)).find((p) => existsSync(join(p, 'go.mod')));
     if (!srcDir) throw new Error('extracted source tree not found (no go.mod)');
 
     mkdirSync(binDir, { recursive: true });
     const r2 = run('go', ['build', '-trimpath', '-o', binPath, './cmd/simulator'], srcDir);
-    if (r2.status !== 0) throw new Error('go build failed');
+    if (r2.status !== 0) throw new Error(`go build failed: ${describeFailure(r2)}`);
 
     console.log(`[simulator] built ${binPath}`);
   } catch (err) {

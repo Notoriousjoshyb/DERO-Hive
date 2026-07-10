@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
-import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
 import { getAdapter } from '../providers/registry';
 import { ToolRegistry } from '../tools/registry';
@@ -12,6 +11,8 @@ import { getDb } from '../db/client';
 import { getSetting } from '../db/client';
 import { getDefaultWorkspace } from '../utils/paths';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
+import { composeSystemPrompt } from '../utils/systemPrompt';
+import { hydrateAttachmentRefs, validateAttachmentRefs } from '../utils/attachments';
 
 const activeRequests = new Map<string, AbortController>();
 const queuedUserMessages = new Map<string, Message[]>();
@@ -130,13 +131,14 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
   });
 
   ipcMain.handle(IPC.CHAT_QUEUE_MESSAGE, async (_e, conversationId: string, message: Message) => {
+    await validateAttachmentRefs(message.content, 20 * 1024 * 1024, 25 * 1024 * 1024);
     const q = queuedUserMessages.get(conversationId) || [];
     q.push(message);
     queuedUserMessages.set(conversationId, q);
   });
 
-  ipcMain.handle(IPC.CHAT_SEND, async (_e, req: ChatRequest & { systemPrompt?: string }) => {
-    return runChat(req as ChatRequest, getWin, tools);
+  ipcMain.handle(IPC.CHAT_SEND, async (_e, req: ChatRequest) => {
+    return runChat(req, getWin, tools);
   });
 }
 
@@ -146,17 +148,20 @@ async function runChat(
   tools: ToolRegistry
 ): Promise<{ messageId: string }> {
   const abort = new AbortController();
-  activeRequests.set(req.conversationId, abort);
-  // Clear any stale queued messages from a previous run.
-  queuedUserMessages.delete(req.conversationId);
   const messageId = randomUUID();
 
   // Persist user message immediately
   const userMsg = req.messages[req.messages.length - 1];
+  if (userMsg?.role === 'user') {
+    await validateAttachmentRefs(userMsg.content, 20 * 1024 * 1024, 25 * 1024 * 1024);
+  }
   if (userMsg && userMsg.role === 'user' && !req.skipUserPersist) {
     persistMessage(req.conversationId, userMsg);
     updateConversationPreview(req.conversationId, userMsg);
   }
+  activeRequests.set(req.conversationId, abort);
+  // Clear any stale queued messages from a previous run.
+  queuedUserMessages.delete(req.conversationId);
 
   const win = getWin();
   const send = (evt: StreamEvent): void => {
@@ -189,17 +194,18 @@ async function runChat(
         logger.info('chat', `using project cwd: ${projectPath}`);
       }
 
-      const baseSystemPrompt = req.systemPrompt || getSetting<string>('defaultSystemPrompt', '') || DEFAULT_SYSTEM_PROMPT;
-      // Composer agent persona (if any) is layered first, then per-conversation
-      // custom instructions — both on top of whatever base applies (skill/plan
-      // prompt from the request, the global default, or the built-in).
-      const agentPrompt = req.agentPrompt?.trim();
-      const withAgent = agentPrompt ? `${baseSystemPrompt}\n\n${agentPrompt}` : baseSystemPrompt;
-      const convSystemPrompt = conv?.system_prompt?.trim();
-      const withConv = convSystemPrompt ? `${withAgent}\n\n${convSystemPrompt}` : withAgent;
-      const systemPrompt = projectPath
-        ? `${withConv}\n\nThe user has selected a project folder: ${projectPath}\nTreat this directory as the working context for file operations, shell commands, and any code-related tasks. When the user refers to "the project" or "the codebase", they mean this folder.\n\n${buildProjectSnapshot(projectPath)}`
-        : withConv;
+      // The built-in core is immutable. Legacy renderer instructions and agent
+      // personas are compatibility-only additive layers, never replacements.
+      const corePrompt = composeSystemPrompt({
+        appInstructions: getSetting<string>('defaultSystemPrompt', ''),
+        conversationInstructions: conv?.system_prompt,
+        projectPath,
+        planMode: req.planMode
+      });
+      const additiveLayers = [req.agentPrompt?.trim(), req.systemPrompt?.trim()]
+        .filter((value): value is string => !!value);
+      if (projectPath) additiveLayers.push(buildProjectSnapshot(projectPath));
+      const systemPrompt = [corePrompt, ...additiveLayers].join('\n\n');
       let messages = req.messages;
 
       // Look up model context window for adaptive truncation
@@ -218,7 +224,7 @@ async function runChat(
         for (const m of messages) {
           const parts = Array.isArray(m.content) ? m.content : [];
           for (const p of parts) {
-            if ('image_url' in p) {
+            if ('image_url' in p || (p.type === 'attachment_ref' && p.attachment.type === 'image')) {
               send({ type: 'error', conversationId: req.conversationId, messageId, error: `Model "${req.model}" does not support image input. Please switch to a vision-capable model or remove the image attachment.` });
               send({ type: 'done', conversationId: req.conversationId, messageId });
               return;
@@ -319,21 +325,28 @@ async function runChat(
         let assistantContent = '';
         let assistantReasoning = '';
         const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        const providerMessages = await hydrateAttachmentRefs(
+          truncateMessagesForContext(currentMessages, modelDef, systemPrompt)
+        );
 
         for await (const evt of streamWithRetry(
           () => adapter.stream({
             conversationId: req.conversationId,
             cwd,
             model: req.model,
-            messages: truncateMessagesForContext(currentMessages, modelDef, systemPrompt),
+            messages: providerMessages,
             tools: availableTools,
             systemPrompt,
             temperature: req.temperature,
             topP: req.topP,
             maxTokens: req.maxTokens,
             reasoning: req.reasoning,
+            attachments: req.attachments,
             signal: abort.signal,
-            requestPermission: (permission) => tools.requestPermission(permission)
+            requestPermission: (permission) => tools.requestPermission(permission, {
+              cwd,
+              conversationId: req.conversationId
+            })
           }),
           abort.signal
         )) {
@@ -555,11 +568,25 @@ async function maybeGenerateTitle(conversationId: string, providerId: string, mo
 
 // Inline auto-compaction: called from chat loop before sending when context
 // is over the threshold. Mirrors the logic in conversations.ts IPC handler.
-async function compactConversationInPlace(
+export interface CompactionDb {
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  transaction<T extends (...args: never[]) => unknown>(fn: T): T;
+}
+
+export async function compactConversationInPlace(
   conversationId: string,
+  _providerId = '',
+  _model = '',
+  db: CompactionDb = getDb() as unknown as CompactionDb
 ): Promise<{ removedCount: number; beforeTokens: number; afterTokens: number; tokensSaved: number }> {
+  void _providerId;
+  void _model;
   const config = { keepRecentMessages: 6, truncateToolOutputChars: 4000, maxHistoryMessageChars: 8000 };
-  const messages = getDb().prepare(
+  const messages = db.prepare(
     'SELECT * FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC'
   ).all(conversationId) as Array<Record<string, unknown>>;
 
@@ -574,8 +601,12 @@ async function compactConversationInPlace(
 
   const systemMsgs = messages.filter((m) => m.role === 'system');
   const nonSystem = messages.filter((m) => m.role !== 'system');
-  const recent = nonSystem.slice(-config.keepRecentMessages);
-  const older = nonSystem.slice(0, nonSystem.length - config.keepRecentMessages);
+  // A tool result cannot be kept without the assistant turn that requested
+  // it; both provider APIs reject that orphaned pair on the next request.
+  let split = Math.max(0, nonSystem.length - config.keepRecentMessages);
+  while (split > 0 && nonSystem[split]?.role === 'tool') split--;
+  const recent = nonSystem.slice(split);
+  const older = nonSystem.slice(0, split);
 
   const userTurns: string[] = [];
   const decisions: string[] = [];
@@ -620,7 +651,6 @@ async function compactConversationInPlace(
   const afterTokens = afterContents.reduce((sum, c) => sum + Math.ceil((c?.length || 0) / 3.7), 0);
   const tokensSaved = Math.max(0, Math.round(beforeTokens) - Math.round(afterTokens));
 
-  const db = getDb();
   db.transaction(() => {
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
     db.prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(conversationId);

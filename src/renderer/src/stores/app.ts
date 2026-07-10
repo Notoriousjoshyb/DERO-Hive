@@ -33,17 +33,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   monthlyTokenBudget: 0
 };
 
-export interface QueueItem {
-  id: string;
-  text: string;
-  attachments: Attachment[];
-  createdAt: number;
-  skillName?: string;
-  systemPrompt?: string;
-  planMode?: boolean;
-  reasoning?: ThinkingEffort;
-}
-
 export interface TodoItem {
   content: string;
   status: 'pending' | 'in_progress' | 'completed';
@@ -163,11 +152,6 @@ interface AppState {
   pendingPermissions: PendingPermission[];
   addPendingPermission: (p: PendingPermission) => void;
   removePendingPermission: (requestId: string) => void;
-  // Session-only "don't ask again" — auto-allows tool calls until the app
-  // restarts, without touching the persisted toolApprovalMode setting.
-  sessionAutoAllowTools: boolean;
-  setSessionAutoAllowTools: (v: boolean) => void;
-
   // MCP
   mcpStatuses: McpServerStatus[];
   loadMcpStatuses: () => Promise<void>;
@@ -568,8 +552,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   addPendingPermission: (p) => set((s) => ({ pendingPermissions: [...s.pendingPermissions, p] })),
   removePendingPermission: (requestId) =>
     set((s) => ({ pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== requestId) })),
-  sessionAutoAllowTools: false,
-  setSessionAutoAllowTools: (v) => set({ sessionAutoAllowTools: v }),
 
   mcpStatuses: [],
   loadMcpStatuses: async () => {

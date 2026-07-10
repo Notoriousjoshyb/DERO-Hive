@@ -270,9 +270,9 @@ export function GeneralPanel(): JSX.Element {
           </select>
         </Field>
         <Field label="Tool approval">
-          <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as 'always' | 'project' | 'never' })} className="input">
+          <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as 'always' | 'session' | 'never' })} className="input">
             <option value="always">Always ask</option>
-            <option value="project">Ask per project</option>
+            <option value="session">Ask once per chat</option>
             <option value="never">Never ask</option>
           </select>
         </Field>
@@ -299,6 +299,9 @@ export function GeneralPanel(): JSX.Element {
             </select>
           </Field>
         )}
+        <Field label="Agent mode (experimental)" hint="Floating agent that operates the app UI from natural-language instructions, using the selected provider.">
+          <input type="checkbox" checked={settings.agentModeEnabled || false} onChange={(e) => updateSettings({ agentModeEnabled: e.target.checked })} className="accent-accent w-4 h-4" />
+        </Field>
       </Section>
 
       <Section title="Focus mode">

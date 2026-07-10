@@ -32,6 +32,11 @@
       </label>
       <label class="toggle-row"><span>Auto-refresh page context</span><input id="auto-refresh" type="checkbox" /></label>
       <label class="toggle-row"><span>Block capture on sensitive sites</span><input id="guard-sites" type="checkbox" /></label>
+      <div class="pairing-card">
+        <label for="pairing-code">One-time pairing code</label>
+        <div class="pairing-row"><input id="pairing-code" type="text" maxlength="9" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH" /><button id="pair-hive" type="button">Pair</button></div>
+        <p id="pair-status" class="settings-note" aria-live="polite"></p>
+      </div>
       <p id="bridge-status" class="settings-note"></p>
       <button id="copy-diagnostics" class="secondary">Copy diagnostics</button>
       <p class="settings-note">The Companion does not send data to a server. It captures the active page after you invoke it and talks only to your local DERO Hive at 127.0.0.1. Tip: press <kbd>Alt+H</kbd> to open this panel.</p>

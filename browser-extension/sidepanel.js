@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const BRIDGE = 'http://127.0.0.1:43120';
-const DEFAULT = { autoRefresh: false, scope: 'page', pairingCode: '', theme: 'hive', guardSites: true, providerId: '', model: '' };
+const DEFAULT = { autoRefresh: false, scope: 'page', clientToken: '', theme: 'hive', guardSites: true, providerId: '', model: '' };
 // Domains where page capture is refused when the sensitive-site guard is on.
 const SENSITIVE_HOST = /(bank|banking|paypal|venmo|zelle|coinbase|binance|kraken|wallet|chase\.|wellsfargo|citi(bank)?\.|hsbc|barclays|santander|revolut|monzo|fidelity|schwab|vanguard|healthcare|myhealth|patient|medicare|kaiser)/i;
 
@@ -9,7 +9,7 @@ let recognition = null;          // Web Speech fallback
 let recording = null;            // { recorder, stream } while dictating via Whisper
 let renameSessionId = '';        // session currently being renamed inline
 let lastPushedSelection = '';    // guards the two-way model sync against loops
-const activeStreams = new Map(); // handoffId -> EventSource
+const activeStreams = new Map(); // handoffId -> { close: () => void }
 const openThinking = new Set();  // handoff ids whose "Thinking" details the user expanded
 
 /* ---------- persistence & sessions ---------- */
@@ -18,10 +18,13 @@ async function load() {
   const saved = await chrome.storage.local.get(['hiveBrowserStore']);
   store = { ...store, ...(saved.hiveBrowserStore || {}) };
   store.settings = { ...DEFAULT, ...(store.settings || {}) };
+  const hadLegacyPairing = Object.hasOwn(store.settings, 'pairingCode');
+  delete store.settings.pairingCode; // retired insecure auto-pair credential
   if (!store.sessions.length) createSession(false);
   if (!store.activeSessionId) store.activeSessionId = store.sessions[0].id;
   if (store.settings.scope === 'pinned') store.settings.scope = 'page';
   applySettings(); render();
+  if (hadLegacyPairing) await persist();
   if (store.settings.autoRefresh) void capture();
   // Pending replies are resumed by connectBridge() once pairing is confirmed,
   // so a stale token from a Hive restart can't mis-mark them as failed.
@@ -40,7 +43,12 @@ function applySettings() {
   $('theme-select').value = store.settings.theme || 'hive';
   $('auto-refresh').checked = store.settings.autoRefresh;
   $('guard-sites').checked = store.settings.guardSites !== false;
-  $('bridge-status').textContent = store.bridgeConnected ? 'Connected to DERO Hive.' : 'Waiting for DERO Hive to start…';
+  $('bridge-status').textContent = store.bridgeConnected
+    ? 'Connected to DERO Hive.'
+    : store.settings.clientToken
+      ? 'Paired; waiting for DERO Hive to start…'
+      : 'Enter the one-time code shown in DERO Hive.';
+  if (store.bridgeConnected) $('pair-status').textContent = 'Paired and connected.';
   $('send').innerHTML = store.bridgeConnected ? 'Send to Hive <span>↗</span>' : 'Copy to Hive <span>↗</span>';
 }
 
@@ -262,7 +270,7 @@ async function handoff() {
   let direct = false; let requestId = '';
   if (store.bridgeConnected) {
     try {
-      const response = await fetch(`${BRIDGE}/v1/context`, { method: 'POST', headers: { Authorization: `Bearer ${store.settings.pairingCode}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ task, title: c.title, url: c.url, text: c.text, selection: c.selection, scope: currentScope(), providerId: store.settings.providerId, model: store.settings.model }) });
+      const response = await fetch(`${BRIDGE}/v1/context`, { method: 'POST', headers: bridgeHeaders(true), body: JSON.stringify({ task, title: c.title, url: c.url, text: c.text, selection: c.selection, scope: currentScope(), providerId: store.settings.providerId, model: store.settings.model }) });
       if (!response.ok) throw new Error('Bridge rejected the request');
       const result = await response.json();
       requestId = result.requestId || '';
@@ -285,38 +293,66 @@ async function handoff() {
 
 function streamReply(requestId, handoffId) {
   activeStreams.get(handoffId)?.close();
-  const url = `${BRIDGE}/v1/stream?requestId=${encodeURIComponent(requestId)}&token=${encodeURIComponent(store.settings.pairingCode)}`;
-  const source = new EventSource(url);
-  activeStreams.set(handoffId, source);
-  let failures = 0;
-  const finish = () => { source.close(); activeStreams.delete(handoffId); void persist(); scheduleRender(); };
-  source.onopen = () => { failures = 0; };
-  source.onmessage = (message) => {
+  let cancelled = false;
+  let controller = null;
+  const handle = { close: () => { cancelled = true; controller?.abort(); } };
+  activeStreams.set(handoffId, handle);
+
+  void (async () => {
+    let terminal = false;
+    let failures = 0;
+    while (!cancelled && !terminal && failures < 5) {
+      controller = new AbortController();
+      try {
+        const response = await fetch(`${BRIDGE}/v1/stream?requestId=${encodeURIComponent(requestId)}`, {
+          headers: bridgeHeaders(),
+          signal: controller.signal
+        });
+        if (!response.ok || !response.body) throw new Error(`Stream failed (${response.status})`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!cancelled && !terminal) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          for (;;) {
+            const boundary = /\r?\n\r?\n/.exec(buffer);
+            if (!boundary) break;
+            const block = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary[0].length);
+            const data = block.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n');
+            if (!data) continue;
+            let event;
+            try { event = JSON.parse(data); } catch { continue; }
+            const handoff = findHandoff(handoffId);
+            if (!handoff) { cancelled = true; break; }
+            if (event.type === 'status' && event.status === 'working') handoff.working = true;
+            if (event.type === 'delta') handoff.response = (handoff.response || '') + (event.content || '');
+            if (event.type === 'thinking') handoff.thinking = (handoff.thinking || '') + (event.content || '');
+            if (event.type === 'tool' && event.tool) { handoff.tools = handoff.tools || []; if (handoff.tools.at(-1) !== event.tool) handoff.tools.push(event.tool); }
+            if (event.type === 'error') { handoff.error = event.error || 'DERO Hive could not complete the request'; handoff.pending = false; terminal = true; }
+            if (event.type === 'done') { handoff.pending = false; terminal = true; }
+            persistSoon();
+            scheduleRender();
+          }
+        }
+        if (terminal) controller.abort();
+        if (!terminal && !cancelled) failures += 1;
+      } catch (error) {
+        if (!cancelled) failures += 1;
+      }
+      if (!terminal && !cancelled && failures < 5) await new Promise((resolve) => setTimeout(resolve, failures * 500));
+    }
     const handoff = findHandoff(handoffId);
-    if (!handoff) { finish(); return; }
-    let event;
-    try { event = JSON.parse(message.data); } catch { return; }
-    if (event.type === 'status' && event.status === 'working') handoff.working = true;
-    if (event.type === 'delta') handoff.response = (handoff.response || '') + (event.content || '');
-    if (event.type === 'thinking') handoff.thinking = (handoff.thinking || '') + (event.content || '');
-    if (event.type === 'tool' && event.tool) { handoff.tools = handoff.tools || []; if (handoff.tools.at(-1) !== event.tool) handoff.tools.push(event.tool); }
-    if (event.type === 'error') { handoff.error = event.error || 'DERO Hive could not complete the request'; handoff.pending = false; finish(); return; }
-    if (event.type === 'done') { handoff.pending = false; finish(); return; }
-    persistSoon();
-    scheduleRender();
-  };
-  source.onerror = () => {
-    const handoff = findHandoff(handoffId);
-    if (!handoff || !handoff.pending) { finish(); return; }
-    failures += 1;
-    // EventSource retries on its own; the bridge buffers events while we are
-    // disconnected, so give it a few attempts before declaring the run lost.
-    if (failures >= 5) {
+    if (handoff && !terminal && !cancelled && handoff.pending) {
       handoff.pending = false;
       handoff.error = handoff.error || 'Connection to DERO Hive was lost';
-      finish();
     }
-  };
+    if (activeStreams.get(handoffId) === handle) activeStreams.delete(handoffId);
+    void persist();
+    scheduleRender();
+  })();
 }
 
 // Replies that were still streaming when the panel closed can be resumed —
@@ -340,8 +376,35 @@ function clearChat() {
 
 /* ---------- pairing, models & two-way model sync ---------- */
 
+function bridgeHeaders(json = false) {
+  const headers = { Authorization: `Bearer ${store.settings.clientToken}` };
+  if (json) headers['Content-Type'] = 'application/json';
+  return headers;
+}
+
+async function pairWithHive() {
+  const code = $('pairing-code').value.trim();
+  if (!code) { $('pair-status').textContent = 'Enter the code shown in DERO Hive.'; return; }
+  $('pair-status').textContent = 'Pairing…';
+  try {
+    const response = await fetch(`${BRIDGE}/v1/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.token) throw new Error(result.error || `Pairing failed (${response.status})`);
+    store.settings.clientToken = result.token;
+    $('pairing-code').value = '';
+    await persist();
+    await connectBridge();
+  } catch (error) {
+    $('pair-status').textContent = error.message || 'Could not pair with DERO Hive.';
+  }
+}
+
 async function loadModels() {
-  const response = await fetch(`${BRIDGE}/v1/models`, { headers: { Authorization: `Bearer ${store.settings.pairingCode}` } });
+  const response = await fetch(`${BRIDGE}/v1/models`, { headers: bridgeHeaders() });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     if (response.status === 404) throw new Error('Restart DERO Hive, then reopen Hive Companion to enable model sync');
@@ -363,7 +426,7 @@ async function pushModelSelection() {
   if (!store.bridgeConnected || !store.settings.providerId || !store.settings.model) return;
   lastPushedSelection = `${store.settings.providerId}::${store.settings.model}`;
   try {
-    await fetch(`${BRIDGE}/v1/select-model`, { method: 'POST', headers: { Authorization: `Bearer ${store.settings.pairingCode}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: store.settings.providerId, model: store.settings.model }) });
+    await fetch(`${BRIDGE}/v1/select-model`, { method: 'POST', headers: bridgeHeaders(true), body: JSON.stringify({ providerId: store.settings.providerId, model: store.settings.model }) });
     $('model-status').textContent = 'Model switched in DERO Hive ✓';
     setTimeout(() => renderModels(), 1200);
   } catch { /* bridge poll will reconcile */ }
@@ -371,7 +434,7 @@ async function pushModelSelection() {
 
 async function syncStateFromHive() {
   try {
-    const response = await fetch(`${BRIDGE}/v1/state`, { headers: { Authorization: `Bearer ${store.settings.pairingCode}` } });
+    const response = await fetch(`${BRIDGE}/v1/state`, { headers: bridgeHeaders() });
     if (!response.ok) throw new Error('state failed');
     const state = await response.json();
     store.whisperAvailable = Boolean(state.whisper);
@@ -394,8 +457,11 @@ async function syncStateFromHive() {
 
 async function connectBridge() {
   store.bridgeConnected = false; await persist();
+  if (!store.settings.clientToken) { applySettings(); return; }
+  let rejected = false;
   try {
-    const response = await fetch(`${BRIDGE}/health`, { headers: { Authorization: `Bearer ${store.settings.pairingCode}` } });
+    const response = await fetch(`${BRIDGE}/health`, { headers: bridgeHeaders() });
+    rejected = response.status === 401 || response.status === 403;
     if (!response.ok) throw new Error('Companion is closed');
     store.bridgeConnected = true;
     await loadModels();
@@ -403,18 +469,14 @@ async function connectBridge() {
     await persist();
     $('bridge-status').textContent = 'Connected. Models are loaded from DERO Hive.';
     resumePendingReplies();
-  } catch { /* Auto-pair loop will retry when the Companion becomes available. */ }
+  } catch {
+    if (rejected) {
+      store.settings.clientToken = '';
+      await persist();
+      $('pair-status').textContent = 'Pairing expired. Enter the new code from DERO Hive.';
+    }
+  }
   applySettings();
-}
-
-async function autoPair() {
-  try {
-    const response = await fetch(`${BRIDGE}/v1/pair`);
-    if (!response.ok) return;
-    const { token } = await response.json();
-    if (!token) return;
-    if (token !== store.settings.pairingCode || !store.bridgeConnected) { store.settings.pairingCode = token; await connectBridge(); }
-  } catch { /* Companion is closed or DERO Hive is not running. */ }
 }
 
 function selectScope(scope) { store.settings.scope = scope; void persist(); render(); if (scope === 'page') void capture(); }
@@ -452,7 +514,7 @@ async function startWhisperDictation() {
     voiceStatus('Transcribing…');
     try {
       const wav = await blobToWav16kBase64(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-      const response = await fetch(`${BRIDGE}/v1/transcribe`, { method: 'POST', headers: { Authorization: `Bearer ${store.settings.pairingCode}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ wav }) });
+      const response = await fetch(`${BRIDGE}/v1/transcribe`, { method: 'POST', headers: bridgeHeaders(true), body: JSON.stringify({ wav }) });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || `Transcription failed (${response.status})`);
       appendToTask((data.text || '').trim());
@@ -592,6 +654,8 @@ $('close-settings').addEventListener('click', () => { $('settings').hidden = tru
 $('theme-select').addEventListener('change', (event) => { store.settings.theme = event.target.value; void persist(); applySettings(); });
 $('auto-refresh').addEventListener('change', (event) => { store.settings.autoRefresh = event.target.checked; void persist(); });
 $('guard-sites').addEventListener('change', (event) => { store.settings.guardSites = event.target.checked; void persist(); });
+$('pair-hive').addEventListener('click', () => void pairWithHive());
+$('pairing-code').addEventListener('keydown', (event) => { if (event.key === 'Enter') void pairWithHive(); });
 $('provider-select').addEventListener('change', (event) => {
   store.settings.providerId = event.target.value;
   // Resolve the default model here so the selection pushed to Hive is never
@@ -605,11 +669,14 @@ $('model-select').addEventListener('change', (event) => { store.settings.model =
 $('reload-models').addEventListener('click', () => void loadModels().catch((error) => { $('model-status').textContent = error.message || 'Could not load models'; }));
 $('copy-diagnostics').addEventListener('click', () => void diagnostics().then(() => { $('copy-diagnostics').textContent = 'Diagnostics copied'; setTimeout(() => { $('copy-diagnostics').textContent = 'Copy diagnostics'; }, 1400); }));
 
-load();
-void autoPair();
+void (async () => {
+  await load();
+  if (store.settings.clientToken) await connectBridge();
+})();
 setInterval(() => {
-  if (!store.bridgeConnected) void autoPair();
-  else if (!store.providers.length) void loadModels().catch(() => {});
+  if (!store.bridgeConnected) {
+    if (store.settings.clientToken) void connectBridge();
+  } else if (!store.providers.length) void loadModels().catch(() => {});
   else void syncStateFromHive();
 }, 2500);
 chrome.storage.session.get('deroHivePickedText').then(({ deroHivePickedText }) => { if (deroHivePickedText?.text) { store.pickedText = deroHivePickedText; render(); } });

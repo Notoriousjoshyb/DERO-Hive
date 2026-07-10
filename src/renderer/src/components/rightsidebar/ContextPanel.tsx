@@ -1,92 +1,65 @@
 import { useAppStore } from '../../stores/app';
 
+function Row({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
+  return <div className="flex items-start justify-between gap-3"><span className="text-fg-subtle">{label}</span><span className="font-medium text-right break-all">{value}</span></div>;
+}
+
 export function ContextPanel(): JSX.Element {
   const projects = useAppStore((s) => s.projects);
   const conversations = useAppStore((s) => s.conversations);
+  const providers = useAppStore((s) => s.providers);
   const settings = useAppStore((s) => s.settings);
   const currentConversationId = useAppStore((s) => s.currentConversationId);
   const currentMessages = useAppStore((s) => s.currentMessages);
+  const selectedProviderId = useAppStore((s) => s.selectedProviderId);
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  const planMode = useAppStore((s) => s.composerPlanMode);
+  const mcpStatuses = useAppStore((s) => s.mcpStatuses);
 
-  const linkedProject = projects.find((p) => p.id === conversations.find((c) => c.id === currentConversationId)?.projectId);
-  const projectConversations = linkedProject
-    ? conversations.filter((c) => c.projectId === linkedProject.id)
-    : [];
-
-  const recentMessages = currentMessages.slice(-5);
-  const hasToolCalls = currentMessages.some((m) => m.toolCalls && m.toolCalls.length > 0);
+  const conversation = conversations.find((c) => c.id === currentConversationId);
+  const project = projects.find((p) => p.id === conversation?.projectId);
+  const provider = providers.find((p) => p.id === selectedProviderId);
 
   return (
     <div className="p-3 space-y-4 text-xs">
-      {linkedProject && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Current Project</div>
-          <div className="flex items-center gap-2 px-2 py-1 bg-bg-elev rounded">
-            <span>{linkedProject.icon}</span>
-            <span className="font-medium">{linkedProject.name}</span>
-          </div>
-          <div className="mt-1 text-fg-subtle">
-            {projectConversations.length} conversation{projectConversations.length !== 1 ? 's' : ''}
-          </div>
+      <section>
+        <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Active context</div>
+        <div className="px-2 py-2 bg-bg-elev rounded space-y-1.5">
+          <Row label="Provider" value={provider?.name || 'None'} />
+          <Row label="Model" value={selectedModel || 'None'} />
+          <Row label="Project" value={project ? `${project.icon} ${project.name}` : 'Global chat'} />
+          {(project?.path || settings.workingDirectory) && <Row label="Directory" value={project?.path || settings.workingDirectory} />}
+          <Row label="Messages" value={currentMessages.length} />
         </div>
-      )}
+      </section>
 
-      {settings.workingDirectory && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Working Directory</div>
-          <div className="px-2 py-1 bg-bg-elev rounded font-mono text-fg-subtle truncate">
-            {settings.workingDirectory}
-          </div>
+      <section>
+        <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Instruction layers</div>
+        <div className="px-2 py-2 bg-bg-elev rounded space-y-1.5">
+          <Row label="Hive core" value="Active" />
+          <Row label="Conversation" value={conversation?.systemPrompt ? 'Custom' : 'Default'} />
+          <Row label="Project context" value={project ? 'Active' : 'None'} />
+          <Row label="Plan mode" value={planMode ? 'Active' : 'Off'} />
+          <Row label="Approvals" value={settings.toolApprovalMode === 'session' ? 'Once per chat' : settings.toolApprovalMode === 'never' ? 'Never ask' : 'Always ask'} />
         </div>
-      )}
+      </section>
 
-      <div>
-        <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Context Summary</div>
-        <div className="px-2 py-2 bg-bg-elev rounded space-y-1">
-          <div className="flex justify-between">
-            <span className="text-fg-subtle">Messages</span>
-            <span className="font-medium">{currentMessages.length}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-fg-subtle">Tool calls</span>
-            <span className="font-medium">{hasToolCalls ? 'Yes' : 'No'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-fg-subtle">Projects</span>
-            <span className="font-medium">{projects.length}</span>
-          </div>
-        </div>
-      </div>
-
-      {recentMessages.length > 0 && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">Recent Messages</div>
-          <div className="space-y-1">
-            {recentMessages.map((m) => (
-              <div key={m.id} className="px-2 py-1 bg-bg-elev rounded truncate">
-                <span className="text-fg-subtle mr-1">{m.role}:</span>
-                <span className="text-fg">
-                  {typeof m.content === 'string' ? m.content.slice(0, 50) : '[content]'}
-                </span>
+      <section>
+        <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">MCP servers</div>
+        <div className="space-y-1">
+          {mcpStatuses.length === 0 && <div className="px-2 py-2 bg-bg-elev rounded text-fg-subtle">No MCP servers configured</div>}
+          {mcpStatuses.map((server) => (
+            <div key={server.id} className="px-2 py-2 bg-bg-elev rounded">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium truncate">{server.name}</span>
+                <span className={server.connected ? 'text-success' : 'text-danger'}>{server.connected ? 'Connected' : 'Offline'}</span>
               </div>
-            ))}
-          </div>
+              <div className="text-fg-subtle mt-0.5">{server.tools.length} tools</div>
+              {server.error && <div className="text-danger mt-1 break-words">{server.error}</div>}
+            </div>
+          ))}
         </div>
-      )}
-
-      {projects.length > 0 && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">All Projects</div>
-          <div className="space-y-1">
-            {projects.map((p) => (
-              <div key={p.id} className="flex items-center gap-2 px-2 py-1 bg-bg-elev rounded">
-                <span>{p.icon}</span>
-                <span className="flex-1 truncate">{p.name}</span>
-                <span className="text-fg-subtle">{conversations.filter((c) => c.projectId === p.id).length}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      </section>
     </div>
   );
 }

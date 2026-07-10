@@ -1,12 +1,13 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { IPC, type Attachment } from '@shared/types';
-import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname, basename, relative, sep, extname } from 'node:path';
 import { resolveWithinAllowed, getWorkspaceRoot } from '../utils/pathPolicy';
+import { storeAttachment } from '../utils/attachments';
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_READ_CHARS = 5_000_000;
 const MAX_DIRECTORY_ENTRIES = 1_000;
 
@@ -133,20 +134,24 @@ export function registerFsHandlers(): void {
     if (r.canceled || r.filePaths.length === 0) return null;
 
     const out: Attachment[] = [];
+    let totalBytes = 0;
     for (const filePath of r.filePaths) {
       const info = await stat(filePath);
       if (info.size > MAX_ATTACHMENT_BYTES) {
         throw new Error(`File too large (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB): ${basename(filePath)}`);
       }
+      totalBytes += info.size;
+      if (totalBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
+        throw new Error(`Attachments exceed the ${MAX_ATTACHMENTS_TOTAL_BYTES / (1024 * 1024)} MB message limit`);
+      }
       const buf = await readFile(filePath);
       const known = MIME_BY_EXT[extname(filePath).toLowerCase()];
       out.push({
-        id: randomUUID(),
+        id: await storeAttachment(buf),
         type: known?.type ?? 'file',
         filename: basename(filePath),
         mimeType: known?.mime ?? 'application/octet-stream',
-        size: buf.length,
-        data: buf.toString('base64')
+        size: buf.length
       });
     }
     return out;

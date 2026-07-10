@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../stores/app';
-import type { Attachment } from '@shared/types';
+import type { Attachment, ContentPart } from '@shared/types';
 import { ComposerToolbar } from './ComposerToolbar';
 import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
@@ -183,18 +183,15 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       return;
     }
 
+    const attachmentParts = pendingAttachments.map((a): ContentPart => ({
+      type: 'attachment_ref',
+      attachment: { id: a.id, type: a.type, filename: a.filename, mimeType: a.mimeType, size: a.size }
+    }));
     const userMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
       content: pendingAttachments.length > 0
-        ? [
-            { type: 'text', text: content },
-            ...pendingAttachments.map((a) =>
-              a.type === 'image' ? { type: 'image_url', image_url: { url: `data:${a.mimeType};base64,${a.data}` } } :
-              a.type === 'audio' ? { type: 'input_audio', input_audio: { data: a.data, format: 'mp3' as const } } :
-              { type: 'file', file: { filename: a.filename, data: a.data, mimeType: a.mimeType } }
-            )
-          ]
+        ? [{ type: 'text', text: content } as ContentPart, ...attachmentParts]
         : content,
       createdAt: Date.now()
     };
@@ -263,13 +260,6 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       }
     }
 
-    // Plan-mode system prompt
-    let systemPrompt = skillName ? `Active skill: ${skillName}` : undefined;
-    if (composerPlanMode && !skillName) {
-      systemPrompt = (systemPrompt ? systemPrompt + '\n' : '') +
-        'Plan mode is enabled. Think step-by-step and present a plan (numbered steps) before taking any action. Wait for user confirmation before executing tools.';
-    }
-
     // Composer agent persona — resolved here, layered onto the base prompt in main.
     const activeAgent = resolveAgent(state.composerAgent, settings.customAgents);
     const agentPrompt = activeAgent.prompt.trim() || undefined;
@@ -293,7 +283,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
     // If the user message had a slash skill or shell command, the displayed
     // message keeps the raw text; the prompt sent to the model is expanded below.
-    const sendContent = skillName || shellMatch ? prompt : userMsg.content;
+    const sendContent = skillName || shellMatch
+      ? attachmentParts.length > 0
+        ? [{ type: 'text', text: prompt } as ContentPart, ...attachmentParts]
+        : prompt
+      : userMsg.content;
     const sendMsg = { ...userMsg, content: sendContent };
     void extractedText;
 
@@ -321,11 +315,8 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
         providerId,
         model,
         messages: messagesToSend,
-        attachments: pendingAttachments.map((a) => ({ type: a.type, filename: a.filename, mimeType: a.mimeType, data: a.data })),
-        systemPrompt,
         agentPrompt,
         planMode: composerPlanMode || undefined,
-        toolApprovalModeOverride: settings.toolApprovalMode,
         reasoning
       });
       setText('');
@@ -353,12 +344,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       if (files) {
         for (const f of files) {
           addAttachment({
-            id: crypto.randomUUID(),
+            id: f.id,
             type: f.type as Attachment['type'],
             filename: f.filename,
             mimeType: f.mimeType,
-            size: f.data.length,
-            data: f.data
+            size: f.size
           });
         }
       }
@@ -369,33 +359,12 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     void abortChat();
   };
 
-  // OS file drop → attach. Directories arrive with size 0 and no type; skip them.
-  const handleFileDrop = async (e: React.DragEvent): Promise<void> => {
+  const handleFileDrop = (e: React.DragEvent): void => {
     e.preventDefault();
     setFileDropActive(false);
-    const files = Array.from(e.dataTransfer.files);
-    for (const f of files) {
-      if (f.size === 0 && !f.type) continue;
-      if (f.size > 20 * 1024 * 1024) {
-        useAppStore.getState().setChatError(`"${f.name}" is larger than 20 MB — attach a smaller file.`);
-        continue;
-      }
-      try {
-        const data = await fileToBase64(f);
-        const type: Attachment['type'] =
-          f.type.startsWith('image/') ? 'image' :
-          f.type.startsWith('audio/') ? 'audio' :
-          f.type === 'application/pdf' ? 'pdf' : 'file';
-        addAttachment({
-          id: crypto.randomUUID(),
-          type,
-          filename: f.name,
-          mimeType: f.type || 'application/octet-stream',
-          size: f.size,
-          data
-        });
-      } catch { /* unreadable file — skip */ }
-    }
+    // ponytail: dropped File objects have no safe attachment-store IPC; restore
+    // direct drop when main can persist bytes before a message references them.
+    useAppStore.getState().setChatError('Use + → Attach file so Hive can store the attachment securely.');
   };
 
   // Live dictation: VoiceInput emits the full transcript of the current
@@ -476,11 +445,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
                 className={`flex items-center gap-1.5 bg-bg-elev border rounded-lg pl-1.5 pr-1 py-1 text-xs shadow-elev-sm animate-fade-in cursor-grab active:cursor-grabbing ${
                   dragIdx === i ? 'opacity-40 border-accent/60' : 'border-border'
                 }`}>
-                {a.type === 'image' ? (
-                  <img src={`data:${a.mimeType};base64,${a.data}`} alt={a.filename} className="w-7 h-7 object-cover rounded-md" />
-                ) : (
-                  <span className="w-7 h-7 rounded-md bg-accent-soft text-accent flex items-center justify-center text-[9px] font-mono uppercase">{a.type.slice(0, 3)}</span>
-                )}
+                <span className="w-7 h-7 rounded-md bg-accent-soft text-accent flex items-center justify-center text-[9px] font-mono uppercase">{a.type.slice(0, 3)}</span>
                 <span className="text-fg-muted truncate max-w-32">{a.filename}</span>
                 <button
                   onClick={() => removeAttachment(a.id)}
@@ -506,7 +471,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
           onDragLeave={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) setFileDropActive(false);
           }}
-          onDrop={(e) => { if (dragIdx === null) void handleFileDrop(e); }}
+          onDrop={(e) => { if (dragIdx === null) handleFileDrop(e); }}
           className={`bg-bg-input border rounded-2xl shadow-composer transition-all duration-200 focus-within:border-accent/70 focus-within:shadow-[0_0_0_3px_var(--accent-soft),var(--shadow-composer)] ${
             fileDropActive ? 'border-accent border-dashed bg-accent-soft' : composerFocusMode ? 'border-accent/60' : 'border-border'
           }`}
@@ -629,19 +594,6 @@ function GhPreviewModal({ url, onClose, onInsert }: { url: string; onClose: () =
       </div>
     </div>
   );
-}
-
-// Read a dropped File into base64 (dataURL minus the "data:...;base64," prefix).
-function fileToBase64(f: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => {
-      const s = r.result as string;
-      resolve(s.slice(s.indexOf(',') + 1));
-    };
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(f);
-  });
 }
 
 function StreamingTimer(): JSX.Element {

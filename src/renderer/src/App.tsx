@@ -17,6 +17,7 @@ import { SearchDialog } from './components/SearchDialog';
 import { ComparePanel } from './components/ComparePanel';
 import { SwarmModal } from './components/SwarmModal';
 import { CommandPalette } from './components/CommandPalette';
+import { AgentBar } from './components/AgentBar';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
@@ -68,7 +69,10 @@ export default function App(): JSX.Element {
     void loadConversations();
     void loadTools();
 
-    const offMcp = window.hive.onMcpChanged(() => loadMcpStatuses());
+    const offMcp = window.hive.onMcpChanged(() => {
+      void loadMcpStatuses();
+      void loadTools();
+    });
     const offModels = window.hive.onModelsUpdated(() => loadProviders());
     const offMenu = window.hive.onMenu((action) => {
       if (action === 'new-conversation') void useAppStore.getState().createConversation();
@@ -120,6 +124,7 @@ export default function App(): JSX.Element {
       <ComparePanel />
       <SwarmModal />
       <CommandPalette />
+      <AgentBar />
       <style>{`
         body.focus-mode [data-sidebar-panel],
         body.focus-mode [data-vision-panel] {

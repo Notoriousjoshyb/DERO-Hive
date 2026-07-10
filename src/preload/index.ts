@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type Attachment, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
   // Chat
-  chatSend: (req: { conversationId: string; providerId: string; model: string; messages: Message[]; systemPrompt?: string; temperature?: number; topP?: number; maxTokens?: number; tools?: ToolDefinition[]; reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> }; attachments?: { type: string; filename: string; mimeType: string; data: string }[]; skipUserPersist?: boolean }) =>
+  chatSend: (req: ChatRequest) =>
     ipcRenderer.invoke(IPC.CHAT_SEND, req),
-  chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: string | Array<{ type: string; text?: string; image_url?: { url: string }; input_audio?: { data: string; format: string }; file?: { filename: string; data: string; mimeType: string } }>; createdAt: number }) =>
+  chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: Message['content']; createdAt: number }) =>
     ipcRenderer.invoke(IPC.CHAT_QUEUE_MESSAGE, conversationId, message),
   chatAbort: (conversationId: string) => ipcRenderer.invoke(IPC.CHAT_ABORT, conversationId),
   onChatStream: (cb: (e: StreamEvent) => void) => {
@@ -58,6 +58,9 @@ const api = {
   mcpConnect: (id: string) => ipcRenderer.invoke(IPC.MCP_CONNECT, id),
   mcpDisconnect: (id: string) => ipcRenderer.invoke(IPC.MCP_DISCONNECT, id),
   mcpStatus: () => ipcRenderer.invoke(IPC.MCP_STATUS),
+  mcpRegistry: (): Promise<McpRegistry> => ipcRenderer.invoke(IPC.MCP_REGISTRY),
+  mcpImportPick: (): Promise<McpImportPickResult> => ipcRenderer.invoke(IPC.MCP_IMPORT_PICK),
+  mcpImport: (token: string, replace: boolean): Promise<McpImportResult> => ipcRenderer.invoke(IPC.MCP_IMPORT, { token, replace }),
   onMcpChanged: (cb: (statuses: McpServerStatus[]) => void) => {
     const l = (_: IpcRendererEvent, d: McpServerStatus[]) => cb(d);
     ipcRenderer.on(IPC.MCP_CHANGED, l);
@@ -68,6 +71,10 @@ const api = {
   skillList: () => ipcRenderer.invoke(IPC.SKILL_LIST),
   skillSave: (s: Skill) => ipcRenderer.invoke(IPC.SKILL_SAVE, s),
   skillDelete: (id: string) => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
+  skillRescan: (): Promise<Skill[]> => ipcRenderer.invoke(IPC.SKILL_RESCAN),
+  skillOpenDir: () => ipcRenderer.invoke(IPC.SKILL_OPEN_DIR),
+  skillImportPick: (): Promise<SkillImportPickResult> => ipcRenderer.invoke(IPC.SKILL_IMPORT_PICK),
+  skillImport: (sourceDir: string): Promise<SkillImportResult> => ipcRenderer.invoke(IPC.SKILL_IMPORT, sourceDir),
 
   // Prompt library
   promptList: () => ipcRenderer.invoke(IPC.PROMPT_LIST),
@@ -81,7 +88,8 @@ const api = {
 
   // Tools
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),
-  toolPermissionDecide: (rule: PermissionRule) => ipcRenderer.invoke(IPC.TOOL_PERMISSION_DECIDE, rule),
+  toolPermissionDecide: (decision: { requestId: string; decision: 'allow' | 'deny' }) =>
+    ipcRenderer.invoke(IPC.TOOL_PERMISSION_DECIDE, decision),
   onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => {
     const l = (_: IpcRendererEvent, d: any) => cb(d);
     ipcRenderer.on(IPC.TOOL_PERMISSION_REQUEST, l);
@@ -112,12 +120,17 @@ const api = {
   terminalDispose: (sessionId: string) => ipcRenderer.invoke(IPC.TERMINAL_DISPOSE, sessionId),
   ghFetchUrl: (url: string) => ipcRenderer.invoke(IPC.GH_FETCH_URL, url),
 
+  // Agent mode
+  agentProxyStart: (providerId: string): Promise<{ ok: boolean; port?: number; token?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_PROXY_START, providerId),
+  agentProxyStop: () => ipcRenderer.invoke(IPC.AGENT_PROXY_STOP),
+
   // Settings
   settingsGet: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   settingsSet: (s: Partial<AppSettings>) => ipcRenderer.invoke(IPC.SETTINGS_SET, s),
 
   // Attachments
-  attachFromFile: () => ipcRenderer.invoke(IPC.ATTACH_FROM_FILE),
+  attachFromFile: (): Promise<Attachment[] | null> => ipcRenderer.invoke(IPC.ATTACH_FROM_FILE),
 
   // Artifacts
   artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) =>

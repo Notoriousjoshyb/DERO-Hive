@@ -42,7 +42,6 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const customAgents = settings.customAgents || [];
   const allAgents = [...BUILTIN_AGENTS, ...customAgents];
   const activeAgent = resolveAgent(agent, customAgents);
-
   const provider = providers.find((p) => p.id === selectedProviderId);
   const selectedProviderModel = provider?.models.find((model) => model.id === selectedModel);
   const thinkingOptions = thinkingOptionsFor(
@@ -93,14 +92,15 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   }, []);
 
   const cyclePermMode = async (): Promise<void> => {
-    const order: Array<'always' | 'project' | 'never'> = ['always', 'project', 'never'];
-    const cur = settings.toolApprovalMode || 'always';
+    const order = ['always', 'session', 'never'] as const;
+    const cur = settings.toolApprovalMode === 'project' ? 'session' : settings.toolApprovalMode || 'always';
     const next = order[(order.indexOf(cur) + 1) % order.length];
     await useAppStore.getState().updateSettings({ toolApprovalMode: next });
   };
 
-  const permLabel = settings.toolApprovalMode === 'never' ? 'No approval'
-    : settings.toolApprovalMode === 'project' ? 'Ask once/session'
+  const approvalMode = settings.toolApprovalMode === 'project' ? 'session' : settings.toolApprovalMode;
+  const permLabel = approvalMode === 'never' ? 'No approval'
+    : approvalMode === 'session' ? 'Ask once/chat'
     : 'Always ask';
 
   const loadCodexThinking = async (): Promise<void> => {
@@ -155,14 +155,14 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
           {permMenuOpen && (
             <div className="absolute bottom-full left-0 mb-1 menu-panel overflow-hidden min-w-52 z-50">
               <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Tool approval</div>
-              {(['always', 'project', 'never'] as const).map((mode) => (
+              {(['always', 'session', 'never'] as const).map((mode) => (
                 <button
                   key={mode}
                   onClick={async () => { await useAppStore.getState().updateSettings({ toolApprovalMode: mode }); closeAll(); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-bg-input ${settings.toolApprovalMode === mode ? 'text-accent' : 'text-fg'}`}
+                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-bg-input ${approvalMode === mode ? 'text-accent' : 'text-fg'}`}
                 >
-                  <span>{mode === 'always' ? 'Always ask' : mode === 'project' ? 'Ask once per session' : 'Never ask (trust all)'}</span>
-                  {settings.toolApprovalMode === mode && <CheckMark />}
+                  <span>{mode === 'always' ? 'Always ask' : mode === 'session' ? 'Ask once per chat' : 'Skip implicit prompts'}</span>
+                  {approvalMode === mode && <CheckMark />}
                 </button>
               ))}
               <button

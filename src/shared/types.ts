@@ -2,11 +2,20 @@
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface StoredAttachment {
+  id: string;
+  type: 'image' | 'audio' | 'pdf' | 'file';
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } }
   | { type: 'input_audio'; input_audio: { data: string; format: 'wav' | 'mp3' } }
-  | { type: 'file'; file: { filename: string; data: string; mimeType: string } };
+  | { type: 'file'; file: { filename: string; data: string; mimeType: string } }
+  | { type: 'attachment_ref'; attachment: StoredAttachment };
 
 export interface Message {
   id: string;
@@ -67,6 +76,7 @@ export interface ChatRequest {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
+  /** @deprecated Compatibility-only additive request instructions; main never uses this as the base prompt. */
   systemPrompt?: string;
   /** Persona prompt from the composer's agent picker — layered on top of the base system prompt in main. */
   agentPrompt?: string;
@@ -75,7 +85,8 @@ export interface ChatRequest {
   /** Optional per-request cap used by orchestrators such as Swarm. */
   maxAgenticRounds?: number;
   planMode?: boolean;
-  toolApprovalModeOverride?: 'always' | 'project' | 'never';
+  /** @deprecated Ignored by main; renderer requests cannot weaken persisted approval policy. */
+  toolApprovalModeOverride?: ToolApprovalMode;
   attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
   /** When regenerating from an edited message, skip persisting the last user message again. */
   skipUserPersist?: boolean;
@@ -144,18 +155,39 @@ export interface ProviderConfig {
   modelsFetchedAt?: number;
 }
 
-// MCP server config (matches Claude Desktop format)
-export interface McpServerConfig {
+interface McpServerConfigBase {
   id: string;
   name: string;
   enabled: boolean;
+  timeoutMs?: number;
+  trust?: boolean;
+  env?: Record<string, string>; // write-only; values are never returned to renderer
+  envKeys?: string[];
+}
+
+export interface StdioMcpServerConfig extends McpServerConfigBase {
+  transport?: 'stdio';
   command: string;
   args?: string[];
-  env?: Record<string, string>;
   cwd?: string;
-  timeoutMs?: number;
-  trust?: boolean; // skip tool confirmations
+  url?: never;
+  bearerToken?: never;
+  hasBearerToken?: never;
+  clearBearerToken?: never;
 }
+
+export interface HttpMcpServerConfig extends McpServerConfigBase {
+  transport: 'http';
+  url: string;
+  bearerToken?: string; // write-only; encrypted before persistence
+  hasBearerToken?: boolean;
+  clearBearerToken?: boolean;
+  command?: never;
+  args?: never;
+  cwd?: never;
+}
+
+export type McpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig;
 
 export interface McpServerStatus {
   id: string;
@@ -165,6 +197,33 @@ export interface McpServerStatus {
   tools: ToolDefinition[];
   resources: { name: string; uri: string; description?: string; mimeType?: string }[];
   prompts: { name: string; description?: string; arguments?: unknown[] }[];
+}
+
+export interface McpRegistryEntry {
+  id: string;
+  name: string;
+  description: string;
+  repo: string;
+  license: string;
+  runtime: 'node' | 'python' | 'http';
+  install:
+    | { transport?: 'stdio'; command: string; args: string[] }
+    | { transport: 'http'; url: string };
+  requiresConfig?: string;
+  category: string;
+  local: boolean;
+  windows: boolean;
+  stars?: number;
+  verified?: string;
+  tags?: string[];
+}
+
+export interface McpRegistry {
+  version: number;
+  updatedAt: string;
+  description?: string;
+  notes?: string[];
+  servers: McpRegistryEntry[];
 }
 
 // Composer agent — a named persona (system prompt preset) selectable in the
@@ -187,7 +246,47 @@ export interface Skill {
   enabled: boolean;
   builtin?: boolean;
   category?: string;
+  sourceDir?: string;
 }
+
+export interface McpImportPreview {
+  token: string;
+  sourceName: string;
+  servers: Array<{
+    id: string;
+    name: string;
+    transport: 'stdio' | 'http';
+    endpoint: string;
+    envKeys: string[];
+    conflict: boolean;
+  }>;
+  warnings: string[];
+}
+
+export type McpImportPickResult =
+  | { ok: true; preview: McpImportPreview }
+  | { ok: false; cancelled?: boolean; error?: string };
+
+export type McpImportResult =
+  | { ok: true; imported: number; skipped: number }
+  | { ok: false; error: string };
+
+export interface SkillImportPreview {
+  sourceDir: string;
+  name: string;
+  description: string;
+  slashCommand: string;
+  prompt: string;
+  warnings: string[];
+}
+
+export type SkillImportPickResult =
+  | { ok: true; preview: SkillImportPreview }
+  | { ok: false; cancelled?: boolean; error?: string };
+
+export type SkillImportResult =
+  | { ok: true; skill: Skill }
+  | { ok: false; error: string };
 
 // Reusable prompt template (Prompt Library). Inserted via the "#" composer
 // trigger; {{clipboard}} and {{date}} interpolate at insert time.
@@ -239,6 +338,12 @@ export interface PermissionRule {
   projectPath?: string;
 }
 
+export type ToolApprovalMode = 'always' | 'session' | 'project' | 'never';
+
+export function normalizeToolApprovalMode(value: unknown): ToolApprovalMode {
+  return value === 'session' || value === 'project' || value === 'never' ? value : 'always';
+}
+
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system';
   fontSize: 'small' | 'medium' | 'large';
@@ -258,7 +363,7 @@ export interface AppSettings {
   maxConcurrentToolCalls: number;
   /** Maximum model → tools → model cycles for one submitted task (1–50). */
   maxAgenticRounds: number;
-  toolApprovalMode: 'always' | 'project' | 'never';
+  toolApprovalMode: ToolApprovalMode;
   workingDirectory?: string;
   codeFolder?: string; // last folder opened in the Code tab explorer (persists across sessions)
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
@@ -267,6 +372,7 @@ export interface AppSettings {
   themePreset?: string; // preset theme name (e.g., 'solarized', 'nord', 'catppuccin', 'gruvbox')
   telemetry: boolean;
   experimentalFeatures: boolean;
+  agentModeEnabled?: boolean;
   // Composer (per-session, but persists in settings)
   composerFocusMode?: boolean;
   composerPlanMode?: boolean;
@@ -295,15 +401,7 @@ export interface AppSettings {
   monthlyTokenBudget?: number; // 0 = off
 }
 
-export interface Attachment {
-  id: string;
-  type: 'image' | 'audio' | 'pdf' | 'file';
-  filename: string;
-  mimeType: string;
-  size: number;
-  // base64 data
-  data: string;
-}
+export type Attachment = StoredAttachment;
 
 export interface Artifact {
   id: string;
@@ -388,11 +486,18 @@ export const IPC = {
   MCP_DISCONNECT: 'mcp:disconnect',
   MCP_STATUS: 'mcp:status',
   MCP_CHANGED: 'mcp:changed', // event
+  MCP_REGISTRY: 'mcp:registry',
+  MCP_IMPORT_PICK: 'mcp:import-pick',
+  MCP_IMPORT: 'mcp:import',
 
   // Skills
   SKILL_LIST: 'skill:list',
   SKILL_SAVE: 'skill:save',
   SKILL_DELETE: 'skill:delete',
+  SKILL_RESCAN: 'skill:rescan',
+  SKILL_OPEN_DIR: 'skill:open-dir',
+  SKILL_IMPORT_PICK: 'skill:import-pick',
+  SKILL_IMPORT: 'skill:import',
 
   // Prompt library
   PROMPT_LIST: 'prompt:list',
@@ -422,6 +527,10 @@ export const IPC = {
   TERMINAL_EXEC: 'terminal:exec',
   TERMINAL_DISPOSE: 'terminal:dispose',
   GH_FETCH_URL: 'gh:fetchUrl',
+
+  // Agent mode (in-page GUI agent)
+  AGENT_PROXY_START: 'agent:proxy-start',
+  AGENT_PROXY_STOP: 'agent:proxy-stop',
 
   // Settings
   SETTINGS_GET: 'settings:get',

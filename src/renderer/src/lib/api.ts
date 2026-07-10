@@ -1,16 +1,22 @@
 import type {
   BookmarkEntry,
   ChatRequest,
+  Attachment,
   Conversation,
   Message,
+  McpImportPickResult,
+  McpImportResult,
   McpServerConfig,
   McpServerStatus,
+  McpRegistry,
   ProviderConfig,
   ProviderModel,
   ProviderPreset,
   Project,
   PromptTemplate,
   Skill,
+  SkillImportPickResult,
+  SkillImportResult,
   AppSettings,
   Artifact,
   ToolDefinition,
@@ -25,8 +31,8 @@ import type {
 declare global {
   interface Window {
     hive: {
-      chatSend: (req: ChatRequest & { attachments?: Array<{ type: string; filename: string; mimeType: string; data: string }>; skipUserPersist?: boolean }) => Promise<{ messageId: string }>;
-      chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: string | Array<{ type: string; text?: string; image_url?: { url: string }; input_audio?: { data: string; format: string }; file?: { filename: string; data: string; mimeType: string } }>; createdAt: number }) => Promise<void>;
+      chatSend: (req: ChatRequest) => Promise<{ messageId: string }>;
+      chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: Message['content']; createdAt: number }) => Promise<void>;
       chatAbort: (id: string) => Promise<{ ok: boolean }>;
       onChatStream: (cb: (e: StreamEvent) => void) => () => void;
 
@@ -59,16 +65,26 @@ declare global {
         Promise<{ ok: boolean; error?: string; models?: string[] }>;
 
       mcpList: () => Promise<McpServerConfig[]>;
-      mcpSave: (cfg: McpServerConfig) => Promise<{ ok: boolean }>;
+      mcpSave: (cfg: McpServerConfig) => Promise<{ ok: boolean; cancelled?: boolean }>;
       mcpDelete: (id: string) => Promise<{ ok: boolean }>;
       mcpConnect: (id: string) => Promise<{ ok: boolean }>;
       mcpDisconnect: (id: string) => Promise<{ ok: boolean }>;
       mcpStatus: () => Promise<McpServerStatus[]>;
+      mcpRegistry: () => Promise<McpRegistry>;
+      mcpImportPick: () => Promise<McpImportPickResult>;
+      mcpImport: (token: string, replace: boolean) => Promise<McpImportResult>;
       onMcpChanged: (cb: (s: McpServerStatus[]) => void) => () => void;
 
       skillList: () => Promise<Skill[]>;
       skillSave: (s: Skill) => Promise<Skill>;
       skillDelete: (id: string) => Promise<{ ok: boolean }>;
+      skillRescan: () => Promise<Skill[]>;
+      skillOpenDir: () => Promise<{ ok: boolean; error?: string }>;
+      skillImportPick: () => Promise<SkillImportPickResult>;
+      skillImport: (sourceDir: string) => Promise<SkillImportResult>;
+
+      agentProxyStart: (providerId: string) => Promise<{ ok: boolean; port?: number; token?: string; error?: string }>;
+      agentProxyStop: () => Promise<{ ok: boolean }>;
 
       projectList: () => Promise<Project[]>;
       projectSave: (p: Project) => Promise<Project>;
@@ -101,7 +117,7 @@ declare global {
       settingsGet: () => Promise<AppSettings>;
       settingsSet: (s: Partial<AppSettings>) => Promise<AppSettings>;
 
-      attachFromFile: () => Promise<Array<{ type: string; filename: string; mimeType: string; data: string }> | null>;
+      attachFromFile: () => Promise<Attachment[] | null>;
 
       artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) => Promise<{ id: string }>;
       artifactList: (conversationId?: string) => Promise<Artifact[]>;

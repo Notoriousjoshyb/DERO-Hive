@@ -3,6 +3,7 @@ import { IPC, type Conversation, type Message } from '@shared/types';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client';
 import { closeConversationSessions } from '../providers/registry';
+import { deleteStoredAttachments, serializedAttachmentIds } from '../utils/attachments';
 
 export function registerConvHandlers(): void {
   ipcMain.handle(IPC.CONV_LIST, (_e, opts?: { archived?: boolean; projectPath?: string }) => {
@@ -66,9 +67,20 @@ export function registerConvHandlers(): void {
 
   ipcMain.handle(IPC.CONV_DELETE, async (_e, id: string) => {
     await closeConversationSessions(id);
-    getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id);
-    getDb().prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
-    getDb().prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(id);
+    const db = getDb();
+    const removed = db.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(id) as Array<{ content: string }>;
+    const candidateIds = removed.flatMap((row) => serializedAttachmentIds(row.content));
+    db.prepare('DELETE FROM conversations WHERE id = ?').run(id);
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+    db.prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(id);
+
+    // ponytail: a full content scan is fine at local-chat scale; add an
+    // attachment table only if profiling proves this scan is material.
+    const referenced = new Set(
+      (db.prepare("SELECT content FROM messages WHERE content LIKE '%attachment_ref%'").all() as Array<{ content: string }>)
+        .flatMap((row) => serializedAttachmentIds(row.content))
+    );
+    await deleteStoredAttachments(candidateIds.filter((attachmentId) => !referenced.has(attachmentId)));
     return { ok: true };
   });
 

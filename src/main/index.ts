@@ -19,7 +19,8 @@ import { registerGithubHandlers } from './ipc/github';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerWhisperHandlers } from './ipc/whisper';
 import { registerSimulatorHandlers } from './ipc/simulator';
-import { initDb, closeDb, getSetting } from './db/client';
+import { registerAgentHandlers } from './ipc/agent';
+import { initDb, closeDb, getDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
 import { ensureDirs } from './utils/paths';
@@ -29,6 +30,7 @@ import { SimulatorManager } from './simulator/manager';
 import { BrowserBridge } from './browserBridge';
 import { terminalDisposeAll } from './terminal/session';
 import { shutdownAdapterCache } from './providers/registry';
+import { cleanupAttachmentFiles, serializedAttachmentIds } from './utils/attachments';
 import type { AppSettings } from '../shared/types';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -53,7 +55,7 @@ async function createMainWindow(): Promise<void> {
     icon: join(__dirname, '../../resources/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
       // No <webview> is used anywhere in the renderer; leaving the tag enabled
@@ -237,6 +239,11 @@ app.whenReady().then(async () => {
   // Init DB + secrets BEFORE registering handlers
   await initDb();
   await initSecrets();
+  const attachmentRefs = new Set(
+    (getDb().prepare("SELECT content FROM messages WHERE content LIKE '%attachment_ref%'").all() as Array<{ content: string }>)
+      .flatMap((row) => serializedAttachmentIds(row.content))
+  );
+  await cleanupAttachmentFiles(attachmentRefs);
 
   // Init MCP manager. Connect to enabled servers in the background so a slow
   // or failing server (e.g., dero-mcp-server) never blocks the window from showing.
@@ -278,6 +285,7 @@ app.whenReady().then(async () => {
   registerProjectHandlers();
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
+  registerAgentHandlers();
   ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120 });
   ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120 });
   ipcMain.handle(IPC.BROWSER_BRIDGE_BIND, (_event, requestId: string, conversationId: string) => browserBridge?.bind(requestId, conversationId) ?? { ok: false });

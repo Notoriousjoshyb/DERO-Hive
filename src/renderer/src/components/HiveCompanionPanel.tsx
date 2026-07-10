@@ -10,6 +10,13 @@ interface ContextNote {
   text: string;
 }
 
+interface BrowserBridgeStatus {
+  enabled: boolean;
+  port: number;
+  pairingCode?: string;
+  paired?: boolean;
+}
+
 const QUICK_ACTIONS = [
   { label: 'Summarize', prompt: 'Summarize the supplied workspace context. Lead with the important facts and decisions.' },
   { label: 'Explain', prompt: 'Explain the supplied workspace context clearly, including any assumptions or gaps.' },
@@ -24,12 +31,14 @@ export function HiveCompanionPanel(): JSX.Element {
   const [notes, setNotes] = useState<ContextNote[]>([]);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ title: '', url: '', text: '' });
-  const [bridge, setBridge] = useState<{ enabled: boolean; port: number; pairingCode?: string }>({ enabled: false, port: 43120 });
+  const [bridge, setBridge] = useState<BrowserBridgeStatus>({ enabled: false, port: 43120 });
 
   useEffect(() => {
     let active = true;
-    void window.hive.browserBridgeSetEnabled(true).then((status) => { if (active) setBridge(status); });
-    return () => { active = false; };
+    const update = (status: BrowserBridgeStatus): void => { if (active) setBridge(status); };
+    void window.hive.browserBridgeSetEnabled(true).then(update);
+    const timer = window.setInterval(() => void window.hive.browserBridgeStatus().then(update), 2000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   const chatExcerpt = useMemo(() => messages.slice(-4).map((message) => {
@@ -84,11 +93,18 @@ export function HiveCompanionPanel(): JSX.Element {
           <div className="flex items-center justify-between gap-2">
             <div>
               <h3 className="text-xs font-semibold text-fg">Browser Companion bridge</h3>
-              <p className="mt-0.5 text-[10px] text-fg-subtle">{bridge.enabled ? 'Local-only bridge is ready' : 'Starting local-only bridge…'}</p>
+              <p className="mt-0.5 text-[10px] text-fg-subtle">{bridge.enabled ? bridge.paired ? 'Browser extension paired' : 'Local bridge is waiting to pair' : 'Starting local-only bridge…'}</p>
             </div>
             <span className={`h-2 w-2 rounded-full ${bridge.enabled ? 'bg-success' : 'bg-warn animate-pulse'}`} />
           </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">The DERO Hive Browser Companion connects automatically whenever the app is running.</p>
+          {bridge.pairingCode ? (
+            <div className="mt-2 rounded-lg border border-success/25 bg-bg/70 p-2 text-center">
+              <div className="font-mono text-sm font-semibold tracking-widest text-fg">{bridge.pairingCode}</div>
+              <p className="mt-1 text-[10px] leading-relaxed text-fg-muted">Enter this one-time code in the extension’s Companion settings.</p>
+            </div>
+          ) : (
+            <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">{bridge.paired ? 'The saved extension credential reconnects automatically after restarts.' : 'Open the Browser Companion settings to finish pairing.'}</p>
+          )}
         </section>
 
         <section className="rounded-xl border border-accent/25 bg-accent-soft/30 p-3">
