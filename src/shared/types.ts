@@ -199,6 +199,13 @@ export interface McpServerStatus {
   prompts: { name: string; description?: string; arguments?: unknown[] }[];
 }
 
+export interface BrowserBridgeStatus {
+  enabled: boolean;
+  port: number;
+  pairingCode?: string;
+  paired: boolean;
+}
+
 export interface McpRegistryEntry {
   id: string;
   name: string;
@@ -553,6 +560,7 @@ export const IPC = {
   APP_VERSION: 'app:version',
   BROWSER_BRIDGE_SET_ENABLED: 'browserBridge:setEnabled',
   BROWSER_BRIDGE_STATUS: 'browserBridge:status',
+  BROWSER_BRIDGE_REVOKE: 'browserBridge:revoke',
   BROWSER_BRIDGE_BIND: 'browserBridge:bind',
   BROWSER_BRIDGE_SELECTION: 'browserBridge:selection',
   UPDATE_CHECK: 'update:check',

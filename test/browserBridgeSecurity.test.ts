@@ -2,14 +2,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 
+const persisted = vi.hoisted(() => ({ key: '', value: undefined as unknown }));
+
 vi.mock('../src/main/db/client', () => ({
   getDb: () => ({ prepare: () => ({ all: () => [] }) }),
   getSetting: () => null,
-  setSetting: () => undefined
+  setSetting: (key: string, value: unknown) => { persisted.key = key; persisted.value = value; }
 }));
 vi.mock('../src/main/ipc/chat', () => ({ onChatStreamEvent: () => () => undefined }));
 
-const { allowedExtensionOrigin, clientTokenMatches, hashClientToken, isAllowedBridgeHost } =
+const { BrowserBridge, allowedExtensionOrigin, clientTokenMatches, hashClientToken, isAllowedBridgeHost } =
   await import('../src/main/browserBridge');
 
 describe('Browser Companion bridge security', () => {
@@ -33,5 +35,16 @@ describe('Browser Companion bridge security', () => {
     expect(bridge).not.toContain("Access-Control-Allow-Origin', '*'");
     expect(panel).not.toContain('EventSource(');
     expect(panel).not.toMatch(/[?&]token=/);
+  });
+
+  test('revoking pairing clears the persisted credential', () => {
+    const bridge = new BrowserBridge(() => null);
+
+    const status = bridge.revokePairing();
+
+    expect(status.paired).toBe(false);
+    expect(status.enabled).toBe(false);
+    expect(persisted).toEqual({ key: 'browserBridgePairing', value: null });
+    bridge.dispose();
   });
 });

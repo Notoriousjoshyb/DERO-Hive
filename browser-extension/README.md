@@ -9,11 +9,12 @@ A standalone Chrome/Edge side-panel extension that puts the current web page int
 3. Click **Load unpacked**.
 4. Choose this `browser-extension` folder.
 5. Pin **DERO Hive Browser Companion**, open any normal website, then click the extension icon or press **Alt+H**.
-6. Press **Refresh** in the side panel (or **✂ Snip** to drag-select part of a page), add a task or dictate it, then click **Send to Hive**.
+6. Open **Hive Companion** in DERO Hive and copy its one-time code into the extension's **Companion settings**, then click **Pair**.
+7. Press **Refresh** in the side panel (or **✂ Snip** to drag-select part of a page), add a task or dictate it, then click **Send to Hive**.
 
 ## Direct DERO Hive connection
 
-Pairing is automatic. While the DERO Hive desktop app is running, its loopback bridge (`127.0.0.1:43120`) hands the extension an ephemeral pairing token, and the panel switches from **Copy to Hive** to **Send to Hive**. No code needs to be copied.
+Pairing requires the one-time code displayed by Hive Companion. After the user enters it in the extension settings, Hive issues a random client credential bound to that extension's origin. The extension keeps the credential in local extension storage; Hive persists only its cryptographic hash and the paired origin, so reconnecting works after an app restart without exposing the credential in Hive's database.
 
 While connected:
 
@@ -22,7 +23,7 @@ While connected:
 - **Voice dictation** — recorded audio is transcribed by DERO Hive's bundled local Whisper (fully offline). The first use opens a one-time microphone-permission tab.
 - **Single agent guarantee** — requests from the extension always run as a single agent in DERO Hive, never a swarm, and never steal focus from your browser.
 
-The bridge listens only on `127.0.0.1` for the lifetime of the app and accepts requests only with its temporary pairing token, which changes whenever DERO Hive restarts.
+The bridge listens only on `127.0.0.1` for the lifetime of the app. Every route checks the loopback host, paired extension origin, and bearer credential. Use **Reset browser pairing** in Hive Companion to revoke the saved credential and generate a new one-time code.
 
 ## Features
 

@@ -286,8 +286,9 @@ app.whenReady().then(async () => {
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
   registerAgentHandlers();
-  ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120 });
-  ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120 });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120, paired: false });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120, paired: false });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_REVOKE, () => browserBridge?.revokePairing() ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_BIND, (_event, requestId: string, conversationId: string) => browserBridge?.bind(requestId, conversationId) ?? { ok: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_SELECTION, (_event, providerId?: string, model?: string) => browserBridge?.reportSelection(providerId, model) ?? { ok: false });
 

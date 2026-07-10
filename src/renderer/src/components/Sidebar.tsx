@@ -28,6 +28,7 @@ export function Sidebar(): JSX.Element {
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectPath, setNewProjectPath] = useState('');
+  const [projectError, setProjectError] = useState('');
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -89,15 +90,21 @@ export function Sidebar(): JSX.Element {
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
-    await saveProject(project);
-    setNewProjectName('');
-    setNewProjectPath('');
-    setAddingProject(false);
+    setProjectError('');
+    try {
+      await saveProject(project);
+      setNewProjectName('');
+      setNewProjectPath('');
+      setAddingProject(false);
+    } catch (err) {
+      setProjectError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleCancelProject = (): void => {
     setNewProjectName('');
     setNewProjectPath('');
+    setProjectError('');
     setAddingProject(false);
   };
 
@@ -167,7 +174,10 @@ export function Sidebar(): JSX.Element {
           </button>
         </div>
         <button
-          onClick={() => setSearchOpen(!searchOpen)}
+          onClick={() => setSearchOpen((open) => {
+            if (open) { setSearch(''); setResults([]); }
+            return !open;
+          })}
           className={`p-1.5 rounded-md hover:bg-bg-elev titlebar-no-drag ${searchOpen ? 'text-fg bg-bg-elev' : 'text-fg-subtle hover:text-fg'}`}
           title="Search"
         >
@@ -295,11 +305,12 @@ export function Sidebar(): JSX.Element {
               expanded={expandedProjects}
               toggleProject={toggleProject}
               addingProject={addingProject}
-              setAddingProject={setAddingProject}
+              setAddingProject={(value) => { setAddingProject(value); setProjectError(''); }}
               newProjectName={newProjectName}
               setNewProjectName={setNewProjectName}
               newProjectPath={newProjectPath}
               setNewProjectPath={setNewProjectPath}
+              projectError={projectError}
               handleBrowseProject={handleBrowseProject}
               handleSaveProject={handleSaveProject}
               handleCancelProject={handleCancelProject}
@@ -960,6 +971,7 @@ function ProjectsSection({
   setNewProjectName,
   newProjectPath,
   setNewProjectPath,
+  projectError,
   handleBrowseProject,
   handleSaveProject,
   handleCancelProject,
@@ -983,6 +995,7 @@ function ProjectsSection({
   setNewProjectName: (v: string) => void;
   newProjectPath: string;
   setNewProjectPath: (v: string) => void;
+  projectError: string;
   handleBrowseProject: () => Promise<void>;
   handleSaveProject: () => Promise<void>;
   handleCancelProject: () => void;
@@ -1041,6 +1054,7 @@ function ProjectsSection({
               Add
             </button>
           </div>
+          {projectError && <div role="alert" className="text-[10px] leading-snug text-danger">{projectError}</div>}
         </div>
       )}
       <div className="space-y-0.5">

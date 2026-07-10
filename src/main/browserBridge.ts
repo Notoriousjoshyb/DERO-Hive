@@ -4,7 +4,7 @@ import type { BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
 import { getDb, getSetting, setSetting } from './db/client';
 import { onChatStreamEvent } from './ipc/chat';
-import type { StreamEvent } from '../shared/types';
+import type { BrowserBridgeStatus, StreamEvent } from '../shared/types';
 import type { WhisperManager } from './whisper/manager';
 
 const PORT = 43120;
@@ -85,7 +85,7 @@ export class BrowserBridge {
     return { ok: true };
   }
 
-  status(): { enabled: boolean; port: number; pairingCode?: string; paired: boolean } {
+  status(): BrowserBridgeStatus {
     return {
       enabled: Boolean(this.server),
       port: PORT,
@@ -94,7 +94,7 @@ export class BrowserBridge {
     };
   }
 
-  async setEnabled(enabled: boolean): Promise<{ enabled: boolean; port: number; pairingCode?: string; paired: boolean }> {
+  async setEnabled(enabled: boolean): Promise<BrowserBridgeStatus> {
     if (enabled && !this.server) await this.start();
     if (!enabled && this.server) await this.stop();
     return this.status();
@@ -118,7 +118,7 @@ export class BrowserBridge {
 
   /** Revoke the saved extension credential and issue a fresh one-time code.
    *  IPC/UI wiring can call this without changing the HTTP protocol. */
-  revokePairing(): { enabled: boolean; port: number; pairingCode?: string; paired: boolean } {
+  revokePairing(): BrowserBridgeStatus {
     this.tokenHash = '';
     this.pairedOrigin = '';
     for (const run of this.runs.values()) this.closeClient(run);
