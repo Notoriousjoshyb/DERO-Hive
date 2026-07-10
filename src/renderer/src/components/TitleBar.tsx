@@ -8,6 +8,8 @@ export function TitleBar(): JSX.Element {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
+  const visionOpen = useAppStore((s) => s.visionOpen);
+  const toggleVision = useAppStore((s) => s.toggleVision);
 
   useEffect(() => {
     void window.hive.winIsMaximized().then(setMaximized);
@@ -48,6 +50,17 @@ export function TitleBar(): JSX.Element {
               <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
               <line x1="9.5" y1="2" x2="9.5" y2="12" stroke="currentColor" strokeWidth="1.2" />
               {rightSidebarOpen && <rect x="10" y="2.6" width="2.4" height="8.8" rx="0.6" fill="currentColor" opacity="0.35" />}
+            </svg>
+          </button>
+          <button
+            onClick={toggleVision}
+            className={`p-1.5 rounded-md transition-colors ${visionOpen ? 'text-accent bg-bg-elev' : 'text-fg-subtle hover:text-fg hover:bg-bg-elev'}`}
+            title="Toggle Vision workspace (Ctrl+Shift+C)"
+            aria-label="Toggle Vision workspace"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z" strokeLinejoin="round" />
+              <circle cx="8" cy="8" r="2.2" fill={visionOpen ? 'currentColor' : 'none'} fillOpacity={visionOpen ? 0.35 : 0} />
             </svg>
           </button>
         </div>

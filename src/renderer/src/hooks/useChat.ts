@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from '../stores/app';
+import { hasPreviewableArtifact } from '../lib/artifacts';
 import type { StreamEvent } from '@shared/types';
 
 export function useChat(): void {
@@ -9,6 +10,25 @@ export function useChat(): void {
   const recordToolResult = useAppStore((s) => s.recordToolResult);
   const addPendingPermission = useAppStore((s) => s.addPendingPermission);
   const currentId = useAppStore((s) => s.currentConversationId);
+
+  // Open the Vision panel as soon as a previewable artifact (closed code
+  // fence) shows up in the live stream, so the user watches it build.
+  // Throttled subscription — checking on every delta would be wasteful.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = useAppStore.subscribe((s, prev) => {
+      if (s.streamingContent === prev.streamingContent) return;
+      if (!s.isStreaming || s.visionOpen || timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        const st = useAppStore.getState();
+        if (st.isStreaming && !st.visionOpen && hasPreviewableArtifact(st.streamingContent)) {
+          st.setVisionOpen(true);
+        }
+      }, 500);
+    });
+    return () => { unsub(); if (timer) clearTimeout(timer); };
+  }, []);
 
   useEffect(() => {
     // Clear stale todos, compaction history, and file-change counters when switching

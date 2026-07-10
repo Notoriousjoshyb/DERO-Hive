@@ -32,17 +32,24 @@ export function Message({ message }: Props): JSX.Element {
     return { cleanContent: content, combinedReasoning: combined || undefined };
   }, [message.content, message.reasoning]);
 
-  // Extract and save artifacts (idempotent)
+  // Extract and save Vision artifacts (idempotent), then tell the panel to
+  // refresh. Auto-open only right after a response finished streaming — not
+  // when re-rendering an old conversation.
   useEffect(() => {
     if (message.role === 'assistant' && typeof message.content === 'string' && currentConversationId) {
       const artifacts = extractArtifacts(message.content);
-      for (const a of artifacts) {
-        void window.hive.artifactSave({
-          conversationId: currentConversationId,
-          messageId: message.id,
-          ...a
-        });
-      }
+      if (artifacts.length === 0) return;
+      void Promise.all(artifacts.map((a) => window.hive.artifactSave({
+        conversationId: currentConversationId,
+        messageId: message.id,
+        ...a
+      }))).then(() => {
+        const st = useAppStore.getState();
+        st.notifyArtifactsChanged();
+        if (!st.visionOpen && Date.now() - st.lastStreamFinishedAt < 4000) {
+          st.setVisionOpen(true);
+        }
+      });
     }
   }, [message.id, message.role, currentConversationId]);
 

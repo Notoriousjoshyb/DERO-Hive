@@ -28,7 +28,16 @@ export function EmptyState(): JSX.Element {
         {greeting()} — welcome to DERO Hive
       </h1>
       <p className="text-fg-muted mb-9 max-w-md text-[15px] leading-relaxed animate-rise" style={{ animationDelay: '120ms' }}>
-        Multi-provider AI chat with tool use, MCP servers, and live artifacts.
+        Multi-provider AI chat with tool use, MCP servers, and{' '}
+        <button
+          onClick={() => useAppStore.getState().setVisionOpen(true)}
+          className="text-accent hover:underline font-medium"
+          title="Open the Vision workspace"
+        >
+          Vision
+        </button>
+        {' '}— a live workspace where apps, diagrams, and documents you ask for
+        open as interactive, editable artifacts.
       </p>
 
       {providers.length === 0 ? (

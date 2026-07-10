@@ -16,6 +16,8 @@ export function Sidebar(): JSX.Element {
   const saveProject = useAppStore((s) => s.saveProject);
   const codeTabOpen = useAppStore((s) => s.codeTabOpen);
   const toggleCodeTab = useAppStore((s) => s.toggleCodeTab);
+  const visionTabOpen = useAppStore((s) => s.visionTabOpen);
+  const toggleVisionTab = useAppStore((s) => s.toggleVisionTab);
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Array<{ conversationId: string; snippet: string; role: string }>>([]);
@@ -112,8 +114,12 @@ export function Sidebar(): JSX.Element {
   // Recents so they don't appear duplicated in two places.
   const recentConvs = activeConvs.filter((c) => !c.pinned && !c.projectId);
 
-  const goHome = (): void => { if (codeTabOpen) toggleCodeTab(); };
+  const goHome = (): void => {
+    if (codeTabOpen) toggleCodeTab();
+    if (useAppStore.getState().visionTabOpen) useAppStore.getState().toggleVisionTab();
+  };
   const goCode = (): void => { if (!codeTabOpen) toggleCodeTab(); };
+  const goVision = (): void => { if (!visionTabOpen) toggleVisionTab(); };
 
   return (
     <aside
@@ -126,7 +132,7 @@ export function Sidebar(): JSX.Element {
           <button
             onClick={goHome}
             className={`flex-1 px-2 py-1 text-[11px] font-medium rounded-md transition ${
-              !codeTabOpen ? 'bg-bg-input text-fg shadow-sm' : 'text-fg-subtle hover:text-fg'
+              !codeTabOpen && !visionTabOpen ? 'bg-bg-input text-fg shadow-sm' : 'text-fg-subtle hover:text-fg'
             }`}
           >
             Home
@@ -138,6 +144,14 @@ export function Sidebar(): JSX.Element {
             }`}
           >
             Code
+          </button>
+          <button
+            onClick={goVision}
+            className={`flex-1 px-2 py-1 text-[11px] font-medium rounded-md transition ${
+              visionTabOpen ? 'bg-bg-input text-fg shadow-sm' : 'text-fg-subtle hover:text-fg'
+            }`}
+          >
+            Vision
           </button>
         </div>
         <button

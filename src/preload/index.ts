@@ -108,6 +108,9 @@ const api = {
     ipcRenderer.invoke(IPC.ARTIFACT_SAVE, a),
   artifactList: (conversationId?: string) => ipcRenderer.invoke(IPC.ARTIFACT_LIST, conversationId),
   artifactDelete: (id: string) => ipcRenderer.invoke(IPC.ARTIFACT_DELETE, id),
+  artifactUpdate: (a: { sourceId: string; content: string }) => ipcRenderer.invoke(IPC.ARTIFACT_UPDATE, a),
+  visionExport: (a: { title?: string; type: string; language?: string; content: string }) => ipcRenderer.invoke(IPC.VISION_EXPORT, a),
+  visionOpenExternal: (a: { html: string; id: string }) => ipcRenderer.invoke(IPC.VISION_OPEN_EXTERNAL, a),
 
   // App
   openExternal: (url: string) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),

@@ -136,9 +136,9 @@ function buildAppMenu(): void {
           click: () => mainWindow?.webContents.send('app:menu', { action: 'toggle-sidebar' })
         },
         {
-          label: 'Toggle Canvas',
+          label: 'Toggle Vision',
           accelerator: 'CmdOrCtrl+Shift+C',
-          click: () => mainWindow?.webContents.send('app:menu', { action: 'toggle-canvas' })
+          click: () => mainWindow?.webContents.send('app:menu', { action: 'toggle-vision' })
         },
         {
           label: 'Toggle Code Tab',

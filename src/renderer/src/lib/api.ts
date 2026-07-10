@@ -94,6 +94,9 @@ declare global {
       artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) => Promise<{ id: string }>;
       artifactList: (conversationId?: string) => Promise<Artifact[]>;
       artifactDelete: (id: string) => Promise<{ ok: boolean }>;
+      artifactUpdate: (a: { sourceId: string; content: string }) => Promise<{ ok: boolean; id?: string; error?: string }>;
+      visionExport: (a: { title?: string; type: string; language?: string; content: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>;
+      visionOpenExternal: (a: { html: string; id: string }) => Promise<{ ok: boolean; path?: string }>;
 
       whisperStatus: () => Promise<WhisperStatus>;
       whisperStart: (model?: string) => Promise<WhisperStatus>;

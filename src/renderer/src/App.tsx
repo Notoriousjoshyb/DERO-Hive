@@ -3,7 +3,8 @@ import { useAppStore } from './stores/app';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
-import { CanvasPanel } from './components/CanvasPanel';
+import { VisionPanel } from './components/VisionPanel';
+import { VisionTab } from './components/VisionTab';
 import { RightSidebar } from './components/rightsidebar/RightSidebar';
 import { CodeTab } from './components/code/CodeTab';
 import { SettingsModal } from './components/settings/SettingsModal';
@@ -14,13 +15,14 @@ import { applyTheme, applyAppearance } from './lib/theme';
 
 export default function App(): JSX.Element {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
-  const canvasOpen = useAppStore((s) => s.canvasOpen);
+  const visionOpen = useAppStore((s) => s.visionOpen);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const codeTabOpen = useAppStore((s) => s.codeTabOpen);
+  const visionTabOpen = useAppStore((s) => s.visionTabOpen);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const toggleCanvas = useAppStore((s) => s.toggleCanvas);
+  const toggleVision = useAppStore((s) => s.toggleVision);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
   const toggleCodeTab = useAppStore((s) => s.toggleCodeTab);
   const loadSettings = useAppStore((s) => s.loadSettings);
@@ -51,7 +53,7 @@ export default function App(): JSX.Element {
     const offMenu = window.hive.onMenu((action) => {
       if (action === 'new-conversation') void useAppStore.getState().createConversation();
       else if (action === 'toggle-sidebar') toggleSidebar();
-      else if (action === 'toggle-canvas') toggleCanvas();
+      else if (action === 'toggle-vision' || action === 'toggle-canvas') toggleVision();
       else if (action === 'toggle-right-sidebar') toggleRightSidebar();
       else if (action === 'toggle-code-tab') toggleCodeTab();
       else if (action === 'open-settings') setSettingsOpen(true);
@@ -72,15 +74,15 @@ export default function App(): JSX.Element {
       <TitleBar />
       <div className="flex flex-1 overflow-hidden">
         {sidebarOpen && <Sidebar />}
-        {codeTabOpen ? <CodeTab /> : <ChatView />}
-        {canvasOpen && <CanvasPanel />}
+        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : <ChatView />}
+        {visionOpen && <VisionPanel />}
         <RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} />
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <PermissionDialog />
       <style>{`
         body.focus-mode [data-sidebar-panel],
-        body.focus-mode [data-canvas-panel] {
+        body.focus-mode [data-vision-panel] {
           display: none !important;
         }
       `}</style>

@@ -72,7 +72,7 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
     : 'Always ask';
 
   return (
-    <div ref={toolbarRef} className="flex items-center justify-between gap-1 px-2 py-1.5 border-t border-border">
+    <div ref={toolbarRef} className="flex items-center justify-between flex-wrap gap-1 px-2 py-1.5 border-t border-border min-w-0">
       {/* Left side */}
       <div className="flex items-center gap-0.5 relative">
         <div className="relative">
@@ -133,7 +133,7 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
       </div>
 
       {/* Right side */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-0.5 flex-wrap justify-end min-w-0">
         <div className="relative">
           <button
             type="button"

@@ -3,7 +3,7 @@ import { useAppStore } from '../stores/app';
 
 export function useKeyboardShortcuts(): void {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const toggleCanvas = useAppStore((s) => s.toggleCanvas);
+  const toggleVision = useAppStore((s) => s.toggleVision);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
   const toggleCodeTab = useAppStore((s) => s.toggleCodeTab);
   const createConversation = useAppStore((s) => s.createConversation);
@@ -20,7 +20,7 @@ export function useKeyboardShortcuts(): void {
         return;
       }
       if (meta && !e.shiftKey && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
-      if (meta && e.shiftKey && (e.key === 'C' || e.key === 'c')) { e.preventDefault(); toggleCanvas(); }
+      if (meta && e.shiftKey && (e.key === 'C' || e.key === 'c')) { e.preventDefault(); toggleVision(); }
       if (meta && e.shiftKey && (e.key === 'R' || e.key === 'r')) { e.preventDefault(); toggleRightSidebar(); }
       if (meta && e.shiftKey && (e.key === 'E' || e.key === 'e')) { e.preventDefault(); toggleCodeTab(); }
       if (meta && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); void createConversation(); }
@@ -29,5 +29,5 @@ export function useKeyboardShortcuts(): void {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [toggleSidebar, toggleCanvas, toggleRightSidebar, toggleCodeTab, createConversation, setSettingsOpen, isStreaming, abortChat]);
+  }, [toggleSidebar, toggleVision, toggleRightSidebar, toggleCodeTab, createConversation, setSettingsOpen, isStreaming, abortChat]);
 }

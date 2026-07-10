@@ -239,7 +239,7 @@ export interface Artifact {
   id: string;
   conversationId: string;
   messageId: string;
-  type: 'code' | 'html' | 'svg' | 'react' | 'mermaid';
+  type: 'code' | 'html' | 'svg' | 'react' | 'mermaid' | 'markdown';
   language?: string;
   title?: string;
   content: string;
@@ -328,10 +328,13 @@ export const IPC = {
   // Attachments
   ATTACH_FROM_FILE: 'attach:fromFile',
 
-  // Artifacts
+  // Artifacts (Vision workspace)
   ARTIFACT_SAVE: 'artifact:save',
   ARTIFACT_LIST: 'artifact:list',
   ARTIFACT_DELETE: 'artifact:delete',
+  ARTIFACT_UPDATE: 'artifact:update',
+  VISION_EXPORT: 'vision:export',
+  VISION_OPEN_EXTERNAL: 'vision:openExternal',
 
   // App
   APP_OPEN_EXTERNAL: 'app:openExternal',

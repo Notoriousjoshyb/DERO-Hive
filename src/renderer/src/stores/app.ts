@@ -170,15 +170,23 @@ interface AppState {
 
   // UI state
   sidebarOpen: boolean;
-  canvasOpen: boolean;
+  visionOpen: boolean;
   settingsOpen: boolean;
   rightSidebarOpen: boolean;
   codeTabOpen: boolean;
   toggleSidebar: () => void;
-  toggleCanvas: () => void;
+  toggleVision: () => void;
+  setVisionOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   toggleRightSidebar: () => void;
   toggleCodeTab: () => void;
+  visionTabOpen: boolean;
+  toggleVisionTab: () => void;
+
+  // Vision workspace
+  artifactsChangedAt: number; // bump to make VisionPanel reload
+  lastStreamFinishedAt: number; // used to auto-open Vision only for fresh responses
+  notifyArtifactsChanged: () => void;
 
   // Task list (driven by todo_write tool calls)
   todos: TodoItem[];
@@ -282,6 +290,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     if (model) {
       void state.updateSettings({ defaultProviderId: providerId, defaultModelId: model });
+      // Also pin the choice to the open conversation so switching away and
+      // back — or the post-stream refresh — keeps the model the user picked.
+      const convId = state.currentConversationId;
+      if (convId && providerId) {
+        void window.hive.convUpdate(convId, { providerId, model }).then(() => state.loadConversations());
+      }
     }
   },
 
@@ -307,11 +321,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const conv = await window.hive.convGet(id);
     if (conv) {
+      // Adopt the conversation's provider/model only when actually switching
+      // conversations. Re-selecting the current one (done after every stream
+      // to refresh messages) must NOT clobber a model the user just picked —
+      // conv.model is whatever was stored when the conversation was created.
+      const switching = id !== get().currentConversationId;
       set({
         currentConversationId: id,
         currentMessages: conv.messages,
-        selectedProviderId: conv.providerId || get().selectedProviderId,
-        selectedModel: conv.model || get().selectedModel,
+        selectedProviderId: switching ? (conv.providerId || get().selectedProviderId) : get().selectedProviderId,
+        selectedModel: switching ? (conv.model || get().selectedModel) : get().selectedModel,
         isStreaming: false,
         streamingContent: '',
         streamingReasoning: '',
@@ -391,7 +410,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     isStreaming: false,
     streamingMessageId: undefined,
     streamingContent: '',
-    streamingReasoning: ''
+    streamingReasoning: '',
+    lastStreamFinishedAt: Date.now()
   }),
   recordToolResult: (messageId, toolCallId, result, isError, durationMs) => {
     const map = new Map(get().pendingToolResults);
@@ -479,15 +499,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearAttachments: () => set({ pendingAttachments: [] }),
 
   sidebarOpen: true,
-  canvasOpen: false,
+  visionOpen: false,
   settingsOpen: false,
   rightSidebarOpen: false,
   codeTabOpen: false,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  toggleCanvas: () => set((s) => ({ canvasOpen: !s.canvasOpen })),
+  toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen })),
+  setVisionOpen: (open) => set({ visionOpen: open }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+
+  artifactsChangedAt: 0,
+  lastStreamFinishedAt: 0,
+  notifyArtifactsChanged: () => set({ artifactsChangedAt: Date.now() }),
   toggleRightSidebar: () => set((s) => ({ rightSidebarOpen: !s.rightSidebarOpen })),
-  toggleCodeTab: () => set((s) => ({ codeTabOpen: !s.codeTabOpen })),
+  // Code and Vision are full-view tabs sharing the main column — exclusive.
+  toggleCodeTab: () => set((s) => ({ codeTabOpen: !s.codeTabOpen, visionTabOpen: false })),
+  visionTabOpen: false,
+  toggleVisionTab: () => set((s) => ({ visionTabOpen: !s.visionTabOpen, codeTabOpen: false })),
 
   todos: [],
   taskListExpanded: false,
