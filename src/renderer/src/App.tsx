@@ -43,6 +43,7 @@ export default function App(): JSX.Element {
   const loadMcpStatuses = useAppStore((s) => s.loadMcpStatuses);
   const loadConversations = useAppStore((s) => s.loadConversations);
   const loadTools = useAppStore((s) => s.loadTools);
+  const loadSwarmRuns = useAppStore((s) => s.loadSwarmRuns);
   const theme = useAppStore((s) => s.settings.theme);
   const settings = useAppStore((s) => s.settings);
 
@@ -68,6 +69,7 @@ export default function App(): JSX.Element {
     void loadMcpStatuses();
     void loadConversations();
     void loadTools();
+    void loadSwarmRuns();
 
     const offMcp = window.hive.onMcpChanged(() => {
       void loadMcpStatuses();
@@ -101,8 +103,11 @@ export default function App(): JSX.Element {
       const provider = state.providers.find((p) => p.id === providerId);
       if (provider?.models.some((m) => m.id === model)) state.setSelection(providerId, model);
     });
+    const offSwarm = window.hive.onSwarmProgress(({ run }) => {
+      useAppStore.getState().upsertSwarmRun(run);
+    });
 
-    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); offTitle(); offBrowserBridge(); offSelectModel(); };
+    return () => { offMcp(); offModels(); offMenu(); offProject(); offTheme(); offTitle(); offBrowserBridge(); offSelectModel(); offSwarm(); };
   }, []);
 
   return (

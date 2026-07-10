@@ -76,20 +76,11 @@ export interface ChatRequest {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
-  /** @deprecated Compatibility-only additive request instructions; main never uses this as the base prompt. */
-  systemPrompt?: string;
-  /** Persona prompt from the composer's agent picker — layered on top of the base system prompt in main. */
-  agentPrompt?: string;
+  /** Main resolves this id against persisted built-in/custom agents. */
+  agentId?: string;
   stream?: boolean;
   reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
-  /** Optional per-request cap used by orchestrators such as Swarm. */
-  maxAgenticRounds?: number;
   planMode?: boolean;
-  /** @deprecated Ignored by main; renderer requests cannot weaken persisted approval policy. */
-  toolApprovalModeOverride?: ToolApprovalMode;
-  attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
-  /** When regenerating from an edited message, skip persisting the last user message again. */
-  skipUserPersist?: boolean;
 }
 
 export type StreamEvent =
@@ -338,6 +329,62 @@ export interface PermissionRule {
   projectPath?: string;
 }
 
+export type SwarmMode = 'research' | 'build';
+export type SwarmRunStatus =
+  | 'queued' | 'running' | 'verifying' | 'synthesizing'
+  | 'awaiting_apply' | 'completed' | 'failed' | 'aborted'
+  | 'interrupted' | 'applied';
+export type SwarmTaskPhase = 'worker' | 'verifier' | 'synthesizer';
+export type SwarmTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted';
+
+export interface SwarmTask {
+  id: string;
+  runId: string;
+  phase: SwarmTaskPhase;
+  index: number;
+  status: SwarmTaskStatus;
+  output?: string;
+  error?: string;
+  worktreePath?: string;
+  branchName?: string;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export interface SwarmRun {
+  id: string;
+  conversationId?: string;
+  projectId?: string;
+  prompt: string;
+  mode: SwarmMode;
+  status: SwarmRunStatus;
+  providerId: string;
+  model: string;
+  workerCount: number;
+  repoRoot?: string;
+  baseBranch?: string;
+  baseHead?: string;
+  integrationBranch?: string;
+  integrationPath?: string;
+  result?: string;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  tasks: SwarmTask[];
+}
+
+export interface SwarmStartRequest {
+  prompt: string;
+  mode: SwarmMode;
+  providerId: string;
+  model: string;
+  conversationId?: string;
+  projectId?: string;
+  workerCount?: number;
+}
+
+export interface SwarmProgressEvent { run: SwarmRun }
+
 export type ToolApprovalMode = 'always' | 'session' | 'project' | 'never';
 
 export function normalizeToolApprovalMode(value: unknown): ToolApprovalMode {
@@ -445,6 +492,15 @@ export const IPC = {
   CHAT_ABORT: 'chat:abort',
   CHAT_QUEUE_MESSAGE: 'chat:queue-message',
   CHAT_STREAM: 'chat:stream', // event from main -> renderer
+
+  // Native swarm
+  SWARM_START: 'swarm:start',
+  SWARM_GET: 'swarm:get',
+  SWARM_LIST: 'swarm:list',
+  SWARM_ABORT: 'swarm:abort',
+  SWARM_RESUME: 'swarm:resume',
+  SWARM_APPLY: 'swarm:apply',
+  SWARM_PROGRESS: 'swarm:progress',
 
   // Conversations
   CONV_LIST: 'conv:list',

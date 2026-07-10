@@ -150,9 +150,47 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_conv ON artifacts(conversation_id);
+
+CREATE TABLE IF NOT EXISTS swarm_runs (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  project_id TEXT,
+  prompt TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  worker_count INTEGER NOT NULL,
+  repo_root TEXT,
+  base_branch TEXT,
+  base_head TEXT,
+  integration_branch TEXT,
+  integration_path TEXT,
+  result TEXT,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_runs_updated ON swarm_runs(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS swarm_tasks (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL,
+  task_index INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  output TEXT,
+  error TEXT,
+  worktree_path TEXT,
+  branch_name TEXT,
+  started_at INTEGER,
+  completed_at INTEGER,
+  UNIQUE(run_id, phase, task_index)
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
 `;
 
-const CURRENT_SCHEMA_VERSION = 8;
+const CURRENT_SCHEMA_VERSION = 9;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -254,6 +292,50 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )`);
+    }
+  },
+  {
+    version: 9,
+    description: 'Add native swarm runs and tasks',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS swarm_runs (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          project_id TEXT,
+          prompt TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          status TEXT NOT NULL,
+          provider_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          worker_count INTEGER NOT NULL,
+          repo_root TEXT,
+          base_branch TEXT,
+          base_head TEXT,
+          integration_branch TEXT,
+          integration_path TEXT,
+          result TEXT,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_swarm_runs_updated ON swarm_runs(updated_at DESC);
+        CREATE TABLE IF NOT EXISTS swarm_tasks (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+          phase TEXT NOT NULL,
+          task_index INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          output TEXT,
+          error TEXT,
+          worktree_path TEXT,
+          branch_name TEXT,
+          started_at INTEGER,
+          completed_at INTEGER,
+          UNIQUE(run_id, phase, task_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
+      `);
     }
   }
 ];

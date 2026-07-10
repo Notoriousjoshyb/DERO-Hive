@@ -13,6 +13,7 @@ import { getDefaultWorkspace } from '../utils/paths';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
 import { composeSystemPrompt } from '../utils/systemPrompt';
 import { hydrateAttachmentRefs, validateAttachmentRefs } from '../utils/attachments';
+import { resolveAgent } from '@shared/agents';
 
 const activeRequests = new Map<string, AbortController>();
 const queuedUserMessages = new Map<string, Message[]>();
@@ -155,7 +156,7 @@ async function runChat(
   if (userMsg?.role === 'user') {
     await validateAttachmentRefs(userMsg.content, 20 * 1024 * 1024, 25 * 1024 * 1024);
   }
-  if (userMsg && userMsg.role === 'user' && !req.skipUserPersist) {
+  if (userMsg && userMsg.role === 'user' && shouldPersistUserMessage(req.conversationId, userMsg.id)) {
     persistMessage(req.conversationId, userMsg);
     updateConversationPreview(req.conversationId, userMsg);
   }
@@ -194,16 +195,17 @@ async function runChat(
         logger.info('chat', `using project cwd: ${projectPath}`);
       }
 
-      // The built-in core is immutable. Legacy renderer instructions and agent
-      // personas are compatibility-only additive layers, never replacements.
+      // The built-in core is immutable. Agent instructions are resolved from
+      // main-process settings; the renderer supplies only an id.
       const corePrompt = composeSystemPrompt({
         appInstructions: getSetting<string>('defaultSystemPrompt', ''),
         conversationInstructions: conv?.system_prompt,
         projectPath,
         planMode: req.planMode
       });
-      const additiveLayers = [req.agentPrompt?.trim(), req.systemPrompt?.trim()]
-        .filter((value): value is string => !!value);
+      const customAgents = getSetting<Partial<AppSettings>>('appSettings')?.customAgents;
+      const agentPrompt = resolveAgent(req.agentId, customAgents)?.prompt.trim();
+      const additiveLayers = agentPrompt ? [agentPrompt] : [];
       if (projectPath) additiveLayers.push(buildProjectSnapshot(projectPath));
       const systemPrompt = [corePrompt, ...additiveLayers].join('\n\n');
       let messages = req.messages;
@@ -310,7 +312,7 @@ async function runChat(
       // results and decide the next action. Keep it bounded so a mistaken or
       // repetitive plan cannot run indefinitely.
       const availableTools = tools.listTools();
-      const configuredRounds = req.maxAgenticRounds ?? getSetting<Partial<AppSettings>>('appSettings')?.maxAgenticRounds ?? 20;
+      const configuredRounds = getSetting<Partial<AppSettings>>('appSettings')?.maxAgenticRounds ?? 20;
       const maxAgenticRounds = Number.isFinite(configuredRounds)
         ? Math.min(50, Math.max(1, Math.floor(configuredRounds)))
         : 20;
@@ -341,7 +343,6 @@ async function runChat(
             topP: req.topP,
             maxTokens: req.maxTokens,
             reasoning: req.reasoning,
-            attachments: req.attachments,
             signal: abort.signal,
             requestPermission: (permission) => tools.requestPermission(permission, {
               cwd,
@@ -510,6 +511,19 @@ function persistMessage(conversationId: string, msg: Message): void {
   // Update message count
   getDb().prepare('UPDATE conversations SET message_count = message_count + 1, updated_at = ? WHERE id = ?')
     .run(Date.now(), conversationId);
+}
+
+export interface MessageLookupDb {
+  prepare(sql: string): { get(...params: unknown[]): unknown };
+}
+
+/** Regeneration reuses a persisted user message id; only genuinely new ids are inserted. */
+export function shouldPersistUserMessage(
+  conversationId: string,
+  messageId: string,
+  db: MessageLookupDb = getDb() as unknown as MessageLookupDb
+): boolean {
+  return !db.prepare('SELECT 1 FROM messages WHERE conversation_id = ? AND id = ?').get(conversationId, messageId);
 }
 
 function updateConversationPreview(conversationId: string, msg: Message): void {

@@ -6,7 +6,7 @@ import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
 import { UsageBudgetAlert } from './UsageBudgetAlert';
 import { thinkingOptionsFor } from '@shared/thinkingCapabilities';
-import { resolveAgent, shouldOrchestratorDispatch } from '@shared/agents';
+import { shouldOrchestratorDispatch } from '@shared/agents';
 import { executeCustomCommand } from '../lib/customSlashCommands';
 
 interface Props {
@@ -180,6 +180,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     // would leave it waiting on a conversation that never answers.
     if (!bridgeRequestRef.current && state.composerAgent === 'orchestrator' && pendingAttachments.length === 0 && shouldOrchestratorDispatch(content)) {
       state.openSwarm(content, true);
+      setText('');
       return;
     }
 
@@ -260,10 +261,6 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       }
     }
 
-    // Composer agent persona — resolved here, layered onto the base prompt in main.
-    const activeAgent = resolveAgent(state.composerAgent, settings.customAgents);
-    const agentPrompt = activeAgent.prompt.trim() || undefined;
-
     let convId = conversationId;
     if (!convId) {
       // New chats from the composer are standalone. Project chats are created
@@ -315,7 +312,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
         providerId,
         model,
         messages: messagesToSend,
-        agentPrompt,
+        agentId: state.composerAgent,
         planMode: composerPlanMode || undefined,
         reasoning
       });
