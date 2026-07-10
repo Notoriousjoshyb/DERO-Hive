@@ -8,6 +8,7 @@ import { RightSidebar } from './components/rightsidebar/RightSidebar';
 import { CodeTab } from './components/code/CodeTab';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { PermissionDialog } from './components/PermissionDialog';
+import { AgentBar } from './components/AgentBar';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
@@ -77,6 +78,7 @@ export default function App(): JSX.Element {
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <PermissionDialog />
+      <AgentBar />
       <style>{`
         body.focus-mode [data-sidebar-panel],
         body.focus-mode [data-canvas-panel] {

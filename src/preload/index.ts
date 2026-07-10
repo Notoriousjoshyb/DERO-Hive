@@ -100,6 +100,11 @@ const api = {
   terminalDispose: (sessionId: string) => ipcRenderer.invoke(IPC.TERMINAL_DISPOSE, sessionId),
   ghFetchUrl: (url: string) => ipcRenderer.invoke(IPC.GH_FETCH_URL, url),
 
+  // Agent mode
+  agentProxyStart: (providerId: string): Promise<{ ok: boolean; port?: number; token?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_PROXY_START, providerId),
+  agentProxyStop: () => ipcRenderer.invoke(IPC.AGENT_PROXY_STOP),
+
   // Settings
   settingsGet: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   settingsSet: (s: Partial<AppSettings>) => ipcRenderer.invoke(IPC.SETTINGS_SET, s),

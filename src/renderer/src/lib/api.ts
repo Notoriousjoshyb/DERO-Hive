@@ -61,6 +61,9 @@ declare global {
       skillRescan: () => Promise<Skill[]>;
       skillOpenDir: () => Promise<{ ok: boolean; error?: string }>;
 
+      agentProxyStart: (providerId: string) => Promise<{ ok: boolean; port?: number; token?: string; error?: string }>;
+      agentProxyStop: () => Promise<{ ok: boolean }>;
+
       projectList: () => Promise<Project[]>;
       projectSave: (p: Project) => Promise<Project>;
       projectDelete: (id: string) => Promise<{ ok: boolean }>;

@@ -18,6 +18,7 @@ import { registerGithubHandlers } from './ipc/github';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerWhisperHandlers } from './ipc/whisper';
 import { registerSimulatorHandlers } from './ipc/simulator';
+import { registerAgentHandlers } from './ipc/agent';
 import { initDb, closeDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
@@ -263,6 +264,7 @@ app.whenReady().then(async () => {
   registerProjectHandlers();
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
+  registerAgentHandlers();
 
   // Window controls (custom titlebar)
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());

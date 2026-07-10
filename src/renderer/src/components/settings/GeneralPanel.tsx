@@ -209,6 +209,9 @@ export function GeneralPanel(): JSX.Element {
             <option value="never">Never ask</option>
           </select>
         </Field>
+        <Field label="Agent mode (experimental)" hint="Floating agent that operates the app UI from natural-language instructions, using the selected provider.">
+          <input type="checkbox" checked={settings.agentModeEnabled || false} onChange={(e) => updateSettings({ agentModeEnabled: e.target.checked })} className="accent-accent w-4 h-4" />
+        </Field>
       </Section>
 
       <Section title="Voice">

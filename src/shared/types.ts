@@ -238,6 +238,7 @@ export interface AppSettings {
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
   telemetry: boolean;
   experimentalFeatures: boolean;
+  agentModeEnabled?: boolean; // experimental in-page GUI agent (page-agent)
   // Composer (per-session, but persists in settings)
   composerFocusMode?: boolean;
   composerPlanMode?: boolean;
@@ -350,6 +351,10 @@ export const IPC = {
   TERMINAL_EXEC: 'terminal:exec',
   TERMINAL_DISPOSE: 'terminal:dispose',
   GH_FETCH_URL: 'gh:fetchUrl',
+
+  // Agent mode (in-page GUI agent)
+  AGENT_PROXY_START: 'agent:proxy-start',
+  AGENT_PROXY_STOP: 'agent:proxy-stop',
 
   // Settings
   SETTINGS_GET: 'settings:get',
