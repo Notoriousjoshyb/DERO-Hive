@@ -81,6 +81,32 @@ describe('compactConversationInPlace', () => {
     expect(ftsIds(db, 'c1').sort()).toEqual(messageIds);
   });
 
+  test('never leaves a tool result without the assistant turn that requested it', async () => {
+    const db = createTestDb();
+    // The keep-window lands so that the tool result survives but the assistant
+    // message carrying its tool_calls falls into the compacted-away older half.
+    seedConversation(db, 'c1', [
+      ...convo(5),
+      { id: 'a-call', role: 'assistant', content: 'looking that up', toolCalls: '[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]' },
+      { id: 't-result', role: 'tool', content: 'file contents', toolCallId: 'call_1', name: 'read_file' },
+      ...convo(5).map((m) => ({ ...m, id: `tail-${m.id}` }))
+    ]);
+
+    await compact(db);
+
+    const rows = rowsOf(db, 'c1');
+    const requestedIds = new Set(
+      rows
+        .filter((r) => r.role === 'assistant' && r.tool_calls)
+        .flatMap((r) => (JSON.parse(r.tool_calls as string) as Array<{ id: string }>).map((c) => c.id))
+    );
+    const orphans = rows
+      .filter((r) => r.role === 'tool')
+      .filter((r) => !requestedIds.has(r.tool_call_id as string));
+
+    expect(orphans.map((r) => r.tool_call_id)).toEqual([]);
+  });
+
   test('updates the conversation compaction counters', async () => {
     const db = createTestDb();
     seedConversation(db, 'c1', [{ id: 'sys', role: 'system', content: 'sys' }, ...convo(10)]);

@@ -389,8 +389,15 @@ export async function compactConversationInPlace(
   const systemMsgs = messages.filter((m) => m.role === 'system');
   const nonSystem = messages.filter((m) => m.role !== 'system');
 
-  const recent = nonSystem.slice(-config.keepRecentMessages);
-  const older = nonSystem.slice(0, nonSystem.length - config.keepRecentMessages);
+  // A tool result is meaningless without the assistant turn whose tool_calls
+  // asked for it, and both provider APIs reject the pair split apart — which
+  // would fail the very next request, after the history had been rewritten.
+  // Walk the boundary back until the kept window no longer opens on one.
+  let split = Math.max(0, nonSystem.length - config.keepRecentMessages);
+  while (split > 0 && nonSystem[split]?.role === 'tool') split--;
+
+  const recent = nonSystem.slice(split);
+  const older = nonSystem.slice(0, split);
 
   const userTurns: string[] = [];
   const decisions: string[] = [];
