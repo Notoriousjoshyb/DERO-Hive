@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Abort the commit if the effective git user.email is one of HOLOGRAM's known-bad
+# values. Cursor/VSCode git extensions have historically stuffed david@dhebp.com
+# into .git/config; this guard catches it before a wrong-identity commit lands.
+#
+# Wired in via .git/config core.hooksPath = .githooks (see install at repo root).
+
+set -euo pipefail
+
+FORBIDDEN_EMAILS=(
+  "david@dhebp.com"
+)
+
+current_email="$(git config user.email)"
+
+for bad in "${FORBIDDEN_EMAILS[@]}"; do
+  if [ "$current_email" = "$bad" ]; then
+    cat <<EOF >&2
+✖ commit aborted — git user.email is set to a forbidden value
+
+  current: $current_email
+  forbidden: ${FORBIDDEN_EMAILS[*]}
+
+This usually means a local .git/config override is shadowing your global
+identity (often written by Cursor/VSCode git integration). To fix:
+
+  git config --local --unset user.email
+  git config --local --unset user.name
+  git config user.email   # should fall through to the DHEBP noreply
+
+Then re-run the commit.
+EOF
+    exit 1
+  fi
+done
+
+exit 0

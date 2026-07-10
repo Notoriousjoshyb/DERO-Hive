@@ -1,0 +1,263 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.0.1) — creates a draft release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  changelog-guard:
+    name: CHANGELOG entry present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require a CHANGELOG section for this version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          # Same extraction the release job uses for the notes body — guard it here
+          # so a missing section fails in seconds instead of after a full build.
+          NOTES=$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md)
+          if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            echo "::error::No '## [$VERSION]' section found in CHANGELOG.md — the release would publish with empty notes. Add the entry before tagging."
+            exit 1
+          fi
+          echo "Found CHANGELOG entry for $VERSION."
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: changelog-guard
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-22.04
+            wails_platform: linux/amd64
+            archive_ext: tar.gz
+          - platform: linux-arm64
+            runner: ubuntu-22.04
+            wails_platform: linux/arm64
+            archive_ext: tar.gz
+          - platform: windows-amd64
+            runner: windows-latest
+            wails_platform: windows/amd64
+            archive_ext: zip
+          - platform: darwin-universal
+            runner: macos-latest
+            wails_platform: darwin/universal
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Linux UI dependencies (amd64)
+        if: matrix.platform == 'linux-amd64'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libglib2.0-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Linux UI dependencies (arm64 cross-compile)
+        if: matrix.platform == 'linux-arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libgtk-3-dev:arm64 libglib2.0-dev:arm64 libwebkit2gtk-4.1-dev:arm64 \
+            pkg-config
+
+      - name: Install Wails CLI
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG (version=$VERSION, sha=$SHORT_SHA)"
+
+      - name: Build HOLOGRAM (Wails)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+          CC: ${{ matrix.platform == 'linux-arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CXX: ${{ matrix.platform == 'linux-arm64' && 'aarch64-linux-gnu-g++' || '' }}
+          # Linux links against webkit2gtk-4.1 (libsoup3); 4.0 is gone from all
+          # current distros. Matches the Makefile default. Must stay empty on
+          # Windows/macOS — this build step is shared across the whole matrix.
+          WAILS_TAGS: ${{ startsWith(matrix.platform, 'linux') && '-tags webkit2_41' || '' }}
+          PKG_CONFIG_PATH: ${{ matrix.platform == 'linux-arm64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
+        run: |
+          LDFLAGS="-X main.AppVersion=${VERSION} -X main.BuildDate=${BUILD_DATE} -X main.GitCommit=${SHORT_SHA}"
+          wails build -platform ${{ matrix.wails_platform }} ${WAILS_TAGS} -ldflags "$LDFLAGS" -clean -trimpath
+
+      - name: Verify Linux binary links webkit2gtk-4.1, not the dead 4.0
+        if: startsWith(matrix.platform, 'linux')
+        shell: bash
+        run: |
+          # The 4.0 binding (libsoup2) is gone from every current distro, so a
+          # binary that NEEDs libwebkit2gtk-4.0.so.* builds fine in CI but fails
+          # to start on users' machines. objdump reads the ELF dynamic section
+          # statically, so it works for the cross-compiled arm64 artifact too.
+          NEEDED=$(objdump -p build/bin/Hologram | awk '/NEEDED/ {print $2}')
+          echo "$NEEDED" | grep -E 'webkit2gtk' || true
+          if echo "$NEEDED" | grep -q 'libwebkit2gtk-4\.0'; then
+            echo "::error::Linux binary links libwebkit2gtk-4.0 (libsoup2), which is absent on modern distros. Build must use -tags webkit2_41 against libwebkit2gtk-4.1-dev."
+            exit 1
+          fi
+          if ! echo "$NEEDED" | grep -q 'libwebkit2gtk-4\.1'; then
+            echo "::error::Linux binary does not link libwebkit2gtk-4.1 at all — webkit binding missing or build misconfigured."
+            exit 1
+          fi
+          echo "OK: links libwebkit2gtk-4.1."
+
+      - name: Package artifact (Linux amd64)
+        if: matrix.platform == 'linux-amd64'
+        shell: bash
+        run: |
+          cd build/bin
+          chmod +x Hologram
+          tar -czf "HOLOGRAM-v${{ steps.version.outputs.version }}-linux-amd64.tar.gz" Hologram
+          sha256sum "HOLOGRAM-v${{ steps.version.outputs.version }}-linux-amd64.tar.gz" > "HOLOGRAM-v${{ steps.version.outputs.version }}-linux-amd64.tar.gz.sha256"
+          ls -la
+
+      - name: Package artifact (Linux arm64)
+        if: matrix.platform == 'linux-arm64'
+        shell: bash
+        run: |
+          cd build/bin
+          chmod +x Hologram
+          tar -czf "HOLOGRAM-v${{ steps.version.outputs.version }}-linux-arm64.tar.gz" Hologram
+          sha256sum "HOLOGRAM-v${{ steps.version.outputs.version }}-linux-arm64.tar.gz" > "HOLOGRAM-v${{ steps.version.outputs.version }}-linux-arm64.tar.gz.sha256"
+          ls -la
+
+      - name: Package artifact (Windows)
+        if: matrix.platform == 'windows-amd64'
+        shell: pwsh
+        run: |
+          cd build/bin
+          $archive = "HOLOGRAM-v${{ steps.version.outputs.version }}-windows-amd64.zip"
+          Compress-Archive -Path "Hologram.exe" -DestinationPath $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ascii
+          Get-ChildItem
+
+      - name: Package artifact (macOS)
+        if: matrix.platform == 'darwin-universal'
+        shell: bash
+        run: |
+          cd build/bin
+          ditto -c -k --sequesterRsrc --keepParent "Hologram.app" "HOLOGRAM-v${{ steps.version.outputs.version }}-macos-universal.zip"
+          shasum -a 256 "HOLOGRAM-v${{ steps.version.outputs.version }}-macos-universal.zip" > "HOLOGRAM-v${{ steps.version.outputs.version }}-macos-universal.zip.sha256"
+          ls -la
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hologram-${{ matrix.platform }}
+          path: |
+            build/bin/HOLOGRAM-v*.tar.gz
+            build/bin/HOLOGRAM-v*.zip
+            build/bin/HOLOGRAM-v*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          # Extract the section between "## [VERSION]" and the next "## ["
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > release_notes.md
+          echo "Release notes extracted:"
+          cat release_notes.md
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: HOLOGRAM ${{ github.ref_name }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/HOLOGRAM-v*.tar.gz
+            dist/HOLOGRAM-v*.zip
+            dist/HOLOGRAM-v*.sha256

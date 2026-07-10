@@ -1,0 +1,37 @@
+# Symbols intentionally removed from HOLOGRAM. CI fails if any of these
+# reappear in the codebase (excluding this file and history).
+#
+# Format: one entry per non-comment line, one of
+#   <symbol>                                   (searched repo-wide)
+#   <symbol>::<glob-relative-to-repo-root>     (searched only in the matching paths)
+#   <symbol>@@<git-pathspec>                   (searched with a raw git pathspec, e.g.
+#                                               ':(exclude)foo.go' to forbid everywhere
+#                                               EXCEPT foo.go — leading ':' preserved)
+#
+# Add a comment above each entry explaining WHY it was removed, so a
+# future contributor or AI agent understands the decision before
+# attempting to "fix" the failing CI by re-adding it.
+
+# QueryKey / query_key — XSWD RPC that returned the wallet's 25-word
+# mnemonic seed under a persistent sign_transaction grant. Removed in
+# 6b2935f; full key compromise risk via any approved dApp. The
+# legitimate in-app GetSeedPhrase(password) path remains the only way
+# to surface the seed. Discussed and rejected for consumer software in
+# Dec 2025 with Azylem before HOLOGRAM existed; snuck back in via
+# upstream walletapi-style scaffolding and was removed again Jun 2026.
+QueryKey
+query_key
+
+# http.Client{ — bare HTTP client construction. Privacy Mode enforces
+# egress at the dialer (privacy_transport.go); a raw http.Client bypasses
+# that chokepoint, so it would silently re-open a hole the moment one
+# reappears. Use newPrivacyHTTPClient(timeout) instead. privacy_transport.go
+# is the sole place allowed to build the gated transport.
+http\.Client\{@@:(exclude)privacy_transport.go
+
+# websocket.DefaultDialer — gorilla's unguarded default WS dialer. Same
+# reason: it dials without consulting Privacy Mode. Use privacyWSDialer().
+# Exception: privacy_transport.go (+ its test) is the one place allowed to touch
+# it — installPrivacyTransport gates the shared DefaultDialer at startup so
+# walletapi/Gnomon library-internal dials pass through the chokepoint.
+websocket\.DefaultDialer@@:(exclude)privacy_transport*
