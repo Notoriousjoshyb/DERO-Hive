@@ -7,6 +7,8 @@ import { join, dirname, basename, relative, sep, extname } from 'node:path';
 import { resolveWithinAllowed, getWorkspaceRoot } from '../utils/pathPolicy';
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_READ_CHARS = 5_000_000;
+const MAX_DIRECTORY_ENTRIES = 1_000;
 
 const MIME_BY_EXT: Record<string, { mime: string; type: Attachment['type'] }> = {
   '.png': { mime: 'image/png', type: 'image' },
@@ -63,7 +65,8 @@ export function registerFsHandlers(): void {
       return { content: buf.toString('base64'), encoding: 'base64', size: buf.length };
     }
     const text = await readFile(validated, 'utf-8');
-    if (limit && text.length > limit) return { content: text.slice(0, limit) + '\n... [truncated]', truncated: true };
+    const maxChars = Math.min(limit || MAX_READ_CHARS, MAX_READ_CHARS);
+    if (text.length > maxChars) return { content: text.slice(0, maxChars) + '\n... [truncated]', truncated: true, encoding: 'utf-8', size: text.length };
     return { content: text, encoding: 'utf-8', size: text.length };
   });
 
@@ -78,7 +81,7 @@ export function registerFsHandlers(): void {
     const validated = resolveWithinAllowed(path);
     if (!existsSync(validated)) return [];
     const entries = await readdir(validated, { withFileTypes: true });
-    return entries.map((e) => ({
+    return entries.slice(0, MAX_DIRECTORY_ENTRIES).map((e) => ({
       name: e.name,
       path: join(validated, e.name),
       isDirectory: e.isDirectory(),

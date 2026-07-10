@@ -37,6 +37,7 @@ export function ProvidersPanel(): JSX.Element {
   // Auto-probe models when baseUrl is present in the form
   useEffect(() => {
     if (!editing) return;
+    if (editing.presetId === 'codex') return; // Codex discovers models via ACP, not HTTP
     if (!editing.baseUrl) return;
 
     if (probeTimer.current) clearTimeout(probeTimer.current);
@@ -71,7 +72,7 @@ export function ProvidersPanel(): JSX.Element {
     return () => {
       if (probeTimer.current) clearTimeout(probeTimer.current);
     };
-  }, [apiKey, editing?.baseUrl, editing?.presetId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, editing?.baseUrl, editing?.presetId]);
 
   const handleSave = async (): Promise<void> => {
     if (!editing) return;
@@ -210,31 +211,59 @@ export function ProvidersPanel(): JSX.Element {
             <Field label="Name">
               <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} className="input w-full" />
             </Field>
-            <Field label="Base URL">
-              <input value={editing.baseUrl} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} className="input w-full font-mono text-xs" />
-            </Field>
-            <Field label="API key (optional)" hint={editing.hasApiKey ? 'Key saved. Leave blank to keep current; type a new value to replace.' : 'Paste your API key if required. Some providers (e.g. local Ollama) do not need one.'}>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={editing.hasApiKey ? '•••••••• (saved)' : 'Paste your API key'}
-                className="input w-full font-mono text-xs"
-              />
-              {probing && (
-                <div className="text-[10px] text-accent mt-1 flex items-center gap-1">
-                  <span className="dot-flashing" /> Fetching live model list…
+            {editing.presetId !== 'codex' && (
+              <Field label="Base URL">
+                <input value={editing.baseUrl} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} className="input w-full font-mono text-xs" />
+              </Field>
+            )}
+            {editing.presetId === 'codex' && (
+              <>
+                <div className="text-xs text-fg-subtle bg-bg-input border border-border rounded p-2">
+                  Codex uses the <code className="font-mono text-[10px]">@agentclientprotocol/codex-acp</code> adapter. Save the provider, then click <b>Models</b> to open the ChatGPT login page and load the model list. No API key is required.
                 </div>
-              )}
-              {!probing && probeError && (
-                <div className="text-[10px] text-warn mt-1">Could not auto-fetch models: {probeError}</div>
-              )}
-              {!probing && !probeError && editing.models.length > 0 && (
-                <div className="text-[10px] text-success mt-1">
-                  ✓ {editing.models.length} model{editing.models.length === 1 ? '' : 's'} loaded
-                </div>
-              )}
-            </Field>
+                <Field label="codex-acp command path" hint="Path to the codex-acp binary or 'npx'. Leave blank to use the bundled node_modules copy or npx fallback.">
+                  <input
+                    value={editing.customHeaders?.commandPath || ''}
+                    onChange={(e) => setEditing({ ...editing, customHeaders: { ...editing.customHeaders, commandPath: e.target.value } })}
+                    placeholder="node_modules/@agentclientprotocol/codex-acp/dist/index.js"
+                    className="input w-full font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Headless / no browser">
+                  <input
+                    type="checkbox"
+                    checked={editing.customHeaders?.noBrowser === '1'}
+                    onChange={(e) => setEditing({ ...editing, customHeaders: { ...editing.customHeaders, noBrowser: e.target.checked ? '1' : '' } })}
+                    className="accent-accent w-4 h-4"
+                  />
+                  <span className="text-[10px] text-fg-subtle ml-2">Hide browser-based ChatGPT auth (e.g., for remote/headless setups)</span>
+                </Field>
+              </>
+            )}
+            {editing.presetId !== 'codex' && (
+              <Field label="API key (optional)" hint={editing.hasApiKey ? 'Key saved. Leave blank to keep current; type a new value to replace.' : 'Paste your API key if required. Some providers (e.g. local Ollama) do not need one.'}>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={editing.hasApiKey ? '•••••••• (saved)' : 'Paste your API key'}
+                  className="input w-full font-mono text-xs"
+                />
+                {probing && (
+                  <div className="text-[10px] text-accent mt-1 flex items-center gap-1">
+                    <span className="dot-flashing" /> Fetching live model list…
+                  </div>
+                )}
+                {!probing && probeError && (
+                  <div className="text-[10px] text-warn mt-1">Could not auto-fetch models: {probeError}</div>
+                )}
+                {!probing && !probeError && editing.models.length > 0 && (
+                  <div className="text-[10px] text-success mt-1">
+                    ✓ {editing.models.length} model{editing.models.length === 1 ? '' : 's'} loaded
+                  </div>
+                )}
+              </Field>
+            )}
             <Field label="Enabled">
               <input type="checkbox" checked={editing.enabled} onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })} className="accent-accent w-4 h-4" />
             </Field>

@@ -5,7 +5,7 @@ import type { McpServerConfig, McpServerStatus, ToolDefinition } from '@shared/t
 import { getDb } from '../db/client';
 import { logger } from '../utils/logger';
 import { resourcesRoot } from '../utils/paths';
-import { isPathWithin } from '../utils/pathPolicy';
+import { getWorkspaceRoot, isPathWithin } from '../utils/pathPolicy';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -28,7 +28,7 @@ function validateMcpConfig(cfg: McpServerConfig): void {
     }
   }
   if (cfg.cwd) {
-    if (!isPathWithin(cfg.cwd, resourcesRoot) && !isPathWithin(cfg.cwd, process.cwd())) {
+    if (!isPathWithin(cfg.cwd, resourcesRoot) && !isPathWithin(cfg.cwd, getWorkspaceRoot())) {
       throw new Error(`MCP server cwd outside allowed roots: ${cfg.cwd}`);
     }
   }

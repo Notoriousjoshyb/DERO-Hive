@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "postinstall": "electron-rebuild -f -w better-sqlite3 && node scripts/setup-whisper.mjs && node scripts/setup-mcp.mjs && node scripts/setup-simulator.mjs",
+    "postinstall": "node scripts/patch-codex-acp.mjs && electron-rebuild -f -w better-sqlite3 && node scripts/setup-whisper.mjs && node scripts/setup-mcp.mjs && node scripts/setup-simulator.mjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "setup:whisper": "node scripts/setup-whisper.mjs",
     "setup:mcp": "node scripts/setup-mcp.mjs",
@@ -19,9 +19,11 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "lint": "eslint . --ext .ts,.tsx"
+    "lint": "eslint \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
+    "@agentclientprotocol/codex-acp": "^1.1.2",
+    "@agentclientprotocol/sdk": "^1.2.1",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "better-sqlite3": "^11.3.0",
     "electron-store": "^10.0.0",
@@ -44,6 +46,7 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "@electron/rebuild": "^4.2.0",
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.7.4",
     "@types/react": "^18.3.11",
@@ -53,9 +56,11 @@
     "electron": "^32.1.2",
     "electron-builder": "^25.0.5",
     "electron-vite": "^2.3.0",
+    "eslint": "^10.6.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.2",
+    "typescript-eslint": "^8.63.0",
     "vite": "^5.4.8"
   },
   "build": {
@@ -98,7 +103,11 @@
     ],
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**",
-      "**/node_modules/shiki/**"
+      "**/node_modules/shiki/**",
+      "**/node_modules/@agentclientprotocol/codex-acp/**",
+      "**/node_modules/@openai/codex/**",
+      "**/node_modules/@openai/codex-win32-x64/**",
+      "**/node_modules/@openai/codex-win32-arm64/**"
     ],
     "win": {
       "target": [

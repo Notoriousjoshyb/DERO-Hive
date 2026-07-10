@@ -1,11 +1,12 @@
 import { resolve, isAbsolute, relative } from 'node:path';
 import { getSetting, getDb } from '../db/client';
+import { getDefaultWorkspace } from './paths';
 
 export function getWorkspaceRoot(): string {
   try {
-    return getSetting<string>('workingDirectory') || process.cwd();
+    return getSetting<string>('workingDirectory') || getDefaultWorkspace();
   } catch {
-    return process.cwd();
+    return getDefaultWorkspace();
   }
 }
 

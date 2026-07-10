@@ -3,7 +3,6 @@ import { EventEmitter } from 'node:events';
 import { getDb, getSetting } from '../db/client';
 import { BUILTIN_TOOLS, builtinExecutors } from './builtin';
 import { McpManager } from '../mcp/manager';
-import { logger } from '../utils/logger';
 
 export interface ToolContext {
   cwd: string;
@@ -149,7 +148,7 @@ export class ToolRegistry extends EventEmitter {
     return ['run_shell', 'write_file', 'edit_file'].includes(name);
   }
 
-  private async requestPermission(req: PermissionRequest): Promise<boolean> {
+  async requestPermission(req: PermissionRequest): Promise<boolean> {
     this.emit('request', req);
     return new Promise<boolean>((resolve) => {
       const wrap = (allow: boolean): void => resolve(allow);

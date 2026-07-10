@@ -2,6 +2,7 @@ import type { ProviderConfig } from '@shared/types';
 import type { ProviderAdapter } from './base';
 import { OpenAICompatibleAdapter } from './openai-compatible';
 import { AnthropicAdapter } from './anthropic';
+import { CodexAcpAdapter } from './codex-acp';
 import { getSecret } from '../utils/secrets';
 import { getDb } from '../db/client';
 import { logger } from '../utils/logger';
@@ -11,6 +12,10 @@ const providers = new Map<string, ProviderAdapter>();
 // Heuristic to pick the right adapter based on baseUrl / presetId
 export function adapterFor(cfg: ProviderConfig): ProviderAdapter | null {
   if (!cfg.enabled) return null;
+  // Codex uses the Agent Client Protocol adapter; it handles ChatGPT auth itself.
+  if (cfg.presetId === 'codex') {
+    return new CodexAcpAdapter(cfg);
+  }
   const apiKey = getSecret(`provider:${cfg.id}`);
   // Anthropic has its own API shape; only use AnthropicAdapter for actual Anthropic hosts
   if (cfg.presetId === 'anthropic' || /anthropic\.com/.test(cfg.baseUrl)) {
@@ -31,7 +36,19 @@ export function getAdapter(id: string): ProviderAdapter | null {
 }
 
 export function clearAdapterCache(): void {
+  for (const adapter of providers.values()) {
+    try { void adapter.dispose?.(); } catch { /* best-effort cleanup */ }
+  }
   providers.clear();
+}
+
+export async function shutdownAdapterCache(): Promise<void> {
+  await Promise.allSettled([...providers.values()].map((adapter) => adapter.dispose?.()));
+  providers.clear();
+}
+
+export async function closeConversationSessions(conversationId: string): Promise<void> {
+  await Promise.allSettled([...providers.values()].map((adapter) => adapter.closeConversation?.(conversationId)));
 }
 
 export function listProviders(): ProviderConfig[] {
@@ -67,9 +84,7 @@ function safeJson<T>(s: string | null | undefined, fallback: T): T {
 }
 
 export async function testConnection(id: string): Promise<{ ok: boolean; error?: string; models?: string[] }> {
-  const cfg = getProviderConfig(id);
-  if (!cfg) return { ok: false, error: 'Provider not found' };
-  const adapter = adapterFor(cfg);
+  const adapter = getAdapter(id);
   if (!adapter) return { ok: false, error: 'Provider not enabled' };
   try {
     const r = await adapter.testConnection();

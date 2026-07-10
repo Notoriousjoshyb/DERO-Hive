@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, Skill, ToolDefinition, Attachment } from '@shared/types';
+import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, Skill, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -30,7 +30,7 @@ export interface QueueItem {
   skillName?: string;
   systemPrompt?: string;
   planMode?: boolean;
-  reasoning?: 'off' | 'low' | 'medium' | 'high';
+  reasoning?: ThinkingEffort;
 }
 
 export interface TodoItem {
@@ -155,11 +155,11 @@ interface AppState {
   composerFocusMode: boolean;
   composerPlanMode: boolean;
   composerAgent: string;
-  composerReasoning: 'off' | 'low' | 'medium' | 'high';
+  composerReasoning: ThinkingEffort;
   toggleComposerFocus: () => void;
   toggleComposerPlan: () => void;
   cycleComposerReasoning: () => void;
-  setComposerReasoning: (level: 'off' | 'low' | 'medium' | 'high') => void;
+  setComposerReasoning: (level: ThinkingEffort) => void;
   setComposerAgent: (agent: string) => void;
 
   // Attachments for next send
@@ -339,6 +339,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   createConversation: async (data) => {
+    // A new chat always lands in the chat view — leave any full-view tab
+    // (Code/Vision) that currently occupies the main column.
+    set({ codeTabOpen: false, visionTabOpen: false });
     const { id } = await window.hive.convCreate({
       ...data,
       providerId: data?.providerId || get().selectedProviderId,
@@ -477,7 +480,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     void get().updateSettings({ composerPlanMode: next });
   },
   cycleComposerReasoning: () => {
-    const order: Array<'off' | 'low' | 'medium' | 'high'> = ['off', 'low', 'medium', 'high'];
+    const order: ThinkingEffort[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
     const cur = get().composerReasoning;
     const idx = order.indexOf(cur);
     const next = order[(idx + 1) % order.length];

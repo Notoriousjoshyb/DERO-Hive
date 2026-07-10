@@ -58,7 +58,7 @@ export interface ChatRequest {
   maxTokens?: number;
   systemPrompt?: string;
   stream?: boolean;
-  reasoning?: { effort?: 'low' | 'medium' | 'high' };
+  reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
   planMode?: boolean;
   toolApprovalModeOverride?: 'always' | 'project' | 'never';
   attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
@@ -98,8 +98,20 @@ export interface ProviderModel {
   supportsVision?: boolean;
   supportsAudio?: boolean;
   supportsReasoning?: boolean;
+  /** Exact effort values reported by providers that support live discovery (for example Codex ACP). */
+  thinkingOptions?: ThinkingOption[];
   inputPrice?: number; // $/1M tokens
   outputPrice?: number;
+}
+
+// Not every provider accepts the same effort values. The capability registry
+// limits the composer to the values that are valid for the selected model.
+export type ThinkingEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface ThinkingOption {
+  id: Exclude<ThinkingEffort, 'off'>;
+  label: string;
+  description: string;
 }
 
 export interface ProviderConfig {
@@ -215,7 +227,7 @@ export interface AppSettings {
   composerFocusMode?: boolean;
   composerPlanMode?: boolean;
   composerAgent?: string; // "default" | other
-  composerReasoning?: 'off' | 'low' | 'medium' | 'high';
+  composerReasoning?: ThinkingEffort;
   microphoneDeviceId?: string;
   voiceNotificationSounds?: boolean;
   voiceNotificationVolume?: number;
@@ -340,6 +352,8 @@ export const IPC = {
   APP_OPEN_EXTERNAL: 'app:openExternal',
   APP_PLATFORM: 'app:platform',
   APP_VERSION: 'app:version',
+  UPDATE_CHECK: 'update:check',
+  UPDATE_INSTALL: 'update:install',
 
   // Whisper (local speech-to-text)
   WHISPER_STATUS: 'whisper:status',

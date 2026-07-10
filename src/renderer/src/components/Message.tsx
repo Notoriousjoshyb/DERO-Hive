@@ -54,7 +54,7 @@ export function Message({ message }: Props): JSX.Element {
   }, [message.id, message.role, currentConversationId]);
 
   const copyMessage = async (): Promise<void> => {
-    let text = '';
+    let text: string;
     if (message.role === 'assistant' && typeof cleanContent === 'string') {
       text = cleanContent;
     } else {

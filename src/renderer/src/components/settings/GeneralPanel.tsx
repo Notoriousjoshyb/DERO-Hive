@@ -43,8 +43,6 @@ export function GeneralPanel(): JSX.Element {
   };
 
   const defaultProvider = providers.find((p) => p.id === settings.defaultProviderId);
-  const defaultModel = defaultProvider?.models.find((m) => m.id === settings.defaultModelId);
-
   return (
     <div className="space-y-6 max-w-xl">
       <Section title="Appearance">

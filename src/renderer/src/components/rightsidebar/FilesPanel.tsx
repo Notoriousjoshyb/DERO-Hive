@@ -15,14 +15,6 @@ const SKIP_DIRS = new Set([
   '.vscode', '.DS_Store', 'coverage', '.turbo', '.svelte-kit'
 ]);
 
-interface TreeNode {
-  entry: FileEntry;
-  children?: FileEntry[];
-  loading?: boolean;
-  loaded?: boolean;
-  error?: string;
-}
-
 function formatSize(bytes?: number): string {
   if (bytes === undefined) return '';
   if (bytes < 1024) return `${bytes}B`;

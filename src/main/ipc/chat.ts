@@ -8,6 +8,7 @@ import { ToolRegistry } from '../tools/registry';
 import { McpManager } from '../mcp/manager';
 import { getDb } from '../db/client';
 import { getSetting } from '../db/client';
+import { getDefaultWorkspace } from '../utils/paths';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
 
 const activeRequests = new Map<string, AbortController>();
@@ -32,15 +33,14 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
   });
 
   ipcMain.handle(IPC.CHAT_SEND, async (_e, req: ChatRequest & { systemPrompt?: string }) => {
-    return runChat(req as ChatRequest, getWin, tools, mcpManager);
+    return runChat(req as ChatRequest, getWin, tools);
   });
 }
 
 async function runChat(
   req: ChatRequest,
   getWin: () => BrowserWindow | null,
-  tools: ToolRegistry,
-  mcpManager: McpManager | null
+  tools: ToolRegistry
 ): Promise<{ messageId: string }> {
   const abort = new AbortController();
   activeRequests.set(req.conversationId, abort);
@@ -70,14 +70,15 @@ async function runChat(
 
       send({ type: 'start', conversationId: req.conversationId, messageId });
 
-      // Resolve working directory: project path > global setting > process.cwd()
+      // Resolve working directory: project path > global setting > the app's
+      // default workspace (Documents\DERO Hive) — never the app's own folder.
       const conv = getDb().prepare('SELECT project_id FROM conversations WHERE id = ?').get(req.conversationId) as { project_id?: string } | undefined;
       let projectPath: string | undefined;
       if (conv?.project_id) {
         const proj = getDb().prepare('SELECT path FROM projects WHERE id = ?').get(conv.project_id) as { path?: string } | undefined;
         projectPath = proj?.path;
       }
-      const cwd = projectPath || getSetting<string>('workingDirectory') || process.cwd();
+      const cwd = projectPath || getSetting<string>('workingDirectory') || getDefaultWorkspace();
       if (projectPath) {
         logger.info('chat', `using project cwd: ${projectPath}`);
       }
@@ -158,7 +159,7 @@ async function runChat(
       if (initialPercent >= AUTO_COMPACT_THRESHOLD && messages.length > 8) {
         logger.info('chat', `auto-compacting conversation ${req.conversationId} (${Math.round(initialPercent * 100)}% of ${effectiveLimit} tokens)`);
         try {
-          const compactResult = await compactConversationInPlace(req.conversationId, req.providerId, req.model);
+          const compactResult = await compactConversationInPlace(req.conversationId);
           if (compactResult.removedCount > 0) {
             // Reload the message list from DB
             const freshMessages = getDb().prepare(
@@ -201,6 +202,8 @@ async function runChat(
         const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         for await (const evt of adapter.stream({
+          conversationId: req.conversationId,
+          cwd,
           model: req.model,
           messages: truncateMessagesForContext(currentMessages, modelDef, systemPrompt),
           tools: availableTools,
@@ -209,7 +212,8 @@ async function runChat(
           topP: req.topP,
           maxTokens: req.maxTokens,
           reasoning: req.reasoning,
-          signal: abort.signal
+          signal: abort.signal,
+          requestPermission: (permission) => tools.requestPermission(permission)
         })) {
           if (abort.signal.aborted) break;
           if (evt.type === 'delta' && evt.content) {
@@ -354,8 +358,6 @@ function updateConversationTokens(conversationId: string, tokens: number): void 
 // is over the threshold. Mirrors the logic in conversations.ts IPC handler.
 async function compactConversationInPlace(
   conversationId: string,
-  _providerId: string,
-  _model: string
 ): Promise<{ removedCount: number; beforeTokens: number; afterTokens: number; tokensSaved: number }> {
   const config = { keepRecentMessages: 6, truncateToolOutputChars: 4000, maxHistoryMessageChars: 8000 };
   const messages = getDb().prepare(
@@ -390,7 +392,7 @@ async function compactConversationInPlace(
       const sent = text.split(/[.!?]\s+/).find((s) => /^(let me|now i|next,? i|I'll|going to|here's)/i.test(s));
       if (sent && sent.length < 250) decisions.push(`• ${sent.trim()}`);
     } else if (m.role === 'tool') {
-      const fileMatch = text.match(/(?:^|\s)([A-Z]:[\\\\\/][^\s'"<>|]+|\/[\w./-]+|\.\.?\/[\w./-]+)/);
+      const fileMatch = text.match(/(?:^|\s)([A-Z]:[\\\\/][^\s'"<>|]+|\/[\w./-]+|\.\.?\/[\w./-]+)/);
       if (fileMatch) files.add(fileMatch[1]);
       if (m.name === 'run_shell' && /(?:error|fatal|failed|exception)/i.test(text)) {
         errors.push(`• [${m.name}] ${text.slice(0, 200)}`);

@@ -4,6 +4,7 @@ import type { Attachment } from '@shared/types';
 import { ComposerToolbar } from './ComposerToolbar';
 import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
+import { thinkingOptionsFor } from '@shared/thinkingCapabilities';
 
 interface Props {
   conversationId?: string;
@@ -149,12 +150,10 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
     let convId = conversationId;
     if (!convId) {
-      // Inherit projectId from the most recent conversation if it had one set
-      const recentWithProject = useAppStore.getState().conversations.find((c) => c.projectId);
-      const projectId = recentWithProject?.projectId;
+      // New chats from the composer are standalone. Project chats are created
+      // explicitly via a project's "+" button (or by moving a chat into one).
       convId = await useAppStore.getState().createConversation({
-        title: content.slice(0, 60),
-        projectId
+        title: content.slice(0, 60)
       });
     } else {
       // Only auto-title untouched conversations — never clobber a name the
@@ -187,7 +186,16 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     const messagesToSend = useAppStore.getState().currentMessages;
 
     try {
-      const reasoning = composerReasoning === 'off' ? undefined : { effort: composerReasoning };
+      const provider = state.providers.find((item) => item.id === providerId);
+      const selectedProviderModel = provider?.models.find((item) => item.id === model);
+      const supportedThinking = thinkingOptionsFor(
+        provider?.presetId,
+        model,
+        selectedProviderModel
+      );
+      const reasoning = composerReasoning !== 'off' && supportedThinking.some((item) => item.id === composerReasoning)
+        ? { effort: composerReasoning }
+        : undefined;
       const { messageId } = await window.hive.chatSend({
         conversationId: convId,
         providerId,
@@ -206,7 +214,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       useAppStore.getState().setChatError(msg);
-      useAppStore.setState((s) => ({ isStreaming: false }));
+      useAppStore.setState(() => ({ isStreaming: false }));
     }
   };
 

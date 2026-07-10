@@ -1,10 +1,10 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
   // Chat
-  chatSend: (req: { conversationId: string; providerId: string; model: string; messages: Message[]; systemPrompt?: string; temperature?: number; topP?: number; maxTokens?: number; tools?: ToolDefinition[]; reasoning?: { effort?: 'low' | 'medium' | 'high' }; attachments?: { type: string; filename: string; mimeType: string; data: string }[] }) =>
+  chatSend: (req: { conversationId: string; providerId: string; model: string; messages: Message[]; systemPrompt?: string; temperature?: number; topP?: number; maxTokens?: number; tools?: ToolDefinition[]; reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> }; attachments?: { type: string; filename: string; mimeType: string; data: string }[] }) =>
     ipcRenderer.invoke(IPC.CHAT_SEND, req),
   chatAbort: (conversationId: string) => ipcRenderer.invoke(IPC.CHAT_ABORT, conversationId),
   onChatStream: (cb: (e: StreamEvent) => void) => {
@@ -116,6 +116,8 @@ const api = {
   openExternal: (url: string) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),
   platform: () => ipcRenderer.invoke(IPC.APP_PLATFORM),
   version: () => ipcRenderer.invoke(IPC.APP_VERSION),
+  updateCheck: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => ipcRenderer.invoke(IPC.UPDATE_INSTALL, a),
 
   // Whisper (local STT)
   whisperStatus: () => ipcRenderer.invoke(IPC.WHISPER_STATUS),

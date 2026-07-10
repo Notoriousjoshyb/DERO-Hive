@@ -24,6 +24,22 @@ export const paths = {
   whisperUser: join(app.getPath('userData'), 'whisper')
 };
 
+// Default workspace for chats with no project and no configured working
+// directory. Never process.cwd() — in dev that is the app's own source folder,
+// and files the assistant creates must not land there.
+export function getDefaultWorkspace(): string {
+  const dir = join(app.getPath('documents'), 'DERO Hive');
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  } catch {
+    // Documents unavailable (rare) — fall back to userData, still not cwd.
+    const alt = join(app.getPath('userData'), 'workspace');
+    if (!existsSync(alt)) mkdirSync(alt, { recursive: true });
+    return alt;
+  }
+  return dir;
+}
+
 export function ensureDirs(): void {
   for (const dir of [paths.logs, paths.cache, paths.skills, paths.attachments, paths.artifacts]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fg from 'fast-glob';
-import { logger } from '../utils/logger';
 import { resolveAndValidate } from '../utils/pathPolicy';
 import type { ToolExecutor, ToolContext } from './registry';
 
@@ -147,11 +146,6 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   LIST_DIR_DEF, GLOB_DEF, GREP_DEF,
   SHELL_DEF, TODO_DEF
 ];
-
-function countLines(s: string): number {
-  if (!s) return 0;
-  return s.split('\n').length;
-}
 
 function diffStats(oldText: string, newText: string): { added: number; removed: number } {
   // Approximate diff: lines in new not in old (added) and lines in old not in new (removed).
@@ -304,7 +298,7 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
     }
   },
 
-  async todo_write(args, _ctx) {
+  async todo_write(args) {
     const { todos } = args as { todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed'; active_form?: string }> };
     const formatted = todos.map((t) => `[${t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : ' '}] ${t.content}`).join('\n');
     return { content: formatted, meta: { todos } };

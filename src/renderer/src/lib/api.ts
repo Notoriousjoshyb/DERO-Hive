@@ -7,7 +7,6 @@ import type {
   ProviderConfig,
   ProviderModel,
   ProviderPreset,
-  PermissionRule,
   Project,
   Skill,
   AppSettings,
@@ -114,6 +113,12 @@ declare global {
       openExternal: (url: string) => Promise<void>;
       platform: () => Promise<NodeJS.Platform>;
       version: () => Promise<string>;
+      updateCheck: () => Promise<{
+        ok: boolean; current: string; latest?: string; updateAvailable?: boolean;
+        url?: string; assetUrl?: string; assetName?: string; notes?: string;
+        noReleases?: boolean; error?: string;
+      }>;
+      updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => Promise<{ ok: boolean; launched?: boolean; error?: string }>;
 
       winMinimize: () => Promise<void>;
       winMaximize: () => Promise<boolean>;

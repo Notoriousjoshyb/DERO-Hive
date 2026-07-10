@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/app';
-import { blobToWhisperWavBase64, pcmToWhisperWavBase64 } from '../lib/audioWav';
+import { pcmToWhisperWavBase64 } from '../lib/audioWav';
 import type { WhisperStatus } from '@shared/types';
 
 interface Props {

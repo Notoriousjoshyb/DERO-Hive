@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { IPC, type ProviderConfig, type ProviderModel } from '@shared/types';
 import { getDb } from '../db/client';
 import { setSecret, deleteSecret, getSecret } from '../utils/secrets';
-import { clearAdapterCache, listProviders, testConnection, getProviderConfig } from '../providers/registry';
+import { clearAdapterCache, listProviders, testConnection, getProviderConfig, getAdapter } from '../providers/registry';
 import { PROVIDER_PRESETS, findPreset } from '@shared/presets';
 import { logger } from '../utils/logger';
 import { fetchLiveModels } from '../providers/models';
@@ -89,8 +89,17 @@ export function registerProviderHandlers(): void {
     clearAdapterCache();
     logger.info('providers', `saved ${final.name}`);
 
-    // Auto-fetch live models in the background so the list is current
-    void refreshModelsInBackground(final.id);
+    // Saving Codex is an explicit user action, so immediately start its
+    // ChatGPT OAuth-backed discovery. Startup/list refreshes still skip it to
+    // avoid opening a browser unexpectedly later.
+    if (final.presetId === 'codex') {
+      void refreshModelsNow(final.id).then((result) => {
+        if (!result.ok) logger.warn('providers', `Codex model discovery failed for ${final.id}: ${result.error}`);
+      });
+    } else {
+      // Auto-fetch live models in the background so the list is current.
+      void refreshModelsInBackground(final.id);
+    }
 
     // Strip the plaintext key before returning to renderer
     return { ...final, apiKey: '', hasApiKey: !!cfg.apiKey || !!getSecret(`provider:${final.id}`) };
@@ -123,6 +132,9 @@ export function registerProviderHandlers(): void {
 
 async function refreshModelsInBackground(id: string): Promise<void> {
   if (refreshInFlight.has(id)) return;
+  const cfg = getProviderConfig(id);
+  // Codex requires interactive browser login; don't auto-refresh it silently.
+  if (cfg?.presetId === 'codex') return;
   refreshInFlight.add(id);
   try {
     const r = await refreshModelsNow(id);
@@ -138,6 +150,16 @@ async function refreshModelsInBackground(id: string): Promise<void> {
 async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: string; models?: string[]; fetchedAt?: number }> {
   const cfg = getProviderConfig(id);
   if (!cfg) return { ok: false, error: 'Provider not found' };
+
+  // Codex (ACP) discovers models through its own adapter, not an OpenAI /models endpoint.
+  if (cfg.presetId === 'codex') {
+    const adapter = getAdapter(id);
+    if (!adapter) return { ok: false, error: 'Codex provider not enabled' };
+    const r = await adapter.testConnection();
+    if (!r.ok || !r.models) return { ok: false, error: r.error || 'No models found' };
+    return updateProviderModels(id, r.models, cfg, r.modelDetails);
+  }
+
   // Read the secret directly — the loaded config has apiKey stripped for safety
   const apiKey = getSecret(`provider:${id}`) || '';
 
@@ -146,14 +168,26 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
   if (!live.models || live.models.length === 0) {
     return { ok: false, error: 'Provider returned no models' };
   }
+  return updateProviderModels(id, live.models, cfg, live.details);
+}
+
+async function updateProviderModels(
+  id: string,
+  modelIds: string[],
+  cfg: ProviderConfig,
+  details?: Record<string, Partial<ProviderModel>>
+): Promise<{ ok: boolean; error?: string; models?: string[]; fetchedAt?: number }> {
+  if (modelIds.length === 0) {
+    return { ok: false, error: 'Provider returned no models' };
+  }
 
   // Use live list as the source of truth and rebuild metadata each refresh:
   // what the provider reports live wins, then applyKnownMetadata fills the
   // gaps from our table. Deliberately NOT carrying stored metadata forward —
   // it only ever came from these same sources and would pin stale values.
-  const liveModels: ProviderModel[] = live.models.map((modelId) => {
+  const liveModels: ProviderModel[] = modelIds.map((modelId) => {
     const existing = cfg.models.find((m) => m.id === modelId);
-    const detail = live.details?.[modelId];
+    const detail = details?.[modelId];
     return {
       id: modelId,
       name: detail?.name || existing?.name || modelId,
@@ -161,7 +195,8 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
       maxOutput: detail?.maxOutput,
       supportsVision: detail?.supportsVision,
       supportsTools: detail?.supportsTools,
-      supportsReasoning: detail?.supportsReasoning
+      supportsReasoning: detail?.supportsReasoning,
+      thinkingOptions: detail?.thinkingOptions
     };
   });
   const merged = applyKnownMetadata(liveModels);
@@ -169,7 +204,6 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
   const now = Date.now();
   getDb().prepare('UPDATE providers SET models = ?, models_fetched_at = ?, updated_at = ? WHERE id = ?')
     .run(JSON.stringify(merged), now, now, id);
-  clearAdapterCache();
 
   // Notify renderer to refresh
   const { BrowserWindow } = await import('electron');
@@ -178,9 +212,4 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
   });
 
   return { ok: true, models: merged.map((m) => m.id), fetchedAt: now };
-}
-
-function safeJson<T>(s: string | null | undefined, fallback: T): T {
-  if (!s) return fallback;
-  try { return JSON.parse(s) as T; } catch { return fallback; }
 }

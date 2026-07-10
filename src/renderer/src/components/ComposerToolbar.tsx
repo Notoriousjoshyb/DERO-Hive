@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/app';
 import type { ProviderModel } from '@shared/types';
+import { thinkingOptionsFor, usesDefaultThinkingOptions } from '@shared/thinkingCapabilities';
 import { VoiceInput } from './VoiceInput';
 
 interface Props {
@@ -15,7 +16,6 @@ interface Props {
 }
 
 const EMPTY_FAVS: string[] = [];
-
 export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend, onVoiceResult, onAttachGh, focusComposer }: Props): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const providers = useAppStore((s) => s.providers);
@@ -33,11 +33,35 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const toggleFocus = useAppStore((s) => s.toggleComposerFocus);
   const agent = useAppStore((s) => s.composerAgent);
   const setAgent = useAppStore((s) => s.setComposerAgent);
+  const loadProviders = useAppStore((s) => s.loadProviders);
 
   const provider = providers.find((p) => p.id === selectedProviderId);
+  const selectedProviderModel = provider?.models.find((model) => model.id === selectedModel);
+  const thinkingOptions = thinkingOptionsFor(
+    provider?.presetId,
+    selectedModel,
+    selectedProviderModel
+  );
+  const thinkingAvailable = thinkingOptions.length > 0;
+  const usingDefaultThinking = usesDefaultThinkingOptions(
+    provider?.presetId,
+    selectedModel,
+    selectedProviderModel
+  );
+
+  // A model switch can invalidate the previously selected effort. Reset the
+  // composer immediately so the label and the request stay in sync.
+  useEffect(() => {
+    if (usingDefaultThinking && reasoning === 'off') {
+      setReasoning('medium');
+    } else if (reasoning !== 'off' && !thinkingOptions.some((option) => option.id === reasoning)) {
+      setReasoning('off');
+    }
+  }, [reasoning, setReasoning, thinkingOptions, usingDefaultThinking]);
 
   type MenuId = 'model' | 'agent' | 'perm' | 'attach' | 'think';
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
+  const [loadingThinking, setLoadingThinking] = useState(false);
   const closeAll = (): void => setOpenMenu(null);
   // Toggle a menu: clicking the already-open trigger closes it, otherwise
   // switches to the clicked one (closing any other). Reading openMenu from the
@@ -70,6 +94,18 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const permLabel = settings.toolApprovalMode === 'never' ? 'No approval'
     : settings.toolApprovalMode === 'project' ? 'Ask once/session'
     : 'Always ask';
+
+  const loadCodexThinking = async (): Promise<void> => {
+    if (!selectedProviderId || provider?.presetId !== 'codex' || loadingThinking) return;
+    setLoadingThinking(true);
+    try {
+      const result = await window.hive.providerRefreshModels(selectedProviderId);
+      if (!result.ok) useAppStore.getState().setChatError(result.error || 'Could not load Codex thinking options.');
+      else await loadProviders();
+    } finally {
+      setLoadingThinking(false);
+    }
+  };
 
   return (
     <div ref={toolbarRef} className="flex items-center justify-between flex-wrap gap-1 px-2 py-1.5 border-t border-border min-w-0">
@@ -213,7 +249,10 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); selectedProviderId && toggleFavourite(selectedProviderId, m.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (selectedProviderId) toggleFavourite(selectedProviderId, m.id);
+                            }}
                             title={isFav ? 'Unfavourite' : 'Favourite'}
                             className={`text-[10px] px-1 ${isFav ? 'text-warn' : 'text-fg-subtle hover:text-warn'}`}
                           >
@@ -231,27 +270,31 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
         <div className="relative">
           <button
             type="button"
-            onClick={() => toggleMenu('think')}
-            title={`Thinking effort: ${reasoning}`}
+            onClick={() => {
+              if (thinkingAvailable) toggleMenu('think');
+              else void loadCodexThinking();
+            }}
+            disabled={!thinkingAvailable && provider?.presetId !== 'codex'}
+            title={thinkingAvailable ? `Thinking effort: ${reasoning}` : provider?.presetId === 'codex' ? 'Load exact thinking options for this Codex account and model' : 'Thinking is not available for this model'}
             className={`px-2 py-1 rounded text-[11px] flex items-center gap-1 transition ${
-              reasoning === 'off' ? 'text-fg-muted hover:text-fg hover:bg-bg-elev'
+              !thinkingAvailable && provider?.presetId !== 'codex' ? 'text-fg-subtle cursor-not-allowed opacity-60'
+              : !thinkingAvailable ? 'text-accent hover:bg-accent/10'
+              : reasoning === 'off' ? 'text-fg-muted hover:text-fg hover:bg-bg-elev'
               : reasoning === 'low' ? 'text-success bg-success/10 hover:bg-success/20'
               : reasoning === 'medium' ? 'text-accent bg-accent/10 hover:bg-accent/20'
               : 'text-warn bg-warn/10 hover:bg-warn/20'
             }`}
-          >
+            >
             <BrainIcon />
-            <span className="capitalize">{reasoning === 'off' ? 'Think' : reasoning}</span>
+            <span className="capitalize">{thinkingAvailable ? reasoning === 'off' ? 'Think' : reasoning : loadingThinking ? 'Loading…' : provider?.presetId === 'codex' ? 'Load thinking' : 'No thinking'}</span>
             <ChevronIcon />
           </button>
           {thinkMenuOpen && (
             <div className="absolute bottom-full right-0 mb-1 menu-panel overflow-hidden min-w-44 z-50">
               <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Thinking effort</div>
               {([
-                { id: 'off', label: 'Off', desc: 'Respond directly' },
-                { id: 'low', label: 'Low', desc: 'Brief reasoning' },
-                { id: 'medium', label: 'Medium', desc: 'Balanced' },
-                { id: 'high', label: 'High', desc: 'Deep reasoning' }
+                { id: 'off', label: 'Default', desc: 'Use the model and provider default' },
+                ...thinkingOptions.map((opt) => ({ ...opt, desc: opt.description }))
               ] as const).map((opt) => (
                 <button
                   key={opt.id}

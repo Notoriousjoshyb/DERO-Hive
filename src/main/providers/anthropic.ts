@@ -2,6 +2,7 @@ import type { ProviderAdapter, ProviderStreamRequest, ProviderStreamEvent } from
 import { parseSSE } from './streaming';
 import type { ProviderConfig, ContentPart } from '@shared/types';
 import { logger } from '../utils/logger';
+import { anthropicThinkingBudget, supportsAnthropicExtendedThinking } from '@shared/thinkingCapabilities';
 
 // Anthropic Messages API adapter. Translates OpenAI-style internal types to Anthropic format.
 // Supports: system prompt, multi-modal (images), tools, prompt caching, extended thinking.
@@ -105,9 +106,13 @@ export class AnthropicAdapter implements ProviderAdapter {
     const url = `${this.cfg.baseUrl.replace(/\/$/, '')}/messages`;
     const messages = this.toAnthropicMessages(req.messages as never[]);
 
+    const thinkingBudget = req.reasoning?.effort && supportsAnthropicExtendedThinking(this.cfg.presetId, req.model)
+      ? anthropicThinkingBudget(req.reasoning.effort)
+      : undefined;
     const body: Record<string, unknown> = {
       model: req.model,
-      max_tokens: req.maxTokens || 8192,
+      // Anthropic requires the output limit to exceed the thinking budget.
+      max_tokens: Math.max(req.maxTokens || 8192, thinkingBudget ? thinkingBudget + 1024 : 0),
       messages
     };
     if (req.systemPrompt) body.system = req.systemPrompt;
@@ -122,9 +127,8 @@ export class AnthropicAdapter implements ProviderAdapter {
       }));
     }
 
-    if (req.reasoning) {
-      // Extended thinking
-      (body as Record<string, unknown>).thinking = { type: 'enabled', budget_tokens: 4096 };
+    if (thinkingBudget) {
+      (body as Record<string, unknown>).thinking = { type: 'enabled', budget_tokens: thinkingBudget };
     }
 
     logger.debug('anthropic', `POST ${url} model=${req.model}`);

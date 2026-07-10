@@ -26,6 +26,7 @@ import { McpManager } from './mcp/manager';
 import { WhisperManager } from './whisper/manager';
 import { SimulatorManager } from './simulator/manager';
 import { terminalDisposeAll } from './terminal/session';
+import { shutdownAdapterCache } from './providers/registry';
 import type { AppSettings } from '../shared/types';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -303,6 +304,7 @@ app.on('before-quit', async (event) => {
   isQuitting = true;
   event.preventDefault();
   try { terminalDisposeAll(); } catch { /* ignore */ }
+  try { await shutdownAdapterCache(); } catch { /* ignore */ }
   try { await simulatorManager?.stop(); } catch { /* ignore */ }
   try { await whisperManager?.stop(); } catch { /* ignore */ }
   try { await mcpManager?.shutdownAll(); } catch { /* ignore */ }

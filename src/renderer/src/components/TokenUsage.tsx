@@ -158,8 +158,7 @@ export function ContextIndicator({ promptChars = 0 }: { promptChars?: number }):
     const estimatedUsed = breakdown.total + promptTokens + attachTokens;
     const used = latestUsed > 0 ? latestUsed : estimatedUsed;
     return {
-      pressure: calculatePressure(used, model),
-      breakdown
+      pressure: calculatePressure(used, model)
     };
   }, [messages, promptChars, pendingAttachments, model]);
 
@@ -167,7 +166,6 @@ export function ContextIndicator({ promptChars = 0 }: { promptChars?: number }):
     await compactConversation();
   }, [compactConversation]);
 
-  const breakdown = info.breakdown;
   const usedPercent = info.pressure.percent;
   const showCompact = usedPercent >= 70 && !isStreaming && messages.length > 4;
 

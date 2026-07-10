@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { IPC, type Conversation, type Message } from '@shared/types';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client';
+import { closeConversationSessions } from '../providers/registry';
 
 export function registerConvHandlers(): void {
   ipcMain.handle(IPC.CONV_LIST, (_e, opts?: { archived?: boolean; projectPath?: string }) => {
@@ -51,7 +52,9 @@ export function registerConvHandlers(): void {
     for (const [k, v] of Object.entries(data)) {
       if (k in map) {
         fields.push(`${map[k]} = ?`);
-        values.push(typeof v === 'boolean' ? (v ? 1 : 0) : v);
+        // undefined means "clear this field" (e.g. detach from a project) —
+        // sqlite can't bind undefined, so store NULL.
+        values.push(v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v);
       }
     }
     fields.push('updated_at = ?');
@@ -61,7 +64,8 @@ export function registerConvHandlers(): void {
     return { ok: true };
   });
 
-  ipcMain.handle(IPC.CONV_DELETE, (_e, id: string) => {
+  ipcMain.handle(IPC.CONV_DELETE, async (_e, id: string) => {
+    await closeConversationSessions(id);
     getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id);
     getDb().prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
     getDb().prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(id);
@@ -197,8 +201,6 @@ export function registerConvHandlers(): void {
     for (const m of older) {
       const text = typeof m.content === 'string' ? m.content : '';
       if (!text) continue;
-      const lower = text.toLowerCase();
-
       if (m.role === 'user') {
         const cleaned = text.replace(/\s+/g, ' ').trim().slice(0, 200);
         if (cleaned) userTurns.push(`• ${cleaned}`);
@@ -210,7 +212,7 @@ export function registerConvHandlers(): void {
         }
       } else if (m.role === 'tool') {
         // Track files / errors / code
-        const fileMatch = text.match(/(?:^|\s)([A-Z]:[\\\\\/][^\s'"<>|]+|\/[\w./-]+|\.\.?\/[\w./-]+)/);
+        const fileMatch = text.match(/(?:^|\s)([A-Z]:[\\\\/][^\s'"<>|]+|\/[\w./-]+|\.\.?\/[\w./-]+)/);
         if (fileMatch) filesTouched.add(fileMatch[1]);
         if (m.name === 'run_shell' && /(?:error|fatal|failed|exception)/i.test(text)) {
           errors.push(`• [${m.name}] ${text.slice(0, 200)}`);

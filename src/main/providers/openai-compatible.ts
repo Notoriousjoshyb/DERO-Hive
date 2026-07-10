@@ -1,6 +1,7 @@
 import type { ProviderAdapter, ProviderStreamRequest, ProviderStreamEvent } from './base';
 import { parseSSE } from './streaming';
 import type { ProviderConfig, Message, ToolDefinition, ContentPart } from '@shared/types';
+import { supportsOpenAIReasoningEffort } from '@shared/thinkingCapabilities';
 import { logger } from '../utils/logger';
 
 // Pull the human-readable message out of an error response body.
@@ -147,7 +148,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return h;
   }
 
-  private toOpenAIMessages(messages: Message[], attachments?: ProviderStreamRequest['attachments']): unknown[] {
+  private toOpenAIMessages(messages: Message[]): unknown[] {
     const out: unknown[] = [];
     for (const m of messages) {
       // tool result message
@@ -170,7 +171,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       }
       // multipart content
       if (Array.isArray(m.content)) {
-        out.push({ role: m.role, content: this.partsToOpenAI(m.content, attachments) });
+        out.push({ role: m.role, content: this.partsToOpenAI(m.content) });
         continue;
       }
       out.push({ role: m.role, content: m.content });
@@ -178,7 +179,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return out;
   }
 
-  private partsToOpenAI(parts: ContentPart[], attachments?: ProviderStreamRequest['attachments']): unknown[] {
+  private partsToOpenAI(parts: ContentPart[]): unknown[] {
     const out: unknown[] = [];
     for (const p of parts) {
       if (p.type === 'text') out.push({ type: 'text', text: p.text });
@@ -211,7 +212,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       model: req.model,
       messages: [
         ...(req.systemPrompt ? [{ role: 'system', content: req.systemPrompt }] : []),
-        ...this.toOpenAIMessages(req.messages, req.attachments)
+        ...this.toOpenAIMessages(req.messages)
       ],
       stream: true,
       stream_options: { include_usage: true }
@@ -219,7 +220,9 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.topP !== undefined) body.top_p = req.topP;
     if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
-    if (req.reasoning) body.reasoning_effort = req.reasoning.effort;
+    if (req.reasoning && supportsOpenAIReasoningEffort(this.cfg.presetId, req.model)) {
+      body.reasoning_effort = req.reasoning.effort;
+    }
     const tools = this.toOpenAITools(req.tools);
     if (tools) body.tools = tools;
     if (tools && req.tools) body.tool_choice = 'auto';

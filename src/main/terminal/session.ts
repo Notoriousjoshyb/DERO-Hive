@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { logger } from '../utils/logger';
-import { resolveWithinAllowed } from '../utils/pathPolicy';
+import { resolveWithinAllowed, getWorkspaceRoot } from '../utils/pathPolicy';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -10,10 +10,10 @@ function shellEscapePath(p: string): string {
     return p.replace(/'/g, "''");
   }
   // Bash single-quoted strings: end quote, escaped quote, resume quote.
-  return p.replace(/'/g, "'\\\''");
+  return p.replace(/'/g, "'\\\\''");
 }
 
-function validateTerminalCwd(cwd: string | undefined): string | undefined {
+export function validateTerminalCwd(cwd: string | undefined): string | undefined {
   if (!cwd) return cwd;
   try {
     return resolveWithinAllowed(cwd);
@@ -31,7 +31,7 @@ export interface ExecResult {
   timedOut?: boolean;
 }
 
-const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, 'g');
 function stripAnsi(s: string): string {
   return s.replace(ANSI, '');
 }
@@ -159,7 +159,7 @@ export function terminalExec(sessionId: string, cmd: string, cwd?: string): Prom
   let s = sessions.get(sessionId);
   const validatedCwd = validateTerminalCwd(cwd);
   if (!s) {
-    s = new ShellSession(validatedCwd || process.cwd());
+    s = new ShellSession(validatedCwd || getWorkspaceRoot());
     sessions.set(sessionId, s);
     logger.info('terminal', `session started (${sessionId})`);
   }

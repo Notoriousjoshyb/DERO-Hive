@@ -112,6 +112,15 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: []
   },
   {
+    id: 'codex',
+    name: 'Codex (ChatGPT)',
+    baseUrl: '',
+    defaultModel: '',
+    supportsTools: true,
+    notes: 'OpenAI Codex via the Agent Client Protocol adapter. Uses ChatGPT subscription auth (browser login) or an API key. Requires @agentclientprotocol/codex-acp to be installed or set via command path.',
+    models: []
+  },
+  {
     id: 'custom',
     name: 'Custom OpenAI-compatible',
     baseUrl: '',

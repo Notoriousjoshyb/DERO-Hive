@@ -15,7 +15,7 @@ const EXPORT_EXT: Record<string, string> = {
 };
 
 function sanitizeFilename(s: string): string {
-  return s.replace(/[<>:"/\|?*]/g, '-').trim().slice(0, 80) || 'artifact';
+  return s.replace(/[<>:"/|?*]/g, '-').trim().slice(0, 80) || 'artifact';
 }
 
 export function registerArtifactHandlers(): void {

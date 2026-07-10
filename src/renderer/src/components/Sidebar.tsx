@@ -3,6 +3,9 @@ import { useAppStore } from '../stores/app';
 import { SimulatorPanel } from './SimulatorPanel';
 import type { Conversation, Project, Message } from '@shared/types';
 
+// Update checker stays hidden until the repo has its first GitHub release.
+const SHOW_UPDATE_CHECKER = false;
+
 export function Sidebar(): JSX.Element {
   const conversations = useAppStore((s) => s.conversations);
   const projects = useAppStore((s) => s.projects);
@@ -43,7 +46,16 @@ export function Sidebar(): JSX.Element {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Opening or creating a chat must land the user in the chat view — close
+  // any full-view tab (Code/Vision) occupying the main column.
+  const backToChat = (): void => {
+    const s = useAppStore.getState();
+    if (s.codeTabOpen) s.toggleCodeTab();
+    else if (s.visionTabOpen) s.toggleVisionTab();
+  };
+
   const handleNew = async (projectId?: string): Promise<void> => {
+    backToChat();
     const id = await createConversation({ title: 'New chat', projectId });
     await selectConversation(id);
   };
@@ -89,7 +101,7 @@ export function Sidebar(): JSX.Element {
     setAddingProject(false);
   };
 
-  const onSelect = async (id: string): Promise<void> => { await selectConversation(id); };
+  const onSelect = async (id: string): Promise<void> => { backToChat(); await selectConversation(id); };
   const onDelete = async (id: string): Promise<void> => { await deleteConversation(id); };
   const onTogglePin = async (id: string, pinned: boolean): Promise<void> => {
     await updateConversation(id, { pinned });
@@ -301,7 +313,6 @@ export function Sidebar(): JSX.Element {
               onMoveToProject={onMoveToProject}
               currentId={currentId}
               isOpen={projectsExpanded}
-              setIsOpen={setProjectsExpanded}
             />
 
             {archivedConvs.length > 0 && (
@@ -319,7 +330,10 @@ export function Sidebar(): JSX.Element {
 
       {/* Footer */}
       <SimulatorPanel />
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 space-y-1.5">
+        {/* Hidden until the first GitHub release is published — flip to true
+            (or just remove the guard) when ready to ship updates. */}
+        {SHOW_UPDATE_CHECKER && <UpdateChecker />}
         <button
           onClick={() => setSettingsOpen(true)}
           className="w-full flex items-center justify-center px-2 py-1.5 rounded-md hover:bg-bg-elev text-fg-subtle hover:text-fg transition"
@@ -823,8 +837,7 @@ function ProjectsSection({
   onArchive,
   onMoveToProject,
   currentId,
-  isOpen,
-  setIsOpen
+  isOpen
 }: {
   projects: Project[];
   expanded: Set<string>;
@@ -848,7 +861,6 @@ function ProjectsSection({
   onMoveToProject: (id: string, projectId?: string) => Promise<void> | void;
   currentId?: string;
   isOpen: boolean;
-  setIsOpen: (v: boolean) => void;
 }): JSX.Element {
   if (!isOpen) return <></>;
   return (
@@ -1036,4 +1048,79 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// "Check for updates" — queries the GitHub repo for a newer release. When one
+// exists, a single click downloads the platform installer and launches it
+// (or opens the release page when the release has no installer asset).
+function UpdateChecker(): JSX.Element {
+  type UpdateInfo = Awaited<ReturnType<typeof window.hive.updateCheck>>;
+  const [state, setState] = useState<'idle' | 'checking' | 'uptodate' | 'available' | 'noreleases' | 'error' | 'installing'>('idle');
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+
+  const check = async (): Promise<void> => {
+    setState('checking');
+    const r = await window.hive.updateCheck();
+    setInfo(r);
+    if (!r.ok) { setState('error'); revertSoon(); return; }
+    if (r.updateAvailable) { setState('available'); return; }
+    setState(r.noReleases ? 'noreleases' : 'uptodate');
+    revertSoon();
+  };
+
+  const revertSoon = (): void => { setTimeout(() => setState((s) => (s === 'available' || s === 'installing' ? s : 'idle')), 4000); };
+
+  const install = async (): Promise<void> => {
+    if (!info?.url && !info?.assetUrl) return;
+    setState('installing');
+    const r = await window.hive.updateInstall({ assetUrl: info.assetUrl, assetName: info.assetName, url: info.url || '' });
+    if (!r.ok) { setState('error'); revertSoon(); return; }
+    // Installer launched (or release page opened) — leave the button available
+    // in case the user cancels the installer.
+    setState('available');
+  };
+
+  if (state === 'available' || state === 'installing') {
+    return (
+      <button
+        onClick={() => void install()}
+        disabled={state === 'installing'}
+        className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md bg-accent text-white text-[11px] font-medium hover:opacity-90 transition disabled:opacity-60"
+        title={info?.assetUrl ? 'Download and run the installer' : 'Open the release page'}
+      >
+        {state === 'installing' ? (
+          'Downloading…'
+        ) : (
+          <>
+            <UpdateIcon />
+            Update to {info?.latest}
+          </>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => void check()}
+      disabled={state === 'checking'}
+      className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-bg-elev text-fg-subtle hover:text-fg transition text-[11px] disabled:opacity-60"
+      title="Check GitHub for a newer version"
+    >
+      <UpdateIcon spinning={state === 'checking'} />
+      {state === 'checking' ? 'Checking…'
+        : state === 'uptodate' ? `✓ Up to date (v${info?.current})`
+        : state === 'noreleases' ? 'No releases yet'
+        : state === 'error' ? 'Check failed'
+        : 'Check for updates'}
+    </button>
+  );
+}
+
+function UpdateIcon({ spinning }: { spinning?: boolean }): JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className={spinning ? 'animate-spin' : ''}>
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" strokeLinejoin="round" />
+    </svg>
+  );
 }

@@ -1,4 +1,4 @@
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import { paths } from './paths';
 import { ensureDirs } from './paths';

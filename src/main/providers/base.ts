@@ -1,6 +1,8 @@
-import type { Message, ToolDefinition, TokenUsage } from '@shared/types';
+import type { Message, ProviderModel, ThinkingEffort, ToolDefinition, TokenUsage } from '@shared/types';
 
 export interface ProviderStreamRequest {
+  conversationId: string;
+  cwd?: string;
   model: string;
   messages: Message[];
   tools?: ToolDefinition[];
@@ -8,8 +10,9 @@ export interface ProviderStreamRequest {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
-  reasoning?: { effort?: 'low' | 'medium' | 'high' };
+  reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
   signal?: AbortSignal;
+  requestPermission?: (request: { requestId: string; toolName: string; args: Record<string, unknown>; description?: string }) => Promise<boolean>;
   // For multi-modal: raw base64 attachments the user uploaded
   attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
 }
@@ -26,5 +29,7 @@ export interface ProviderStreamEvent {
 export interface ProviderAdapter {
   readonly id: string;
   stream(req: ProviderStreamRequest): AsyncGenerator<ProviderStreamEvent>;
-  testConnection(): Promise<{ ok: boolean; error?: string; models?: string[]; hint?: string }>;
+  testConnection(): Promise<{ ok: boolean; error?: string; models?: string[]; modelDetails?: Record<string, Partial<ProviderModel>>; hint?: string }>;
+  closeConversation?(conversationId: string): Promise<void>;
+  dispose?(): void | Promise<void>;
 }
