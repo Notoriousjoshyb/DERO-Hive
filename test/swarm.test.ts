@@ -7,9 +7,9 @@ import { clampWorkerCount, isForbiddenSwarmWritePath, markInterruptedSwarmRuns, 
 import { createTestDb } from './helpers/sqlite';
 
 describe('native swarm', () => {
-  test('applies only by fast-forward and never checks out or resets the user branch', () => {
+  test('applies by base-ref compare-and-swap and never checks out or resets the user branch', () => {
     const source = readFileSync('src/main/swarm/manager.ts', 'utf8');
-    expect(source).toContain("'merge', '--ff-only'");
+    expect(source).toContain("'update-ref', `refs/heads/${run.baseBranch!}`, run.integrationHead!, run.baseHead!");
     expect(source).not.toMatch(/git\(run\.repoRoot[^\n]+['"](?:checkout|reset)['"]/);
   });
 
@@ -43,12 +43,13 @@ describe('native swarm', () => {
     db.exec(`
       CREATE TABLE swarm_runs (id TEXT PRIMARY KEY, status TEXT, error TEXT, updated_at INTEGER);
       CREATE TABLE swarm_tasks (id TEXT PRIMARY KEY, status TEXT, error TEXT, completed_at INTEGER);
-      INSERT INTO swarm_runs VALUES ('running', 'running', NULL, 0), ('done', 'completed', NULL, 0);
+      INSERT INTO swarm_runs VALUES ('running', 'running', NULL, 0), ('done', 'completed', NULL, 0), ('applying', 'applying', NULL, 0);
       INSERT INTO swarm_tasks VALUES ('queued', 'queued', NULL, NULL), ('task-done', 'completed', NULL, 1);
     `);
     markInterruptedSwarmRuns(db as never, 123);
     expect(db.prepare('SELECT status FROM swarm_runs WHERE id = ?').get('running')).toEqual({ status: 'interrupted' });
     expect(db.prepare('SELECT status FROM swarm_runs WHERE id = ?').get('done')).toEqual({ status: 'completed' });
+    expect(db.prepare('SELECT status FROM swarm_runs WHERE id = ?').get('applying')).toEqual({ status: 'applying' });
     expect(db.prepare('SELECT status FROM swarm_tasks WHERE id = ?').get('queued')).toEqual({ status: 'interrupted' });
     expect(db.prepare('SELECT status FROM swarm_tasks WHERE id = ?').get('task-done')).toEqual({ status: 'completed' });
     db.close();
@@ -64,7 +65,9 @@ execFileSync('git', ['-C', repo, 'add', 'file.txt']);
 execFileSync('git', ['-C', repo, 'commit', '-m', 'base']);
 const baseHead = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 
-afterAll(() => rmSync(repo, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(repo, { recursive: true, force: true });
+});
 
 test('build snapshot refuses dirty repositories and HEAD drift', async () => {
   await expect(verifyRepositorySnapshot(repo, 'main', baseHead)).resolves.toBeUndefined();

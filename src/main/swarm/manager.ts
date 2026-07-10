@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rename } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type {
@@ -18,7 +18,7 @@ import { getDb, getSetting } from '../db/client';
 import { getAdapter, closeConversationSessions } from '../providers/registry';
 import { BUILTIN_TOOLS, builtinExecutors } from '../tools/builtin';
 import { composeSystemPrompt } from '../utils/systemPrompt';
-import { canonicalizePath } from '../utils/pathPolicy';
+import { canonicalizePath, isPathWithin } from '../utils/pathPolicy';
 import { getDefaultWorkspace, paths } from '../utils/paths';
 import { logger } from '../utils/logger';
 
@@ -77,6 +77,7 @@ export class SwarmManager {
 
   constructor(private readonly onProgress: (run: SwarmRun) => void) {
     markInterruptedSwarmRuns();
+    void this.reconcileApplyingRuns().catch((error) => logger.error('swarm', 'apply recovery failed', error));
   }
 
   async start(input: SwarmStartRequest): Promise<SwarmRun> {
@@ -187,7 +188,10 @@ export class SwarmManager {
     const run = this.requireRun(id);
     if (!['interrupted', 'failed', 'aborted'].includes(run.status)) throw new Error(`Cannot resume a ${run.status} swarm`);
     if (this.active.has(id)) throw new Error('Swarm is already running');
-    if (run.mode === 'build') await this.verifyBaseSnapshot(run);
+    if (run.mode === 'build') {
+      await this.verifyBaseSnapshot(run);
+      await this.discardIncompleteWorkerWorktrees(run);
+    }
     getDb().prepare("UPDATE swarm_tasks SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE run_id = ? AND status <> 'completed'")
       .run(id);
     this.setRun(id, 'queued', run.result, undefined);
@@ -201,14 +205,23 @@ export class SwarmManager {
     if (run.mode !== 'build' || run.status !== 'awaiting_apply') throw new Error('Only a finished build swarm can be applied');
     if (!run.integrationHead) throw new Error('Apply refused: reviewed integration commit is missing');
     await this.verifyBaseSnapshot(run);
+    await ensureWorktree(run.repoRoot!, run.integrationPath!, run.integrationBranch!, run.integrationHead);
     await assertCleanRepository(run.integrationPath!);
     const integrationRef = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.integrationBranch!}`);
     if (integrationRef !== run.integrationHead) throw new Error('Apply refused: integration branch changed after verification');
-    await git(run.repoRoot!, 'merge', '--ff-only', run.integrationHead);
-    this.setRun(id, 'applied', run.result, undefined);
-    await this.cleanupBuildWorktrees(this.requireRun(id));
+    if (!await isAncestor(run.repoRoot!, run.baseHead!, run.integrationHead)) throw new Error('Apply refused: reviewed commit is not a fast-forward');
+    if (!this.setRun(id, 'applying', run.result, undefined, 'awaiting_apply')) throw new Error('Swarm state changed before Apply');
     this.emit(id);
-    return this.requireRun(id);
+    try {
+      await this.applyPinnedCommit(this.requireRun(id));
+      await this.cleanupBuildWorktrees(this.requireRun(id));
+      if (!this.setRun(id, 'applied', run.result, undefined, 'applying')) throw new Error('Swarm state changed during Apply');
+      this.emit(id);
+      return this.requireRun(id);
+    } catch (error) {
+      await this.reconcileApplyingRun(id);
+      throw error;
+    }
   }
 
   shutdown(): void {
@@ -223,8 +236,9 @@ export class SwarmManager {
     this.active.set(initial.id, controller);
     try {
       let run = this.requireRun(initial.id);
-      if (run.mode === 'build') await this.prepareBuildWorktrees(run);
-      this.setRun(run.id, 'running', undefined, undefined);
+      if (run.mode === 'build') await this.prepareBuildWorktrees(run, controller.signal);
+      throwIfAborted(controller.signal);
+      if (!this.setRun(run.id, 'running', undefined, undefined, 'queued')) throw new AbortError();
       this.emit(run.id);
       run = this.requireRun(run.id);
 
@@ -237,11 +251,12 @@ export class SwarmManager {
       if (controller.signal.aborted) throw new AbortError();
 
       run = this.requireRun(run.id);
-      if (run.mode === 'build') await this.mergeWorkerBranches(run);
+      if (run.mode === 'build') await this.mergeWorkerBranches(run, controller.signal);
+      throwIfAborted(controller.signal);
       const reports = this.requireRun(run.id).tasks.filter((task) => task.phase === 'worker');
       if (reports.every((task) => task.status === 'failed' || task.status === 'aborted')) throw new Error('All swarm workers failed');
 
-      this.setRun(run.id, 'verifying', undefined, undefined);
+      if (!this.setRun(run.id, 'verifying', undefined, undefined, 'running')) throw new AbortError();
       this.emit(run.id);
       const verifier = this.requireRun(run.id).tasks.find((task) => task.phase === 'verifier')!;
       if (verifier.status !== 'completed') {
@@ -255,7 +270,7 @@ export class SwarmManager {
       }
       if (controller.signal.aborted) throw new AbortError();
 
-      this.setRun(run.id, 'synthesizing', undefined, undefined);
+      if (!this.setRun(run.id, 'synthesizing', undefined, undefined, 'verifying')) throw new AbortError();
       this.emit(run.id);
       const refreshed = this.requireRun(run.id);
       const verifierResult = refreshed.tasks.find((task) => task.phase === 'verifier')?.output || '';
@@ -272,12 +287,13 @@ export class SwarmManager {
         );
       }
       if (!result?.trim()) throw new Error('Synthesizer returned no result');
+      throwIfAborted(controller.signal);
       if (run.mode === 'build') {
-        await assertCleanRepository(run.integrationPath!);
-        const integrationHead = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.integrationBranch!}`);
-        this.setRunAwaitingApply(run.id, integrationHead, result);
+        await assertCleanRepository(run.integrationPath!, controller.signal);
+        const integrationHead = await gitStep(controller.signal, run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.integrationBranch!}`);
+        if (!this.setRunAwaitingApply(run.id, integrationHead, result)) throw new AbortError();
       } else {
-        this.setRun(run.id, 'completed', result, undefined);
+        if (!this.setRun(run.id, 'completed', result, undefined, 'synthesizing')) throw new AbortError();
       }
       this.emit(run.id);
     } catch (error) {
@@ -286,7 +302,7 @@ export class SwarmManager {
       if (current && current.status !== 'aborted') {
         const runStatus = this.shuttingDown ? 'interrupted' : aborted ? 'aborted' : 'failed';
         const taskStatus = this.shuttingDown ? 'interrupted' : aborted ? 'aborted' : 'failed';
-        this.setRun(initial.id, runStatus, current.result, errorMessage(error));
+        this.setRun(initial.id, runStatus, current.result, errorMessage(error), current.status);
         getDb().prepare("UPDATE swarm_tasks SET status = ?, error = COALESCE(error, ?), completed_at = ? WHERE run_id = ? AND status = 'running'")
           .run(taskStatus, errorMessage(error), Date.now(), initial.id);
         this.emit(initial.id);
@@ -302,12 +318,19 @@ export class SwarmManager {
     const prompt = `${role}\n\nOriginal task:\n${run.prompt}\n\n${run.mode === 'research'
       ? 'Research only. Do not modify files or execute commands.'
       : 'Work only inside the assigned git worktree. Make focused edits using the provided file tools.'}`;
-    await this.runPhase(run, task, prompt, cwd, run.mode === 'build', signal);
+    const output = await this.runPhase(run, task, prompt, cwd, run.mode === 'build', signal, true, run.mode !== 'build');
     if (run.mode === 'build') {
-      try { await this.commitWorker(run, task); }
+      try {
+        throwIfAborted(signal);
+        await this.commitWorker(run, task, signal);
+        throwIfAborted(signal);
+        const committed = this.requireRun(run.id).tasks.find((item) => item.id === task.id)!;
+        if (!this.setTask(task.id, 'completed', output, undefined, committed.startedAt, Date.now(), 'running')) throw new AbortError();
+        this.emit(run.id);
+      }
       catch (error) {
         const refreshed = this.requireRun(run.id).tasks.find((item) => item.id === task.id)!;
-        this.setTask(task.id, 'failed', refreshed.output, errorMessage(error), refreshed.startedAt, Date.now());
+        this.setTask(task.id, signal.aborted ? 'aborted' : 'failed', refreshed.output || output, errorMessage(error), refreshed.startedAt, Date.now(), 'running');
         this.emit(run.id);
         throw error;
       }
@@ -321,10 +344,12 @@ export class SwarmManager {
     cwd: string,
     writable: boolean,
     signal: AbortSignal,
-    withTools = true
+    withTools = true,
+    completeTask = true
   ): Promise<string> {
+    throwIfAborted(signal);
     const startedAt = Date.now();
-    this.setTask(task.id, 'running', undefined, undefined, startedAt, undefined);
+    if (!this.setTask(task.id, 'running', undefined, undefined, startedAt, undefined, 'queued')) throw new AbortError();
     this.emit(run.id);
     try {
       const output = await runAgent({
@@ -337,49 +362,62 @@ export class SwarmManager {
         signal,
         conversationInstructions: this.conversationInstructions(run.conversationId)
       });
-      this.setTask(task.id, 'completed', output, undefined, startedAt, Date.now());
+      throwIfAborted(signal);
+      if (!this.setTask(task.id, completeTask ? 'completed' : 'running', output, undefined, startedAt, completeTask ? Date.now() : undefined, 'running')) {
+        throw new AbortError();
+      }
       this.emit(run.id);
       return output;
     } catch (error) {
-      this.setTask(task.id, signal.aborted ? 'aborted' : 'failed', undefined, errorMessage(error), startedAt, Date.now());
+      this.setTask(task.id, signal.aborted ? 'aborted' : 'failed', undefined, errorMessage(error), startedAt, Date.now(), 'running');
       this.emit(run.id);
       throw error;
     }
   }
 
-  private async prepareBuildWorktrees(run: SwarmRun): Promise<void> {
-    await this.verifyBaseSnapshot(run);
+  private async prepareBuildWorktrees(run: SwarmRun, signal: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await verifyRepositorySnapshot(run.repoRoot!, run.baseBranch!, run.baseHead!, signal);
+    throwIfAborted(signal);
     const root = join(paths.userData, 'swarm', run.id);
     await mkdir(root, { recursive: true });
-    await gitBestEffort(run.repoRoot!, 'worktree', 'prune');
-    await ensureWorktree(run.repoRoot!, run.integrationPath!, run.integrationBranch!, run.baseHead!);
+    await gitBestEffortMaybe(signal, run.repoRoot!, 'worktree', 'prune');
+    throwIfAborted(signal);
+    await ensureWorktree(run.repoRoot!, run.integrationPath!, run.integrationBranch!, run.baseHead!, signal);
     for (const task of run.tasks.filter((item) => item.phase === 'worker' && item.status !== 'completed')) {
       const branchName = task.branchName || `hive/swarm/${run.id.slice(0, 12)}/worker-${task.index + 1}`;
       const worktreePath = task.worktreePath || join(root, `worker-${task.index + 1}`);
-      await ensureWorktree(run.repoRoot!, worktreePath, branchName, run.baseHead!);
+      throwIfAborted(signal);
+      await ensureWorktree(run.repoRoot!, worktreePath, branchName, run.baseHead!, signal);
+      throwIfAborted(signal);
       getDb().prepare('UPDATE swarm_tasks SET worktree_path = ?, branch_name = ? WHERE id = ?')
         .run(worktreePath, branchName, task.id);
     }
   }
 
-  private async commitWorker(run: SwarmRun, task: SwarmTask): Promise<void> {
+  private async commitWorker(run: SwarmRun, task: SwarmTask, signal: AbortSignal): Promise<void> {
     const refreshed = this.requireRun(run.id).tasks.find((item) => item.id === task.id)!;
     const cwd = refreshed.worktreePath!;
-    const dirty = await git(cwd, 'status', '--porcelain');
+    throwIfAborted(signal);
+    if (!await validateLinkedWorktree(run.repoRoot!, cwd, refreshed.branchName!)) throw new Error('Worker worktree identity changed before commit');
+    throwIfAborted(signal);
+    const dirty = await gitStep(signal, cwd, 'status', '--porcelain');
     if (!dirty) return;
-    await git(cwd, 'add', '-A');
-    await git(cwd, 'commit', '-m', `swarm worker ${task.index + 1}`);
+    await gitStep(signal, cwd, 'add', '-A');
+    await gitStep(signal, cwd, 'commit', '-m', `swarm worker ${task.index + 1}`);
   }
 
-  private async mergeWorkerBranches(run: SwarmRun): Promise<void> {
+  private async mergeWorkerBranches(run: SwarmRun, signal: AbortSignal): Promise<void> {
     for (const task of this.requireRun(run.id).tasks.filter((item) => item.phase === 'worker' && item.status === 'completed')) {
       if (!task.branchName) continue;
-      if (await isAncestor(run.repoRoot!, task.branchName, run.integrationBranch!)) continue;
+      throwIfAborted(signal);
+      if (await isAncestor(run.repoRoot!, task.branchName, run.integrationBranch!, signal)) continue;
       try {
-        await git(run.integrationPath!, 'merge', '--no-edit', task.branchName);
+        await gitStep(signal, run.integrationPath!, 'merge', '--no-edit', task.branchName);
       } catch (error) {
         await gitBestEffort(run.integrationPath!, 'merge', '--abort');
-        this.setTask(task.id, 'failed', task.output, `Integration conflict: ${errorMessage(error)}`, task.startedAt, Date.now());
+        if (signal.aborted) throw new AbortError();
+        this.setTask(task.id, 'failed', task.output, `Integration conflict: ${errorMessage(error)}`, task.startedAt, Date.now(), 'completed');
       }
     }
     const failed = this.requireRun(run.id).tasks.filter((task) => task.phase === 'worker' && task.status === 'failed');
@@ -391,13 +429,113 @@ export class SwarmManager {
     await verifyRepositorySnapshot(run.repoRoot, run.baseBranch, run.baseHead);
   }
 
+  private async applyPinnedCommit(run: SwarmRun): Promise<void> {
+    await this.verifyBaseSnapshot(run);
+    const integrationRef = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.integrationBranch!}`);
+    if (integrationRef !== run.integrationHead) throw new Error('Apply refused: integration branch changed after verification');
+    if (!await isAncestor(run.repoRoot!, run.baseHead!, run.integrationHead)) throw new Error('Apply refused: reviewed commit is not a fast-forward');
+    await git(run.repoRoot!, 'update-ref', `refs/heads/${run.baseBranch!}`, run.integrationHead!, run.baseHead!);
+    await this.finalizeAppliedWorkingTree(run);
+    const appliedRef = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.baseBranch!}`);
+    if (appliedRef !== run.integrationHead) throw new Error('Apply failed: base branch ref did not reach the reviewed commit');
+  }
+
+  private async finalizeAppliedWorkingTree(run: SwarmRun): Promise<void> {
+    const branch = await git(run.repoRoot!, 'branch', '--show-current');
+    if (branch !== run.baseBranch) {
+      await assertCleanRepository(run.repoRoot!);
+      return;
+    }
+    const head = await git(run.repoRoot!, 'rev-parse', 'HEAD');
+    if (head !== run.integrationHead) throw new Error('Apply recovery found an unexpected base branch HEAD');
+    const status = await git(run.repoRoot!, 'status', '--porcelain');
+    if (!status) return;
+
+    const baseTree = await git(run.repoRoot!, 'rev-parse', `${run.baseHead!}^{tree}`);
+    const indexTree = await git(run.repoRoot!, 'write-tree');
+    const unstaged = await git(run.repoRoot!, 'diff', '--no-ext-diff', '--name-only');
+    if (indexTree !== baseTree || unstaged) {
+      throw new Error('Apply recovery refused to overwrite unexpected working-tree changes');
+    }
+    await git(run.repoRoot!, 'read-tree', '--reset', '-u', run.integrationHead!);
+
+    const finalBranch = await git(run.repoRoot!, 'branch', '--show-current');
+    if (finalBranch !== run.baseBranch) {
+      await git(run.repoRoot!, 'read-tree', '--reset', '-u', 'HEAD');
+    }
+    await assertCleanRepository(run.repoRoot!);
+  }
+
+  private async reconcileApplyingRuns(): Promise<void> {
+    const ids = getDb().prepare("SELECT id FROM swarm_runs WHERE status = 'applying'").all() as Array<{ id: string }>;
+    for (const { id } of ids) {
+      try {
+        await this.reconcileApplyingRun(id);
+      } catch (error) {
+        const run = this.get(id);
+        if (run?.status === 'applying') {
+          this.setRun(id, 'failed', run.result, `Apply recovery stopped: ${errorMessage(error)}`, 'applying');
+          this.emit(id);
+        }
+      }
+    }
+  }
+
+  private async reconcileApplyingRun(id: string): Promise<SwarmRun> {
+    const run = this.requireRun(id);
+    if (run.status !== 'applying') return run;
+    if (!run.repoRoot || !run.baseBranch || !run.baseHead || !run.integrationHead) {
+      throw new Error('Apply recovery metadata is incomplete');
+    }
+    const baseRef = await git(run.repoRoot, 'rev-parse', '--verify', `refs/heads/${run.baseBranch}`);
+    if (baseRef === run.baseHead) {
+      await assertCleanRepository(run.repoRoot);
+      this.setRun(id, 'awaiting_apply', run.result, undefined, 'applying');
+      this.emit(id);
+      return this.requireRun(id);
+    }
+    if (baseRef !== run.integrationHead) throw new Error('Base branch changed during Apply');
+
+    await this.finalizeAppliedWorkingTree(run);
+    await this.cleanupBuildWorktrees(this.requireRun(id));
+    this.setRun(id, 'applied', run.result, undefined, 'applying');
+    this.emit(id);
+    return this.requireRun(id);
+  }
+
+  private async discardIncompleteWorkerWorktrees(run: SwarmRun): Promise<void> {
+    for (const task of run.tasks.filter((item) => item.phase === 'worker' && item.status !== 'completed')) {
+      if (task.worktreePath && existsSync(task.worktreePath)) await quarantineAppWorktree(task.worktreePath);
+      await git(run.repoRoot!, 'worktree', 'prune');
+      if (task.branchName) {
+        let branchExists = true;
+        try { await git(run.repoRoot!, 'show-ref', '--verify', `refs/heads/${task.branchName}`); } catch { branchExists = false; }
+        if (branchExists) await git(run.repoRoot!, 'branch', '-D', task.branchName);
+      }
+    }
+  }
+
   private async cleanupBuildWorktrees(run: SwarmRun): Promise<void> {
     if (!run.repoRoot) return;
     for (const task of run.tasks.filter((item) => item.phase === 'worker')) {
-      if (task.worktreePath && existsSync(task.worktreePath)) await gitBestEffort(run.repoRoot, 'worktree', 'remove', task.worktreePath);
+      if (task.worktreePath && existsSync(task.worktreePath)) {
+        if (task.branchName && await validateLinkedWorktree(run.repoRoot, task.worktreePath, task.branchName)) {
+          await gitBestEffort(run.repoRoot, 'worktree', 'remove', task.worktreePath);
+        } else {
+          await quarantineAppWorktree(task.worktreePath);
+          await gitBestEffort(run.repoRoot, 'worktree', 'prune');
+        }
+      }
       if (task.branchName) await gitBestEffort(run.repoRoot, 'branch', '-d', task.branchName);
     }
-    if (run.integrationPath && existsSync(run.integrationPath)) await gitBestEffort(run.repoRoot, 'worktree', 'remove', run.integrationPath);
+    if (run.integrationPath && existsSync(run.integrationPath)) {
+      if (run.integrationBranch && await validateLinkedWorktree(run.repoRoot, run.integrationPath, run.integrationBranch)) {
+        await gitBestEffort(run.repoRoot, 'worktree', 'remove', run.integrationPath);
+      } else {
+        await quarantineAppWorktree(run.integrationPath);
+        await gitBestEffort(run.repoRoot, 'worktree', 'prune');
+      }
+    }
     if (run.integrationBranch) await gitBestEffort(run.repoRoot, 'branch', '-d', run.integrationBranch);
     await gitBestEffort(run.repoRoot, 'worktree', 'prune');
   }
@@ -422,14 +560,15 @@ export class SwarmManager {
     return (getDb().prepare('SELECT system_prompt FROM conversations WHERE id = ?').get(conversationId) as { system_prompt?: string } | undefined)?.system_prompt;
   }
 
-  private setRun(id: string, status: SwarmRunStatus, result?: string, error?: string): void {
-    getDb().prepare('UPDATE swarm_runs SET status = ?, result = ?, error = ?, updated_at = ? WHERE id = ?')
-      .run(status, result || null, error || null, Date.now(), id);
+  private setRun(id: string, status: SwarmRunStatus, result?: string, error?: string, expectedStatus?: SwarmRunStatus): boolean {
+    const update = getDb().prepare(`UPDATE swarm_runs SET status = ?, result = ?, error = ?, updated_at = ? WHERE id = ?${expectedStatus ? ' AND status = ?' : ''}`)
+      .run(status, result || null, error || null, Date.now(), id, ...(expectedStatus ? [expectedStatus] : []));
+    return update.changes > 0;
   }
 
-  private setRunAwaitingApply(id: string, integrationHead: string, result: string): void {
-    getDb().prepare("UPDATE swarm_runs SET status = 'awaiting_apply', integration_head = ?, result = ?, error = NULL, updated_at = ? WHERE id = ?")
-      .run(integrationHead, result, Date.now(), id);
+  private setRunAwaitingApply(id: string, integrationHead: string, result: string): boolean {
+    return getDb().prepare("UPDATE swarm_runs SET status = 'awaiting_apply', integration_head = ?, result = ?, error = NULL, updated_at = ? WHERE id = ? AND status = 'synthesizing'")
+      .run(integrationHead, result, Date.now(), id).changes > 0;
   }
 
   private setTask(
@@ -438,10 +577,12 @@ export class SwarmManager {
     output?: string,
     error?: string,
     startedAt?: number,
-    completedAt?: number
-  ): void {
-    getDb().prepare('UPDATE swarm_tasks SET status = ?, output = ?, error = ?, started_at = ?, completed_at = ? WHERE id = ?')
-      .run(status, output || null, error || null, startedAt || null, completedAt || null, id);
+    completedAt?: number,
+    expectedStatus?: SwarmTaskStatus
+  ): boolean {
+    const result = getDb().prepare(`UPDATE swarm_tasks SET status = ?, output = ?, error = ?, started_at = ?, completed_at = ? WHERE id = ?${expectedStatus ? ' AND status = ?' : ''}`)
+      .run(status, output || null, error || null, startedAt || null, completedAt || null, id, ...(expectedStatus ? [expectedStatus] : []));
+    return result.changes > 0;
   }
 
   private requireRun(id: string): SwarmRun {
@@ -504,10 +645,12 @@ async function runAgent(options: {
         // must use the explicit file tools above, which enforce the worktree root.
         requestPermission: async () => false
       })) {
+        throwIfAborted(options.signal);
         if (event.type === 'delta' && event.content) content += event.content;
         else if (event.type === 'tool_calls' && event.toolCalls) toolCalls.push(...event.toolCalls);
         else if (event.type === 'error') throw new Error(event.error || 'Provider failed');
       }
+      throwIfAborted(options.signal);
       lastContent = content || lastContent;
       const assistant: Message = {
         id: randomUUID(), role: 'assistant', content,
@@ -518,6 +661,7 @@ async function runAgent(options: {
       if (toolCalls.length === 0) return content;
 
       for (const call of toolCalls) {
+        throwIfAborted(options.signal);
         if (!allowed.has(call.name) || !builtinExecutors[call.name]) {
           messages.push({ id: randomUUID(), role: 'tool', toolCallId: call.id, name: call.name, content: `Tool denied in ${options.run.mode} swarm mode`, createdAt: Date.now() });
           continue;
@@ -529,6 +673,7 @@ async function runAgent(options: {
           continue;
         }
         const result = await builtinExecutors[call.name](args, { cwd: options.cwd, conversationId });
+        throwIfAborted(options.signal);
         messages.push({ id: randomUUID(), role: 'tool', toolCallId: call.id, name: call.name, content: result.content, createdAt: Date.now() });
       }
     }
@@ -538,15 +683,15 @@ async function runAgent(options: {
   }
 }
 
-export async function assertCleanRepository(repoRoot: string): Promise<void> {
-  const dirty = await git(repoRoot, 'status', '--porcelain');
+export async function assertCleanRepository(repoRoot: string, signal?: AbortSignal): Promise<void> {
+  const dirty = await gitMaybe(signal, repoRoot, 'status', '--porcelain');
   if (dirty) throw new Error('Build mode requires a clean repository');
 }
 
-export async function verifyRepositorySnapshot(repoRoot: string, baseBranch: string, baseHead: string): Promise<void> {
-  await assertCleanRepository(repoRoot);
-  const branch = await git(repoRoot, 'branch', '--show-current');
-  const head = await git(repoRoot, 'rev-parse', 'HEAD');
+export async function verifyRepositorySnapshot(repoRoot: string, baseBranch: string, baseHead: string, signal?: AbortSignal): Promise<void> {
+  await assertCleanRepository(repoRoot, signal);
+  const branch = await gitMaybe(signal, repoRoot, 'branch', '--show-current');
+  const head = await gitMaybe(signal, repoRoot, 'rev-parse', 'HEAD');
   if (branch !== baseBranch) throw new Error(`Apply refused: expected branch ${baseBranch}, found ${branch || '(detached)'}`);
   if (head !== baseHead) throw new Error('Apply refused: repository HEAD changed since the swarm started');
 }
@@ -561,42 +706,104 @@ export function markInterruptedSwarmRuns(
     .run(now);
 }
 
-async function ensureWorktree(repoRoot: string, worktreePath: string, branch: string, base: string): Promise<void> {
+async function ensureWorktree(repoRoot: string, worktreePath: string, branch: string, base: string, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
   if (existsSync(worktreePath)) {
-    const current = await git(worktreePath, 'branch', '--show-current');
-    if (current !== branch) throw new Error(`Swarm worktree branch mismatch at ${worktreePath}`);
-    return;
+    if (await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) return;
+    await quarantineAppWorktree(worktreePath);
+    await gitBestEffortMaybe(signal, repoRoot, 'worktree', 'prune');
   }
+  await gitBestEffortMaybe(signal, repoRoot, 'worktree', 'prune');
+  throwIfAborted(signal);
   await mkdir(dirname(worktreePath), { recursive: true });
   let branchExists = true;
-  try { await git(repoRoot, 'show-ref', '--verify', `refs/heads/${branch}`); } catch { branchExists = false; }
-  if (branchExists) await git(repoRoot, 'worktree', 'add', worktreePath, branch);
-  else await git(repoRoot, 'worktree', 'add', '-b', branch, worktreePath, base);
+  try { await gitMaybe(signal, repoRoot, 'show-ref', '--verify', `refs/heads/${branch}`); } catch {
+    throwIfAborted(signal);
+    branchExists = false;
+  }
+  if (branchExists) await gitMaybe(signal, repoRoot, 'worktree', 'add', worktreePath, branch);
+  else await gitMaybe(signal, repoRoot, 'worktree', 'add', '-b', branch, worktreePath, base);
+  if (!await validateLinkedWorktree(repoRoot, worktreePath, branch, signal)) {
+    if (existsSync(worktreePath)) await quarantineAppWorktree(worktreePath);
+    await gitBestEffortMaybe(signal, repoRoot, 'worktree', 'prune');
+    throw new Error(`Swarm worktree identity validation failed at ${worktreePath}`);
+  }
 }
 
-async function isAncestor(repoRoot: string, ancestor: string, descendant: string): Promise<boolean> {
+async function validateLinkedWorktree(repoRoot: string, worktreePath: string, branch: string, signal?: AbortSignal): Promise<boolean> {
+  const listing = await gitMaybe(signal, repoRoot, 'worktree', 'list', '--porcelain');
+  const record = listing.split(/\r?\n\r?\n/).map((block) => {
+    const fields = new Map(block.split(/\r?\n/).flatMap((line) => {
+      const separator = line.indexOf(' ');
+      return separator > 0 ? [[line.slice(0, separator), line.slice(separator + 1)] as const] : [];
+    }));
+    return { path: fields.get('worktree'), head: fields.get('HEAD'), branch: fields.get('branch') };
+  }).find((item) => item.path && canonicalizePath(item.path) === canonicalizePath(worktreePath));
+  if (!record || record.branch !== `refs/heads/${branch}`) return false;
+
+  const branchHead = await gitMaybe(signal, repoRoot, 'rev-parse', '--verify', `refs/heads/${branch}`);
+  if (record.head !== branchHead) return false;
+  const commonRaw = await gitMaybe(signal, repoRoot, 'rev-parse', '--git-common-dir');
+  const commonDir = canonicalizePath(isAbsolute(commonRaw) ? commonRaw : resolve(repoRoot, commonRaw));
   try {
-    await git(repoRoot, 'merge-base', '--is-ancestor', ancestor, descendant);
+    const dotGitPath = join(worktreePath, '.git');
+    const pointer = (await readFile(dotGitPath, 'utf8')).trim().match(/^gitdir:\s*(.+)$/i)?.[1];
+    if (!pointer) return false;
+    const adminDir = canonicalizePath(isAbsolute(pointer) ? pointer : resolve(dirname(dotGitPath), pointer));
+    if (!isPathWithin(adminDir, join(commonDir, 'worktrees'))) return false;
+    const adminCommon = (await readFile(join(adminDir, 'commondir'), 'utf8')).trim();
+    if (canonicalizePath(resolve(adminDir, adminCommon)) !== commonDir) return false;
+    if ((await readFile(join(adminDir, 'HEAD'), 'utf8')).trim() !== `ref: refs/heads/${branch}`) return false;
+    const backlink = (await readFile(join(adminDir, 'gitdir'), 'utf8')).trim();
+    return canonicalizePath(isAbsolute(backlink) ? backlink : resolve(adminDir, backlink)) === canonicalizePath(dotGitPath);
+  } catch {
+    return false;
+  }
+}
+
+async function quarantineAppWorktree(worktreePath: string): Promise<void> {
+  const appSwarmRoot = join(paths.userData, 'swarm');
+  if (!isPathWithin(worktreePath, appSwarmRoot)) throw new Error(`Refusing to quarantine non-Swarm path: ${worktreePath}`);
+  const quarantinePath = `${worktreePath}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  await rename(worktreePath, quarantinePath);
+  logger.warn('swarm', `quarantined invalid worktree at ${quarantinePath}`);
+}
+
+async function isAncestor(repoRoot: string, ancestor: string, descendant: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    await gitMaybe(signal, repoRoot, 'merge-base', '--is-ancestor', ancestor, descendant);
     return true;
-  } catch { return false; }
+  } catch {
+    throwIfAborted(signal);
+    return false;
+  }
+}
+
+async function gitMaybe(signal: AbortSignal | undefined, cwd: string, ...args: string[]): Promise<string> {
+  return signal ? gitStep(signal, cwd, ...args) : git(cwd, ...args);
+}
+
+async function gitStep(signal: AbortSignal, cwd: string, ...args: string[]): Promise<string> {
+  throwIfAborted(signal);
+  const result = await git(cwd, ...args);
+  throwIfAborted(signal);
+  return result;
+}
+
+async function gitBestEffortMaybe(signal: AbortSignal | undefined, cwd: string, ...args: string[]): Promise<void> {
+  try { await gitMaybe(signal, cwd, ...args); }
+  catch {
+    throwIfAborted(signal);
+  }
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
+  if (requiresGitSafetyAudit(args)) await assertSafeGitConfiguration(cwd);
   try {
-    const env = { ...process.env };
-    const redirected = new Set([
-      'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
-      'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE',
-      'GIT_GRAFT_FILE', 'GIT_REPLACE_REF_BASE', 'GIT_SHALLOW_FILE'
-    ]);
-    for (const key of Object.keys(env)) {
-      const upper = key.toUpperCase();
-      if (redirected.has(upper) || upper.startsWith('GIT_CONFIG_')) delete env[key];
-    }
-    env.GIT_TERMINAL_PROMPT = '0';
     const { stdout } = await execFileAsync('git', [
       '-C', cwd,
       '-c', `core.hooksPath=${GIT_HOOKS_SINK}`,
+      '-c', 'core.fsmonitor=false',
       '-c', 'commit.gpgSign=false',
       '-c', 'tag.gpgSign=false',
       '-c', 'merge.gpgSign=false',
@@ -605,13 +812,102 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
       ...args
     ], {
       encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024,
-      timeout: GIT_TIMEOUT_MS, env
+      timeout: GIT_TIMEOUT_MS, env: sanitizedGitEnv()
     });
     return stdout.trim();
   } catch (error) {
     const details = error as Error & { stderr?: string };
     throw new Error(details.stderr?.trim() || details.message, { cause: error });
   }
+}
+
+function requiresGitSafetyAudit(args: string[]): boolean {
+  if (args[0] === 'worktree') return args[1] !== 'list';
+  return ['status', 'add', 'commit', 'merge', 'update-ref', 'read-tree', 'diff'].includes(args[0]);
+}
+
+async function assertSafeGitConfiguration(cwd: string): Promise<void> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync('git', ['-C', cwd, 'config', '--null', '--name-only', '--get-regexp', '.*'], {
+      encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS, env: sanitizedGitEnv()
+    }));
+  } catch (error) {
+    if ((error as { code?: number }).code === 1) return;
+    const details = error as Error & { stderr?: string };
+    throw new Error(`Unable to verify Git configuration: ${details.stderr?.trim() || details.message}`, { cause: error });
+  }
+  const drivers = { filter: new Set<string>(), merge: new Set<string>(), diff: new Set<string>() };
+  for (const key of stdout.split('\0')) {
+    const normalized = key.toLowerCase();
+    const filter = normalized.match(/^filter\.(.+)\.(?:clean|smudge|process|required)$/)?.[1];
+    const merge = normalized.match(/^merge\.(.+)\.driver$/)?.[1];
+    const diff = normalized.match(/^diff\.(.+)\.(?:command|textconv)$/)?.[1];
+    if (filter) drivers.filter.add(filter);
+    if (merge) drivers.merge.add(merge);
+    if (diff) drivers.diff.add(diff);
+  }
+  if (drivers.filter.size + drivers.merge.size + drivers.diff.size === 0) return;
+
+  let paths: string;
+  try {
+    ({ stdout: paths } = await execFileAsync('git', [
+      '-C', cwd, '-c', 'core.fsmonitor=false', 'ls-files', '-co', '--exclude-standard', '-z'
+    ], {
+      encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS, env: sanitizedGitEnv()
+    }));
+  } catch (error) {
+    const details = error as Error & { stderr?: string };
+    throw new Error(`Unable to inspect Git attributes: ${details.stderr?.trim() || details.message}`, { cause: error });
+  }
+  if (!paths) return;
+
+  const attributes = await execGitWithInput(cwd, [
+    '-c', 'core.fsmonitor=false', 'check-attr', '-z', 'filter', 'merge', 'diff', '--stdin'
+  ], paths);
+  const fields = attributes.split('\0');
+  const active: string[] = [];
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const [path, attribute, value] = fields.slice(index, index + 3);
+    if ((attribute === 'filter' || attribute === 'merge' || attribute === 'diff')
+      && drivers[attribute].has(value.toLowerCase())) {
+      active.push(`${attribute}=${value} (${path})`);
+    }
+  }
+  if (active.length > 0) throw new Error(`Build mode refuses active executable Git attributes: ${active.slice(0, 10).join(', ')}`);
+}
+
+function execGitWithInput(cwd: string, args: string[], input: string): Promise<string> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = execFile('git', ['-C', cwd, ...args], {
+      encoding: 'utf8', windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS, env: sanitizedGitEnv()
+    }, (error, stdout, stderr) => {
+      if (error) {
+        rejectPromise(new Error(stderr.trim() || error.message, { cause: error }));
+        return;
+      }
+      resolvePromise(stdout);
+    });
+    child.stdin?.end(input);
+  });
+}
+
+function sanitizedGitEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  const redirected = new Set([
+    'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+    'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE',
+    'GIT_GRAFT_FILE', 'GIT_REPLACE_REF_BASE', 'GIT_SHALLOW_FILE'
+  ]);
+  for (const key of Object.keys(env)) {
+    const upper = key.toUpperCase();
+    if (redirected.has(upper) || upper.startsWith('GIT_CONFIG_')) delete env[key];
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  return env;
 }
 
 async function gitBestEffort(cwd: string, ...args: string[]): Promise<void> {
@@ -673,6 +969,10 @@ function rowToTask(row: Record<string, unknown>): SwarmTask {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new AbortError();
 }
 
 class AbortError extends Error {

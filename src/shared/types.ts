@@ -332,7 +332,7 @@ export interface PermissionRule {
 export type SwarmMode = 'research' | 'build';
 export type SwarmRunStatus =
   | 'queued' | 'running' | 'verifying' | 'synthesizing'
-  | 'awaiting_apply' | 'completed' | 'failed' | 'aborted'
+  | 'awaiting_apply' | 'applying' | 'completed' | 'failed' | 'aborted'
   | 'interrupted' | 'applied';
 export type SwarmTaskPhase = 'worker' | 'verifier' | 'synthesizer';
 export type SwarmTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted';

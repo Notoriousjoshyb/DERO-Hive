@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createTestDb, type TestDb } from './helpers/sqlite';
 
 const state = vi.hoisted(() => ({
@@ -16,7 +16,10 @@ const state = vi.hoisted(() => ({
   nativeExecutionModes: [] as Array<'read-only'>,
   requestedModes: [] as Array<'read-only' | undefined>,
   gitRedirect: '',
-  gitDenials: 0
+  gitDenials: 0,
+  workerContent: '',
+  pauseAfterTool: null as Promise<void> | null,
+  afterToolReached: null as (() => void) | null
 }));
 
 vi.mock('../src/main/db/client', () => ({
@@ -53,9 +56,13 @@ vi.mock('../src/main/providers/registry', () => ({
       }
       if (state.buildEdits && tools.includes('write_file') && round === 0) {
         const filename = state.workerFiles[req.conversationId] ||= `worker-${++state.nextWorker}.txt`;
-        yield { type: 'tool_calls', toolCalls: [{ id: `call-${filename}`, name: 'write_file', arguments: JSON.stringify({ path: filename, content: filename }) }] };
+        yield { type: 'tool_calls', toolCalls: [{ id: `call-${filename}`, name: 'write_file', arguments: JSON.stringify({ path: filename, content: state.workerContent || filename }) }] };
         yield { type: 'done' };
         return;
+      }
+      if (state.buildEdits && tools.includes('write_file') && round === 1 && state.pauseAfterTool) {
+        state.afterToolReached?.();
+        await state.pauseAfterTool;
       }
       yield { type: 'delta', content: `report from ${req.conversationId}` };
       yield { type: 'done' };
@@ -160,6 +167,7 @@ describe('SwarmManager research pipeline', () => {
     execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
     execFileSync('git', ['-C', repo, 'config', 'user.name', '']);
     execFileSync('git', ['-C', repo, 'config', 'user.email', '']);
+    execFileSync('git', ['-C', repo, 'config', 'filter.unused.clean', './must-not-run']);
     db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('p1', repo);
 
     let finish!: (run: import('../src/shared/types').SwarmRun) => void;
@@ -185,13 +193,21 @@ describe('SwarmManager research pipeline', () => {
     execFileSync('git', ['-C', ready.integrationPath!, '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, '-c', 'commit.gpgSign=false', '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'drift']);
     await expect(manager.apply(ready.id)).rejects.toThrow(/integration branch changed/);
     execFileSync('git', ['-C', ready.integrationPath!, 'reset', '--hard', ready.integrationHead!]);
+    const integrationGitFile = join(ready.integrationPath!, '.git');
+    if (process.platform === 'win32') execFileSync('attrib', ['-H', '-R', integrationGitFile]);
+    else chmodSync(integrationGitFile, 0o666);
+    writeFileSync(integrationGitFile, `gitdir: ${join(repo, '.git')}`);
 
     const applied = await manager.apply(ready.id);
     expect(applied.status).toBe('applied');
     expect(readdirSync(repo).filter((name) => name.startsWith('worker-'))).toHaveLength(4);
+    const integrationParent = dirname(ready.integrationPath!);
+    const quarantined = readdirSync(integrationParent).filter((name) => name.startsWith('integration.invalid-'));
+    expect(quarantined.length).toBeGreaterThan(0);
+    for (const name of quarantined) rmSync(join(integrationParent, name), { recursive: true, force: true });
     db.close();
     rmSync(repo, { recursive: true, force: true });
-  }, 20_000);
+  }, 60_000);
 
   test('denies a worker attempt to redirect its linked-worktree .git file', async () => {
     const db = makeDb();
@@ -229,7 +245,7 @@ describe('SwarmManager research pipeline', () => {
     state.gitRedirect = '';
     db.close();
     rmSync(repo, { recursive: true, force: true });
-  }, 20_000);
+  }, 60_000);
 
   test('disables repository hooks for worker commits and integration merges', async () => {
     const db = makeDb();
@@ -287,5 +303,197 @@ describe('SwarmManager research pipeline', () => {
       db.close();
       rmSync(repo, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 60_000);
+
+  test('reconciles applying intent before and after the base-ref CAS without touching a sibling branch', async () => {
+    const db = makeDb();
+    state.db = db;
+    state.tools = [];
+    state.buildEdits = true;
+    state.rounds = {};
+    state.nextWorker = 0;
+    state.workerFiles = {};
+    state.workerContent = '';
+    state.nativeToolScope = 'none';
+    state.nativeExecutionModes = [];
+    const repo = mkdtempSync(join(tmpdir(), 'hive-swarm-apply-recovery-'));
+    try {
+      execFileSync('git', ['init', '-b', 'main', repo]);
+      writeFileSync(join(repo, 'base.txt'), 'base');
+      execFileSync('git', ['-C', repo, 'add', 'base.txt']);
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
+      db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('apply-recovery-project', repo);
+
+      let readyResolve!: (run: import('../src/shared/types').SwarmRun) => void;
+      const readyPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { readyResolve = resolve; });
+      const manager = new SwarmManager((run) => {
+        if (run.status === 'awaiting_apply') readyResolve(run);
+      });
+      await manager.start({ prompt: 'one recoverable edit', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'apply-recovery-project', workerCount: 1 });
+      const ready = await readyPromise;
+
+      execFileSync('git', ['-C', repo, 'switch', '-c', 'sibling']);
+      const siblingHead = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      await expect(manager.apply(ready.id)).rejects.toThrow(/expected branch main/);
+      expect(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(siblingHead);
+      db.prepare("UPDATE swarm_runs SET status = 'applying' WHERE id = ?").run(ready.id);
+
+      let awaitingResolve!: (run: import('../src/shared/types').SwarmRun) => void;
+      const awaitingPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { awaitingResolve = resolve; });
+      new SwarmManager((run) => { if (run.id === ready.id && run.status === 'awaiting_apply') awaitingResolve(run); });
+      const restored = await awaitingPromise;
+      expect(restored.status).toBe('awaiting_apply');
+      expect(execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' }).trim()).toBe('sibling');
+      expect(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(siblingHead);
+
+      execFileSync('git', ['-C', repo, 'switch', 'main']);
+      db.prepare("UPDATE swarm_runs SET status = 'applying' WHERE id = ?").run(ready.id);
+      execFileSync('git', ['-C', repo, 'update-ref', 'refs/heads/main', ready.integrationHead!, ready.baseHead!]);
+      let appliedResolve!: (run: import('../src/shared/types').SwarmRun) => void;
+      const appliedPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { appliedResolve = resolve; });
+      new SwarmManager((run) => { if (run.id === ready.id && run.status === 'applied') appliedResolve(run); });
+      const recovered = await appliedPromise;
+      expect(recovered.status).toBe('applied');
+      expect(execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' }).trim()).toBe('main');
+      expect(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(ready.integrationHead);
+      expect(execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }).trim()).toBe('');
+      expect(existsSync(join(repo, 'worker-1.txt'))).toBe(true);
+    } finally {
+      db.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('aborted partial workers are quarantined, recreated from base, and rerun before completion', async () => {
+    const db = makeDb();
+    state.db = db;
+    state.tools = [];
+    state.buildEdits = true;
+    state.rounds = {};
+    state.nextWorker = 0;
+    state.workerFiles = {};
+    state.workerContent = 'partial';
+    state.nativeToolScope = 'none';
+    state.nativeExecutionModes = [];
+    const repo = mkdtempSync(join(tmpdir(), 'hive-swarm-resume-clean-'));
+    const quarantines: string[] = [];
+    let releaseTool!: () => void;
+    let reachedTool!: () => void;
+    state.pauseAfterTool = new Promise<void>((resolve) => { releaseTool = resolve; });
+    const afterTool = new Promise<void>((resolve) => { reachedTool = resolve; });
+    state.afterToolReached = reachedTool;
+    try {
+      execFileSync('git', ['init', '-b', 'main', repo]);
+      writeFileSync(join(repo, 'base.txt'), 'base');
+      execFileSync('git', ['-C', repo, 'add', 'base.txt']);
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
+      db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('resume-clean-project', repo);
+
+      let readyResolve!: (run: import('../src/shared/types').SwarmRun) => void;
+      const readyPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { readyResolve = resolve; });
+      const manager = new SwarmManager((run) => {
+        if (run.status === 'awaiting_apply') readyResolve(run);
+      });
+      const started = await manager.start({ prompt: 'rerun partial edit', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'resume-clean-project', workerCount: 1 });
+      await afterTool;
+      const runningTask = manager.get(started.id)!.tasks.find((task) => task.phase === 'worker')!;
+      expect(runningTask.status).toBe('running');
+      expect(readFileSync(join(runningTask.worktreePath!, 'worker-1.txt'), 'utf8')).toBe('partial');
+      execFileSync('git', ['-C', runningTask.worktreePath!, 'add', '-A']);
+      execFileSync('git', ['-C', runningTask.worktreePath!, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'partial']);
+      const partialHead = execFileSync('git', ['-C', runningTask.worktreePath!, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const workerGitFile = join(runningTask.worktreePath!, '.git');
+      if (process.platform === 'win32') execFileSync('attrib', ['-H', '-R', workerGitFile]);
+      else chmodSync(workerGitFile, 0o666);
+      writeFileSync(workerGitFile, `gitdir: ${join(repo, '.git')}`);
+
+      manager.abort(started.id);
+      releaseTool();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(manager.get(started.id)!.tasks.find((task) => task.id === runningTask.id)?.status).toBe('aborted');
+
+      state.pauseAfterTool = null;
+      state.afterToolReached = null;
+      state.rounds = {};
+      state.nextWorker = 0;
+      state.workerFiles = {};
+      state.workerContent = 'final';
+      await manager.resume(started.id);
+      const ready = await readyPromise;
+      const rerunTask = ready.tasks.find((task) => task.phase === 'worker')!;
+      expect(rerunTask.status).toBe('completed');
+      expect(readFileSync(join(ready.integrationPath!, 'worker-1.txt'), 'utf8')).toBe('final');
+      const rerunHead = execFileSync('git', ['-C', repo, 'rev-parse', rerunTask.branchName!], { encoding: 'utf8' }).trim();
+      expect(() => execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', partialHead, rerunHead])).toThrow();
+      const parent = dirname(runningTask.worktreePath!);
+      for (const name of readdirSync(parent).filter((entry) => entry.startsWith(`${basename(runningTask.worktreePath!)}.invalid-`))) {
+        quarantines.push(join(parent, name));
+      }
+      expect(quarantines.length).toBeGreaterThan(0);
+      await manager.apply(ready.id);
+    } finally {
+      state.pauseAfterTool = null;
+      state.afterToolReached = null;
+      state.workerContent = '';
+      for (const path of quarantines) rmSync(path, { recursive: true, force: true });
+      db.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('refuses executable Git filters and merge drivers before they can run', async () => {
+    const db = makeDb();
+    state.db = db;
+    state.nativeToolScope = 'none';
+    state.nativeExecutionModes = [];
+    const repo = mkdtempSync(join(tmpdir(), 'hive-swarm-git-config-'));
+    const marker = `${repo}-git-command-ran`;
+    const previousMarker = process.env.SWARM_GIT_EXEC_MARKER;
+    process.env.SWARM_GIT_EXEC_MARKER = marker;
+    try {
+      execFileSync('git', ['init', '-b', 'main', repo]);
+      writeFileSync(join(repo, '.gitattributes'), 'filtered.txt filter=swarmtest diff=swarmtest\nmerged.txt merge=swarmtest\n');
+      writeFileSync(join(repo, 'filtered.txt'), 'base\n');
+      writeFileSync(join(repo, 'merged.txt'), 'base\n');
+      writeFileSync(join(repo, 'filter.sh'), '#!/bin/sh\ncat\nprintf filter > "$SWARM_GIT_EXEC_MARKER"\n');
+      writeFileSync(join(repo, 'merge.sh'), '#!/bin/sh\nprintf merge > "$SWARM_GIT_EXEC_MARKER"\ncp "$3" "$2"\n');
+      chmodSync(join(repo, 'filter.sh'), 0o755);
+      chmodSync(join(repo, 'merge.sh'), 0o755);
+      execFileSync('git', ['-C', repo, 'add', '.']);
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-m', 'base']);
+      db.prepare('INSERT INTO projects (id, path) VALUES (?, ?)').run('git-config-project', repo);
+      const manager = new SwarmManager(() => undefined);
+
+      execFileSync('git', ['-C', repo, 'config', 'filter.swarmtest.clean', './filter.sh']);
+      writeFileSync(join(repo, 'filtered.txt'), 'control\n');
+      execFileSync('git', ['-C', repo, 'add', 'filtered.txt']);
+      expect(existsSync(marker)).toBe(true);
+      execFileSync('git', ['-C', repo, 'reset', '--hard', 'HEAD']);
+      unlinkSync(marker);
+      await expect(manager.start({ prompt: 'unsafe filter', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'git-config-project' }))
+        .rejects.toThrow(/filter=swarmtest/);
+      expect(existsSync(marker)).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM swarm_runs').get()).toEqual({ count: 0 });
+
+      execFileSync('git', ['-C', repo, 'config', '--unset-all', 'filter.swarmtest.clean']);
+      execFileSync('git', ['-C', repo, 'config', 'merge.swarmtest.driver', './merge.sh %O %A %B']);
+      await expect(manager.start({ prompt: 'unsafe merge driver', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'git-config-project' }))
+        .rejects.toThrow(/merge=swarmtest/);
+      expect(existsSync(marker)).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM swarm_runs').get()).toEqual({ count: 0 });
+
+      execFileSync('git', ['-C', repo, 'config', '--unset-all', 'merge.swarmtest.driver']);
+      execFileSync('git', ['-C', repo, 'config', 'diff.swarmtest.command', './filter.sh']);
+      await expect(manager.start({ prompt: 'unsafe diff driver', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'git-config-project' }))
+        .rejects.toThrow(/diff=swarmtest/);
+      expect(existsSync(marker)).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM swarm_runs').get()).toEqual({ count: 0 });
+    } finally {
+      if (previousMarker === undefined) delete process.env.SWARM_GIT_EXEC_MARKER;
+      else process.env.SWARM_GIT_EXEC_MARKER = previousMarker;
+      if (existsSync(marker)) unlinkSync(marker);
+      db.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
