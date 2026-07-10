@@ -30,8 +30,10 @@ function loadRegistry(): McpRegistry {
  *
  * Bundled servers are registered by McpManager.ensureBundledServers(), which
  * calls saveConfig() directly and never passes through here.
+ *
+ * Exported so the consent rules can be tested without driving a native dialog.
  */
-async function confirmServerLaunch(
+export async function confirmServerLaunch(
   manager: McpManager,
   cfg: McpServerConfig,
   parent: BrowserWindow | null
