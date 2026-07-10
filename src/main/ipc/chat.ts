@@ -26,8 +26,8 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
   });
 
   ipcMain.handle(IPC.CHAT_ABORT, (_e, conversationId: string) => {
-    const c = activeRequests.get(conversationId);
-    if (c) { c.abort(); activeRequests.delete(conversationId); }
+    activeRequests.get(conversationId)?.abort();
+    activeRequests.delete(conversationId);
     return { ok: true };
   });
 
@@ -48,7 +48,7 @@ async function runChat(
 
   // Persist user message immediately
   const userMsg = req.messages[req.messages.length - 1];
-  if (userMsg && userMsg.role === 'user') {
+  if (userMsg?.role === 'user') {
     persistMessage(req.conversationId, userMsg);
     updateConversationPreview(req.conversationId, userMsg);
   }
@@ -99,8 +99,7 @@ async function runChat(
       }
 
       // Block vision if the model doesn't support it
-      const modelSupportsVision = modelDef?.supportsVision ?? false;
-      if (!modelSupportsVision) {
+      if (!modelDef?.supportsVision) {
         for (const m of messages) {
           const parts = Array.isArray(m.content) ? m.content : [];
           for (const p of parts) {
@@ -248,7 +247,8 @@ async function runChat(
           usage: roundUsage.totalTokens > 0 ? { ...roundUsage } : undefined
         };
         persistMessage(req.conversationId, assistantMsg);
-        updateConversationTokens(req.conversationId, roundUsage.totalTokens);
+        getDb().prepare('UPDATE conversations SET total_tokens = total_tokens + ? WHERE id = ?')
+          .run(roundUsage.totalTokens, req.conversationId);
 
         // If aborted mid-stream, keep the partial message but don't execute
         // tools or start another round.
@@ -314,12 +314,13 @@ async function runChat(
 
 function persistMessage(conversationId: string, msg: Message): void {
   const maxOrder = (getDb().prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM messages WHERE conversation_id = ?').get(conversationId) as { m: number }).m;
+  const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
   getDb().prepare(`
     INSERT INTO messages (id, conversation_id, role, content, reasoning, tool_calls, tool_call_id, name, model, provider, usage, error, created_at, sort_order)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     msg.id, conversationId, msg.role,
-    typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+    content,
     msg.reasoning || null,
     msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
     msg.toolCallId || null, msg.name || null,
@@ -330,7 +331,6 @@ function persistMessage(conversationId: string, msg: Message): void {
   );
 
   // Update FTS index
-  const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
   getDb().prepare('INSERT INTO messages_fts (rowid, content, conversation_id, message_id) VALUES ((SELECT rowid FROM messages WHERE id = ?), ?, ?, ?)')
     .run(msg.id, content, conversationId, msg.id);
 
@@ -343,11 +343,6 @@ function updateConversationPreview(conversationId: string, msg: Message): void {
   const content = typeof msg.content === 'string' ? msg.content : (msg.content.find((p) => p.type === 'text') as { text: string } | undefined)?.text || '';
   getDb().prepare('UPDATE conversations SET preview = ?, updated_at = ? WHERE id = ?')
     .run(content.slice(0, 200), Date.now(), conversationId);
-}
-
-function updateConversationTokens(conversationId: string, tokens: number): void {
-  getDb().prepare('UPDATE conversations SET total_tokens = total_tokens + ? WHERE id = ?')
-    .run(tokens, conversationId);
 }
 
 /** The slice of the database handle compaction actually uses. Narrow on purpose:
@@ -410,7 +405,7 @@ export async function compactConversationInPlace(
       const cleaned = text.replace(/\s+/g, ' ').trim().slice(0, 200);
       if (cleaned) userTurns.push(`• ${cleaned}`);
     } else if (m.role === 'assistant' && /^(let me|now i|next,? i|I'll|going to|here's)/i.test(text)) {
-      const sent = text.split(/[.!?]\s+/).find((s) => /^(let me|now i|next,? i|I'll|going to|here's)/i.test(s));
+      const sent = text.split(/[.!?]\s+/)[0];
       if (sent && sent.length < 250) decisions.push(`• ${sent.trim()}`);
     } else if (m.role === 'tool') {
       const fileMatch = text.match(/(?:^|\s)([A-Z]:[\\\\\/][^\s'"<>|]+|\/[\w./-]+|\.\.?\/[\w./-]+)/);
@@ -422,10 +417,15 @@ export async function compactConversationInPlace(
   }
 
   const sections: string[] = ['<context_compaction>', `Compacted ${older.length} older messages.`];
-  if (userTurns.length) sections.push('\n## User requests', userTurns.slice(0, 12).join('\n'));
-  if (decisions.length) sections.push('\n## Decisions / progress', decisions.slice(0, 12).join('\n'));
-  if (files.size) sections.push('\n## Files referenced', Array.from(files).slice(0, 20).map((f) => `• ${f}`).join('\n'));
-  if (errors.length) sections.push('\n## Errors observed', errors.slice(0, 5).join('\n'));
+  const summaryParts: Array<[string, string[]]> = [
+    ['\n## User requests', userTurns.slice(0, 12)],
+    ['\n## Decisions / progress', decisions.slice(0, 12)],
+    ['\n## Files referenced', Array.from(files, (f) => `• ${f}`).slice(0, 20)],
+    ['\n## Errors observed', errors.slice(0, 5)]
+  ];
+  for (const [title, lines] of summaryParts) {
+    if (lines.length) sections.push(title, lines.join('\n'));
+  }
   sections.push('</context_compaction>');
 
   const summaryText = sections.join('\n').slice(0, config.maxHistoryMessageChars * 2);
@@ -455,41 +455,31 @@ export async function compactConversationInPlace(
       VALUES (last_insert_rowid(), ?, ?, ?)
     `);
 
-    let i = 0;
-    for (const m of systemMsgs) {
+    const insertRow = (id: string, m: Record<string, unknown>, content: string, createdAt: number, sortOrder: number): void => {
       insert.run(
-        m.id as string, conversationId, m.role as string, m.content as string,
+        id, conversationId, m.role as string, content,
         m.reasoning as string || null, m.tool_calls as string || null,
         m.tool_call_id as string || null, m.name as string || null,
         m.model as string || null, m.provider as string || null,
         m.usage as string || null, m.error as string || null,
-        m.created_at as number, i++
+        createdAt, sortOrder
       );
-      if (typeof m.content === 'string') insertFts.run(m.content as string, conversationId, m.id as string);
+      if (typeof content === 'string') insertFts.run(content, conversationId, id);
+    };
+
+    let i = 0;
+    for (const m of systemMsgs) {
+      insertRow(m.id as string, m, m.content as string, m.created_at as number, i++);
     }
 
-    insert.run(
-      summaryMsgId, conversationId, 'system', summaryText,
-      null, null, null, null, null, null, null, null,
-      now, summarySortOrder
-    );
-    insertFts.run(summaryText, conversationId, summaryMsgId);
+    insertRow(summaryMsgId, { role: 'system' }, summaryText, now, summarySortOrder);
 
     for (const m of recent) {
       let content = m.content as string;
       if ((m.role === 'tool' || m.role === 'assistant') && content && content.length > config.truncateToolOutputChars) {
         content = content.slice(0, config.truncateToolOutputChars) + `\n... [truncated during compaction]`;
       }
-      const newId = randomUUID();
-      insert.run(
-        newId, conversationId, m.role as string, content,
-        m.reasoning as string || null, m.tool_calls as string || null,
-        m.tool_call_id as string || null, m.name as string || null,
-        m.model as string || null, m.provider as string || null,
-        m.usage as string || null, m.error as string || null,
-        m.created_at as number || now, i++
-      );
-      if (typeof content === 'string') insertFts.run(content, conversationId, newId);
+      insertRow(randomUUID(), m, content, m.created_at as number || now, i++);
     }
 
     db.prepare(`
