@@ -1,10 +1,10 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Message, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type Attachment, type ChatRequest, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
   // Chat
-  chatSend: (req: { conversationId: string; providerId: string; model: string; messages: Message[]; systemPrompt?: string; temperature?: number; topP?: number; maxTokens?: number; tools?: ToolDefinition[]; reasoning?: { effort?: 'low' | 'medium' | 'high' }; attachments?: { type: string; filename: string; mimeType: string; data: string }[] }) =>
+  chatSend: (req: ChatRequest) =>
     ipcRenderer.invoke(IPC.CHAT_SEND, req),
   chatAbort: (conversationId: string) => ipcRenderer.invoke(IPC.CHAT_ABORT, conversationId),
   onChatStream: (cb: (e: StreamEvent) => void) => {
@@ -48,6 +48,8 @@ const api = {
   mcpDisconnect: (id: string) => ipcRenderer.invoke(IPC.MCP_DISCONNECT, id),
   mcpStatus: () => ipcRenderer.invoke(IPC.MCP_STATUS),
   mcpRegistry: (): Promise<McpRegistry> => ipcRenderer.invoke(IPC.MCP_REGISTRY),
+  mcpImportPick: (): Promise<McpImportPickResult> => ipcRenderer.invoke(IPC.MCP_IMPORT_PICK),
+  mcpImport: (token: string, replace: boolean): Promise<McpImportResult> => ipcRenderer.invoke(IPC.MCP_IMPORT, { token, replace }),
   onMcpChanged: (cb: (statuses: McpServerStatus[]) => void) => {
     const l = (_: IpcRendererEvent, d: McpServerStatus[]) => cb(d);
     ipcRenderer.on(IPC.MCP_CHANGED, l);
@@ -60,6 +62,8 @@ const api = {
   skillDelete: (id: string) => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
   skillRescan: (): Promise<Skill[]> => ipcRenderer.invoke(IPC.SKILL_RESCAN),
   skillOpenDir: () => ipcRenderer.invoke(IPC.SKILL_OPEN_DIR),
+  skillImportPick: (): Promise<SkillImportPickResult> => ipcRenderer.invoke(IPC.SKILL_IMPORT_PICK),
+  skillImport: (sourceDir: string): Promise<SkillImportResult> => ipcRenderer.invoke(IPC.SKILL_IMPORT, sourceDir),
 
   // Projects
   projectList: () => ipcRenderer.invoke(IPC.PROJECT_LIST),
@@ -68,7 +72,7 @@ const api = {
 
   // Tools
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),
-  toolPermissionDecide: (decision: { requestId: string; decision: 'allow' | 'deny'; remember?: boolean }) =>
+  toolPermissionDecide: (decision: { requestId: string; decision: 'allow' | 'deny' }) =>
     ipcRenderer.invoke(IPC.TOOL_PERMISSION_DECIDE, decision),
   onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => {
     const l = (_: IpcRendererEvent, d: any) => cb(d);
@@ -110,7 +114,7 @@ const api = {
   settingsSet: (s: Partial<AppSettings>) => ipcRenderer.invoke(IPC.SETTINGS_SET, s),
 
   // Attachments
-  attachFromFile: () => ipcRenderer.invoke(IPC.ATTACH_FROM_FILE),
+  attachFromFile: (): Promise<Attachment[] | null> => ipcRenderer.invoke(IPC.ATTACH_FROM_FILE),
 
   // Artifacts
   artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) =>

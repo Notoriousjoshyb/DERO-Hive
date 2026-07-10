@@ -1,7 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { IPC, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
-import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
 import { getAdapter } from '../providers/registry';
 import { ToolRegistry } from '../tools/registry';
@@ -9,6 +8,8 @@ import { McpManager } from '../mcp/manager';
 import { getDb } from '../db/client';
 import { getSetting } from '../db/client';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
+import { composeSystemPrompt } from '../utils/systemPrompt';
+import { hydrateAttachmentRefs, validateAttachmentRefs } from '../utils/attachments';
 
 const activeRequests = new Map<string, AbortController>();
 
@@ -20,8 +21,8 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
     getWin()?.webContents.send(IPC.TOOL_PERMISSION_REQUEST, req);
   });
 
-  ipcMain.handle(IPC.TOOL_PERMISSION_DECIDE, (_e, { requestId, decision, remember }) => {
-    tools.decidePermission(requestId, decision === 'allow' ? 'allow' : 'deny', !!remember);
+  ipcMain.handle(IPC.TOOL_PERMISSION_DECIDE, (_e, { requestId, decision }) => {
+    tools.decidePermission(requestId, decision === 'allow' ? 'allow' : 'deny');
     return { ok: true };
   });
 
@@ -31,8 +32,8 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
     return { ok: true };
   });
 
-  ipcMain.handle(IPC.CHAT_SEND, async (_e, req: ChatRequest & { systemPrompt?: string }) => {
-    return runChat(req as ChatRequest, getWin, tools, mcpManager);
+  ipcMain.handle(IPC.CHAT_SEND, async (_e, req: ChatRequest) => {
+    return runChat(req, getWin, tools, mcpManager);
   });
 }
 
@@ -43,15 +44,16 @@ async function runChat(
   mcpManager: McpManager | null
 ): Promise<{ messageId: string }> {
   const abort = new AbortController();
-  activeRequests.set(req.conversationId, abort);
   const messageId = randomUUID();
 
   // Persist user message immediately
   const userMsg = req.messages[req.messages.length - 1];
   if (userMsg?.role === 'user') {
+    await validateAttachmentRefs(userMsg.content, 20 * 1024 * 1024, 25 * 1024 * 1024);
     persistMessage(req.conversationId, userMsg);
     updateConversationPreview(req.conversationId, userMsg);
   }
+  activeRequests.set(req.conversationId, abort);
 
   const win = getWin();
   const send = (evt: StreamEvent): void => {
@@ -71,7 +73,7 @@ async function runChat(
       send({ type: 'start', conversationId: req.conversationId, messageId });
 
       // Resolve working directory: project path > global setting > process.cwd()
-      const conv = getDb().prepare('SELECT project_id FROM conversations WHERE id = ?').get(req.conversationId) as { project_id?: string } | undefined;
+      const conv = getDb().prepare('SELECT project_id, system_prompt FROM conversations WHERE id = ?').get(req.conversationId) as { project_id?: string; system_prompt?: string } | undefined;
       let projectPath: string | undefined;
       if (conv?.project_id) {
         const proj = getDb().prepare('SELECT path FROM projects WHERE id = ?').get(conv.project_id) as { path?: string } | undefined;
@@ -82,10 +84,12 @@ async function runChat(
         logger.info('chat', `using project cwd: ${projectPath}`);
       }
 
-      const baseSystemPrompt = req.systemPrompt || getSetting<string>('defaultSystemPrompt', '') || DEFAULT_SYSTEM_PROMPT;
-      const systemPrompt = projectPath
-        ? `${baseSystemPrompt}\n\nThe user has selected a project folder: ${projectPath}\nTreat this directory as the working context for file operations, shell commands, and any code-related tasks. When the user refers to "the project" or "the codebase", they mean this folder.`
-        : baseSystemPrompt;
+      const systemPrompt = composeSystemPrompt({
+        appInstructions: getSetting<string>('defaultSystemPrompt', ''),
+        conversationInstructions: conv?.system_prompt,
+        projectPath,
+        planMode: req.planMode
+      });
       let messages = req.messages;
 
       // Look up model context window for adaptive truncation
@@ -103,7 +107,7 @@ async function runChat(
         for (const m of messages) {
           const parts = Array.isArray(m.content) ? m.content : [];
           for (const p of parts) {
-            if ('image_url' in p) {
+            if ('image_url' in p || (p.type === 'attachment_ref' && p.attachment.type === 'image')) {
               send({ type: 'error', conversationId: req.conversationId, messageId, error: `Model "${req.model}" does not support image input. Please switch to a vision-capable model or remove the image attachment.` });
               send({ type: 'done', conversationId: req.conversationId, messageId });
               return;
@@ -142,6 +146,7 @@ async function runChat(
               else if ('image_url' in p) chars += 170;
               else if ('input_audio' in p) chars += 200;
               else if ('file' in p && typeof p.file.data === 'string') chars += p.file.data.length / 2;
+              else if (p.type === 'attachment_ref') chars += p.attachment.type === 'image' ? 170 : p.attachment.type === 'audio' ? 200 : p.attachment.size / 2;
             }
           }
           if (m.reasoning) chars += m.reasoning.length;
@@ -198,10 +203,11 @@ async function runChat(
         let assistantContent = '';
         let assistantReasoning = '';
         const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        const providerMessages = await hydrateAttachmentRefs(truncateMessagesForContext(currentMessages, modelDef, systemPrompt));
 
         for await (const evt of adapter.stream({
           model: req.model,
-          messages: truncateMessagesForContext(currentMessages, modelDef, systemPrompt),
+          messages: providerMessages,
           tools: availableTools,
           systemPrompt,
           temperature: req.temperature,

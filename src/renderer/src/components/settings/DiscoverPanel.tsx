@@ -6,10 +6,21 @@ import { McpEditor } from './McpPanel';
 const PLACEHOLDER_RE = /^<.+>$/;
 
 function toConfig(entry: McpRegistryEntry): McpServerConfig {
+  if (entry.install.transport === 'http') {
+    return {
+      id: `reg-${entry.id}`,
+      name: entry.name,
+      enabled: true,
+      transport: 'http',
+      url: entry.install.url,
+      trust: false
+    };
+  }
   return {
     id: `reg-${entry.id}`,
     name: entry.name,
     enabled: true,
+    transport: 'stdio',
     command: entry.install.command,
     args: [...entry.install.args],
     env: {}
@@ -17,7 +28,8 @@ function toConfig(entry: McpRegistryEntry): McpServerConfig {
 }
 
 function needsSetup(entry: McpRegistryEntry): boolean {
-  return !!entry.requiresConfig || entry.install.args.some((a) => PLACEHOLDER_RE.test(a));
+  return !!entry.requiresConfig
+    || (entry.install.transport !== 'http' && entry.install.args.some((a) => PLACEHOLDER_RE.test(a)));
 }
 
 export function DiscoverPanel(): JSX.Element {
@@ -39,7 +51,11 @@ export function DiscoverPanel(): JSX.Element {
   const isAdded = (entry: McpRegistryEntry): boolean =>
     installed.some((c) =>
       c.id === `reg-${entry.id}`
-      || (c.command === entry.install.command && JSON.stringify(c.args ?? []) === JSON.stringify(entry.install.args))
+      || (entry.install.transport === 'http'
+        ? c.transport === 'http' && c.url === entry.install.url
+        : c.transport !== 'http'
+          && c.command === entry.install.command
+          && JSON.stringify(c.args ?? []) === JSON.stringify(entry.install.args))
     );
 
   const add = async (entry: McpRegistryEntry): Promise<void> => {
@@ -104,7 +120,9 @@ export function DiscoverPanel(): JSX.Element {
                         repository
                       </button>
                       <code className="bg-bg-sidebar border border-border px-1.5 py-0.5 rounded font-mono">
-                        {entry.install.command} {entry.install.args.join(' ')}
+                        {entry.install.transport === 'http'
+                          ? entry.install.url
+                          : `${entry.install.command} ${entry.install.args.join(' ')}`}
                       </code>
                     </div>
                     {entry.requiresConfig && (

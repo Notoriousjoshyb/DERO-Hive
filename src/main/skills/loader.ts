@@ -1,7 +1,8 @@
 import { app } from 'electron';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
+import type { SkillImportPreview } from '@shared/types';
 import { paths } from '../utils/paths';
 import { logger } from '../utils/logger';
 
@@ -27,6 +28,8 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const NAME_MAX = 64;
 const DESCRIPTION_MAX = 1024;
+const SKILL_FILE_MAX_BYTES = 256 * 1024;
+const UNSUPPORTED_SKILL_PARTS = ['references', 'assets', 'scripts', 'hooks', 'agents', 'commands'] as const;
 
 export function bundledSkillsDir(): string {
   return join(app.getAppPath(), 'resources', 'skills');
@@ -60,6 +63,67 @@ export function parseSkillMarkdown(raw: string): ParsedSkill | null {
     description,
     license: typeof meta.license === 'string' ? meta.license : undefined,
     prompt: body.trim()
+  };
+}
+
+export type SkillDirectoryInspection =
+  | { ok: true; preview: SkillImportPreview; skillPath: string }
+  | { ok: false; error: string };
+
+/** Validate a selected Agent Skills folder without executing or copying it. */
+export function inspectSkillDirectory(sourceDir: string): SkillDirectoryInspection {
+  const dir = resolve(sourceDir);
+  try {
+    if (!statSync(dir).isDirectory()) return { ok: false, error: 'Select a skill folder.' };
+  } catch {
+    return { ok: false, error: 'The selected folder is unavailable.' };
+  }
+
+  const skillPath = join(dir, 'SKILL.md');
+  if (!existsSync(skillPath)) return { ok: false, error: 'The selected folder does not contain SKILL.md.' };
+
+  let raw: string;
+  try {
+    const file = statSync(skillPath);
+    if (!file.isFile()) return { ok: false, error: 'SKILL.md is not a file.' };
+    if (file.size > SKILL_FILE_MAX_BYTES) return { ok: false, error: 'SKILL.md is larger than 256 KB.' };
+    raw = readFileSync(skillPath, 'utf8');
+  } catch {
+    return { ok: false, error: 'SKILL.md could not be read.' };
+  }
+
+  const parsed = parseSkillMarkdown(raw);
+  if (!parsed) return { ok: false, error: 'SKILL.md needs valid name and description frontmatter.' };
+  if (basename(dir) !== parsed.name) {
+    return { ok: false, error: `Skill name "${parsed.name}" must match folder name "${basename(dir)}".` };
+  }
+
+  let entries: Set<string>;
+  try {
+    entries = new Set(readdirSync(dir).map((name) => name.toLowerCase()));
+  } catch {
+    return { ok: false, error: 'The selected folder could not be read.' };
+  }
+  const prompt = parsed.prompt.toLowerCase();
+  const warnings = UNSUPPORTED_SKILL_PARTS.flatMap((part) => {
+    if (entries.has(part)) return [`${part}/ is unsupported and will not be copied or executed.`];
+    if (prompt.includes(`${part}/`) || prompt.includes(`${part}\\`)) {
+      return [`SKILL.md references ${part}/, which Hive will not copy or execute.`];
+    }
+    return [];
+  });
+
+  return {
+    ok: true,
+    skillPath,
+    preview: {
+      sourceDir: dir,
+      name: parsed.name,
+      description: parsed.description,
+      slashCommand: `/${parsed.name}`,
+      prompt: parsed.prompt,
+      warnings
+    }
   };
 }
 

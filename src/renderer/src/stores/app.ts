@@ -14,24 +14,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   showTokenUsage: true,
   showReasoning: true,
   autoTitle: true,
-  maxConcurrentToolCalls: 4,
   toolApprovalMode: 'always',
   telemetry: false,
   experimentalFeatures: false,
   voiceNotificationSounds: true,
   voiceNotificationVolume: 0.5
 };
-
-export interface QueueItem {
-  id: string;
-  text: string;
-  attachments: Attachment[];
-  createdAt: number;
-  skillName?: string;
-  systemPrompt?: string;
-  planMode?: boolean;
-  reasoning?: 'off' | 'low' | 'medium' | 'high';
-}
 
 export interface TodoItem {
   content: string;
@@ -150,13 +138,11 @@ interface AppState {
   // Composer
   composerFocusMode: boolean;
   composerPlanMode: boolean;
-  composerAgent: string;
   composerReasoning: 'off' | 'low' | 'medium' | 'high';
   toggleComposerFocus: () => void;
   toggleComposerPlan: () => void;
   cycleComposerReasoning: () => void;
   setComposerReasoning: (level: 'off' | 'low' | 'medium' | 'high') => void;
-  setComposerAgent: (agent: string) => void;
 
   // Attachments for next send
   pendingAttachments: Attachment[];
@@ -210,7 +196,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       settings,
       composerFocusMode: settings.composerFocusMode ?? false,
       composerPlanMode: settings.composerPlanMode ?? false,
-      composerAgent: settings.composerAgent ?? 'default',
       composerReasoning: settings.composerReasoning ?? 'medium'
     });
     if (typeof document !== 'undefined') {
@@ -437,7 +422,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   composerFocusMode: false,
   composerPlanMode: false,
-  composerAgent: 'default',
   composerReasoning: 'medium',
   toggleComposerFocus: () => {
     const next = !get().composerFocusMode;
@@ -461,10 +445,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setComposerReasoning: (level) => {
     set({ composerReasoning: level });
     void get().updateSettings({ composerReasoning: level });
-  },
-  setComposerAgent: (agent) => {
-    set({ composerAgent: agent });
-    void get().updateSettings({ composerAgent: agent });
   },
 
   pendingAttachments: [],

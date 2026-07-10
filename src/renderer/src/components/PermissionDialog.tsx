@@ -1,20 +1,15 @@
-import { useState } from 'react';
 import { useAppStore } from '../stores/app';
 
 export function PermissionDialog(): JSX.Element | null {
   const pending = useAppStore((s) => s.pendingPermissions);
   const remove = useAppStore((s) => s.removePendingPermission);
-  const [remember, setRemember] = useState(false);
 
   if (pending.length === 0) return null;
   const req = pending[0];
 
-  const decide = async (decision: 'allow' | 'deny', rememberDecision = false): Promise<void> => {
-    // `remember` is honoured in the main process as a session-scoped grant for
-    // this one tool. It is not persisted, and it does not affect any other tool.
-    await window.hive.toolPermissionDecide({ requestId: req.requestId, decision, remember: rememberDecision });
+  const decide = async (decision: 'allow' | 'deny'): Promise<void> => {
+    await window.hive.toolPermissionDecide({ requestId: req.requestId, decision });
     remove(req.requestId);
-    setRemember(false);
   };
 
   return (
@@ -45,16 +40,6 @@ export function PermissionDialog(): JSX.Element | null {
         </pre>
 
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-end">
-          <label className="flex items-center gap-1.5 text-xs text-fg-muted sm:mr-auto cursor-pointer">
-            <input
-              type="checkbox"
-              id="remember"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              className="accent-accent"
-            />
-            Don't ask again for <span className="font-mono">{req.toolName}</span> this session
-          </label>
           <button
             onClick={() => void decide('deny')}
             className="px-4 py-1.5 rounded-lg border border-border bg-bg hover:bg-bg-input hover:border-border-strong text-fg text-sm transition"
@@ -62,7 +47,7 @@ export function PermissionDialog(): JSX.Element | null {
             Deny
           </button>
           <button
-            onClick={() => void decide('allow', remember)}
+            onClick={() => void decide('allow')}
             className="px-4 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium shadow-elev-sm transition"
           >
             Allow

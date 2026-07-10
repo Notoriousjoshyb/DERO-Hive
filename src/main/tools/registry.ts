@@ -1,4 +1,4 @@
-import type { ToolDefinition, PermissionRule } from '@shared/types';
+import { normalizeToolApprovalMode, type ToolApprovalMode, type ToolDefinition, type PermissionRule } from '@shared/types';
 import { EventEmitter } from 'node:events';
 import { getDb, getSetting } from '../db/client';
 import { BUILTIN_TOOLS, builtinExecutors } from './builtin';
@@ -23,18 +23,23 @@ export interface PermissionRequest {
   toolName: string;
   args: Record<string, unknown>;
   description?: string;
+  conversationId: string;
 }
 
 type Decision = 'allow' | 'deny';
 
 export class ToolRegistry extends EventEmitter {
   private executors = new Map<string, ToolExecutor>();
-  private pendingRequests = new Map<string, { resolve: (d: Decision) => void; rule: PermissionRule }>();
+  private pendingRequests = new Map<string, {
+    resolve: (d: Decision) => void;
+    toolName: string;
+    conversationId: string;
+    mode: ToolApprovalMode;
+    explicitAsk: boolean;
+  }>();
   /**
-   * Tools the user approved with "don't ask again". Keyed by tool name, so
-   * approving `write_file` never silently approves `run_shell`. Held in memory
-   * on purpose: the grant must not outlive the app, and it must not be decided
-   * by the renderer, which is the component this gate exists to constrain.
+   * In-memory grants keyed by conversation and tool. They neither cross chats
+   * nor outlive the app, and the renderer cannot bypass this gate.
    */
   private sessionAllow = new Set<string>();
 
@@ -62,14 +67,21 @@ export class ToolRegistry extends EventEmitter {
     if (rule?.action === 'deny') {
       return { content: `Denied by permission rule: ${name}`, isError: true };
     }
-    // An explicit `ask` rule always prompts. With no rule, sensitive built-ins
-    // prompt, and so does any tool from an MCP server the user has not trusted.
-    // A session grant covers only the tool it was given for.
-    const needsApproval = !this.sessionAllow.has(name)
-      && (rule?.action === 'ask'
-        || (!rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted))));
+    // Explicit rules win over settings and remembered grants. Without a rule,
+    // the mode controls prompts for sensitive built-ins and untrusted MCPs.
+    const mode = this.approvalMode();
+    const granted = mode === 'session' && this.sessionAllow.has(this.sessionKey(ctx.conversationId, name));
+    const implicitRisk = !rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted));
+    const needsApproval = rule?.action === 'ask'
+      || (implicitRisk && mode !== 'never' && !granted);
     if (needsApproval) {
-      const allowed = await this.requestPermission({ requestId: cryptoRandom(), toolName: name, args });
+      const allowed = await this.requestPermission({
+        requestId: cryptoRandom(),
+        toolName: name,
+        args,
+        conversationId: ctx.conversationId,
+        description: mcp?.serverName ? `MCP server: ${mcp.serverName}` : undefined
+      }, mode, rule?.action === 'ask');
       if (!allowed) return { content: `User denied: ${name}`, isError: true };
     }
 
@@ -86,7 +98,7 @@ export class ToolRegistry extends EventEmitter {
         const content = Array.isArray(result.content)
           ? (result.content as Array<{ type: string; text?: string }>).map((c) => c.text || JSON.stringify(c)).join('\n')
           : String(result.content);
-        return { content, isError: result.isError };
+        return { content, isError: result.isError, meta: { source: `mcp:${mcp.serverId}`, serverName: mcp.serverName } };
       } catch (err) {
         return { content: `MCP tool error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
       }
@@ -142,30 +154,41 @@ export class ToolRegistry extends EventEmitter {
     getDb().prepare('DELETE FROM permissions WHERE id = ?').run(id);
   }
 
-  decidePermission(requestId: string, decision: Decision, remember = false): void {
+  decidePermission(requestId: string, decision: Decision): void {
     const p = this.pendingRequests.get(requestId);
     if (p) {
-      if (remember && decision === 'allow') this.sessionAllow.add(p.rule.toolName);
+      if (decision === 'allow' && !p.explicitAsk && p.mode === 'session') {
+        this.sessionAllow.add(this.sessionKey(p.conversationId, p.toolName));
+      }
       p.resolve(decision);
       this.pendingRequests.delete(requestId);
     }
   }
 
   private requiresApproval(name: string): boolean {
-    // Honor toolApprovalMode from settings: 'never' → no prompts at all, 'always' → ask for sensitive tools
-    const mode = (getSetting<{ toolApprovalMode?: 'always' | 'project' | 'never' }>('appSettings') || {}).toolApprovalMode || 'always';
-    if (mode === 'never') return false;
-    // Shell commands and writes always ask in 'always' mode unless rule overrides
     return ['run_shell', 'write_file', 'edit_file'].includes(name);
   }
 
-  private async requestPermission(req: PermissionRequest): Promise<boolean> {
+  private approvalMode(): ToolApprovalMode {
+    return normalizeToolApprovalMode(
+      (getSetting<{ toolApprovalMode?: unknown }>('appSettings') || {}).toolApprovalMode
+    );
+  }
+
+  private sessionKey(conversationId: string, toolName: string): string {
+    return `${conversationId}\0${toolName}`;
+  }
+
+  private async requestPermission(req: PermissionRequest, mode: ToolApprovalMode, explicitAsk: boolean): Promise<boolean> {
     this.emit('request', req);
     return new Promise<boolean>((resolve) => {
       const wrap = (allow: boolean): void => resolve(allow);
       this.pendingRequests.set(req.requestId, {
         resolve: ((d: Decision) => wrap(d === 'allow')) as (d: Decision) => void,
-        rule: { id: req.requestId, toolName: req.toolName, action: 'ask' }
+        toolName: req.toolName,
+        conversationId: req.conversationId,
+        mode,
+        explicitAsk
       });
       // Auto-deny after 2 minutes
       setTimeout(() => {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../stores/app';
-import type { Attachment } from '@shared/types';
+import type { Attachment, ContentPart } from '@shared/types';
 import { ComposerToolbar } from './ComposerToolbar';
 import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
@@ -116,14 +116,13 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     state.setChatError(null);
 
     let prompt = content;
-    let skillName: string | undefined;
     let extractedText: string | null = null;
     const m = content.match(/^(\/\S+)\s*([\s\S]*)/);
     if (m) {
       const cmd = m[1];
       const rest = m[2];
       const skill = skills.find((s) => s.slashCommand === cmd && s.enabled);
-      if (skill) { prompt = `${skill.prompt}\n\n${rest}`; skillName = skill.name; }
+      if (skill) prompt = `${skill.prompt}\n\n${rest}`;
     }
 
     // Run shell command prefixed with !cmd — the whole line after "!" is the command
@@ -140,21 +139,10 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       }
     }
 
-    // Plan-mode system prompt
-    let systemPrompt = skillName ? `Active skill: ${skillName}` : undefined;
-    if (composerPlanMode && !skillName) {
-      systemPrompt = (systemPrompt ? systemPrompt + '\n' : '') +
-        'Plan mode is enabled. Think step-by-step and present a plan (numbered steps) before taking any action. Wait for user confirmation before executing tools.';
-    }
-
     let convId = conversationId;
     if (!convId) {
-      // Inherit projectId from the most recent conversation if it had one set
-      const recentWithProject = useAppStore.getState().conversations.find((c) => c.projectId);
-      const projectId = recentWithProject?.projectId;
       convId = await useAppStore.getState().createConversation({
-        title: content.slice(0, 60),
-        projectId
+        title: content.slice(0, 60)
       });
     } else {
       // Only auto-title untouched conversations — never clobber a name the
@@ -172,12 +160,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       content: pendingAttachments.length > 0
         ? [
             { type: 'text', text: prompt },
-            ...pendingAttachments.map((a) =>
-              a.type === 'image' ? { type: 'image_url', image_url: { url: `data:${a.mimeType};base64,${a.data}` } } :
-              a.type === 'audio' ? { type: 'input_audio', input_audio: { data: a.data, format: 'mp3' as const } } :
-              { type: 'file', file: { filename: a.filename, data: a.data, mimeType: a.mimeType } }
-            )
-          ]
+            ...pendingAttachments.map((a): ContentPart => ({
+              type: 'attachment_ref',
+              attachment: { id: a.id, type: a.type, filename: a.filename, mimeType: a.mimeType, size: a.size }
+            }))
+          ] as ContentPart[]
         : prompt,
       createdAt: Date.now()
     };
@@ -193,10 +180,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
         providerId,
         model,
         messages: messagesToSend,
-        attachments: pendingAttachments.map((a) => ({ type: a.type, filename: a.filename, mimeType: a.mimeType, data: a.data })),
-        systemPrompt,
         planMode: composerPlanMode || undefined,
-        toolApprovalModeOverride: settings.toolApprovalMode,
         reasoning
       });
       setText('');
@@ -223,11 +207,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       if (files) {
         for (const f of files) {
           addAttachment({
-            id: crypto.randomUUID(),
+            id: f.id,
             type: f.type as Attachment['type'],
             filename: f.filename,
             mimeType: f.mimeType,
-            size: f.data.length,
+            size: f.size,
             data: f.data
           });
         }

@@ -203,9 +203,9 @@ export function GeneralPanel(): JSX.Element {
           <input type="checkbox" checked={settings.showReasoning} onChange={(e) => updateSettings({ showReasoning: e.target.checked })} className="accent-accent w-4 h-4" />
         </Field>
         <Field label="Tool approval">
-          <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as 'always' | 'project' | 'never' })} className="input">
+          <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as 'always' | 'session' | 'never' })} className="input">
             <option value="always">Always ask</option>
-            <option value="project">Ask per project</option>
+            <option value="session">Ask once per chat</option>
             <option value="never">Never ask</option>
           </select>
         </Field>

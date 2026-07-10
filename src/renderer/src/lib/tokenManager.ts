@@ -61,7 +61,8 @@ export function estimateMessageTokens(m: Message): number {
       if ('text' in part && typeof part.text === 'string') chars += part.text.length;
       else if ('image_url' in part) chars += 800;
       else if ('input_audio' in part) chars += 200;
-              else if ('file' in part && typeof part.file.data === 'string') chars += part.file.data.length / 4;
+      else if ('file' in part && typeof part.file.data === 'string') chars += part.file.data.length / 4;
+      else if (part.type === 'attachment_ref') chars += part.attachment.type === 'image' ? 800 : part.attachment.type === 'audio' ? 200 : part.attachment.size / 4;
     }
   }
   if (m.reasoning) chars += m.reasoning.length;

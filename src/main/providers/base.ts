@@ -10,8 +10,6 @@ export interface ProviderStreamRequest {
   maxTokens?: number;
   reasoning?: { effort?: 'low' | 'medium' | 'high' };
   signal?: AbortSignal;
-  // For multi-modal: raw base64 attachments the user uploaded
-  attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
 }
 
 export interface ProviderStreamEvent {

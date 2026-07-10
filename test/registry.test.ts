@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import type { McpManager } from '../src/main/mcp/manager';
+import { normalizeToolApprovalMode } from '../src/shared/types';
 
 // The permissions table is empty in these scenarios; approval is decided by
 // requiresApproval() and the MCP trust flag.
@@ -58,6 +59,7 @@ const makeRegistry = (mcp: ReturnType<typeof fakeMcp>) =>
 
 beforeEach(() => {
   appSettings = { toolApprovalMode: 'always' };
+  rules.length = 0;
 });
 
 describe('MCP tool routing', () => {
@@ -124,27 +126,47 @@ describe('MCP trust gating', () => {
   });
 });
 
-describe('"don\'t ask again" session grant', () => {
+describe('explicit permission rules', () => {
+  test('allow and deny override the global approval mode', async () => {
+    const reg = makeRegistry(fakeMcp(true));
+    let prompts = 0;
+    reg.on('request', () => { prompts++; });
+
+    appSettings = { toolApprovalMode: 'always' };
+    rules.push({ id: 'allow-write', tool_name: 'write_file', action: 'allow' });
+    expect((await reg.execute('write_file', {}, ctx)).content).toBe('wrote');
+
+    rules.length = 0;
+    appSettings = { toolApprovalMode: 'never' };
+    rules.push({ id: 'deny-write', tool_name: 'write_file', action: 'deny' });
+    expect((await reg.execute('write_file', {}, ctx)).isError).toBe(true);
+    expect(prompts).toBe(0);
+  });
+});
+
+describe('per-chat session grant', () => {
   test('is scoped to the tool it was granted for', async () => {
+    appSettings = { toolApprovalMode: 'session' };
     const reg = makeRegistry(fakeMcp(true));
     const prompts: string[] = [];
     reg.on('request', (req: { requestId: string; toolName: string }) => {
       prompts.push(req.toolName);
-      // Remember only for write_file.
-      setImmediate(() => reg.decidePermission(req.requestId, 'allow', req.toolName === 'write_file'));
+      setImmediate(() => reg.decidePermission(req.requestId, 'allow'));
     });
 
     await reg.execute('write_file', { path: 'a' }, ctx);
     await reg.execute('write_file', { path: 'b' }, ctx); // granted — must not ask again
+    await reg.execute('write_file', { path: 'c' }, { ...ctx, conversationId: 'c2' }); // different chat — must ask
     await reg.execute('run_shell', { command: 'whoami' }, ctx); // must still ask
 
-    expect(prompts).toEqual(['write_file', 'run_shell']);
+    expect(prompts).toEqual(['write_file', 'write_file', 'run_shell']);
   });
 
   test('does not survive into a fresh registry', async () => {
+    appSettings = { toolApprovalMode: 'session' };
     const first = makeRegistry(fakeMcp(true));
     first.on('request', (req: { requestId: string }) =>
-      setImmediate(() => first.decidePermission(req.requestId, 'allow', true))
+      setImmediate(() => first.decidePermission(req.requestId, 'allow'))
     );
     await first.execute('write_file', { path: 'a' }, ctx);
 
@@ -159,6 +181,38 @@ describe('"don\'t ask again" session grant', () => {
     expect(asked).toBe(true);
   });
 
+  test('is scoped to both conversation and tool', async () => {
+    appSettings = { toolApprovalMode: 'session' };
+    const reg = makeRegistry(fakeMcp(true));
+    const prompts: string[] = [];
+    reg.on('request', (req: { requestId: string; toolName: string; conversationId: string }) => {
+      prompts.push(`${req.conversationId}:${req.toolName}`);
+      setImmediate(() => reg.decidePermission(req.requestId, 'allow'));
+    });
+
+    await reg.execute('write_file', {}, { ...ctx, conversationId: 'c1' });
+    await reg.execute('write_file', {}, { ...ctx, conversationId: 'c1' });
+    await reg.execute('write_file', {}, { ...ctx, conversationId: 'c2' });
+
+    expect(prompts).toEqual(['c1:write_file', 'c2:write_file']);
+  });
+
+  test('an explicit ask rule still prompts after a session grant', async () => {
+    appSettings = { toolApprovalMode: 'session' };
+    const reg = makeRegistry(fakeMcp(true));
+    let prompts = 0;
+    reg.on('request', (req: { requestId: string }) => {
+      prompts++;
+      setImmediate(() => reg.decidePermission(req.requestId, 'allow'));
+    });
+
+    await reg.execute('write_file', {}, ctx);
+    rules.push({ id: 'ask-write', tool_name: 'write_file', action: 'ask' });
+    await reg.execute('write_file', {}, ctx);
+
+    expect(prompts).toBe(2);
+  });
+
   test('toolApprovalMode "never" skips prompting entirely', async () => {
     appSettings = { toolApprovalMode: 'never' };
     const reg = makeRegistry(fakeMcp(true));
@@ -170,4 +224,9 @@ describe('"don\'t ask again" session grant', () => {
     expect(asked).toBe(false);
     expect(result.content).toBe('wrote');
   });
+});
+
+test('migrates the retired project approval mode to session', () => {
+  expect(normalizeToolApprovalMode('project')).toBe('session');
+  expect(normalizeToolApprovalMode('garbage')).toBe('always');
 });

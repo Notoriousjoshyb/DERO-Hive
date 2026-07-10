@@ -1,9 +1,10 @@
-import { ipcMain, shell } from 'electron';
-import { existsSync } from 'node:fs';
-import { IPC, type Skill } from '@shared/types';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { constants, copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { IPC, type Skill, type SkillImportPickResult, type SkillImportResult } from '@shared/types';
 import { getDb } from '../db/client';
 import { BUILTIN_SKILLS } from '@shared/defaults';
-import { loadBundledSkills, loadUserSkills, userSkillsDir } from '../skills/loader';
+import { inspectSkillDirectory, loadBundledSkills, loadUserSkills, userSkillsDir } from '../skills/loader';
 import { logger } from '../utils/logger';
 
 /**
@@ -86,6 +87,48 @@ export function registerSkillHandlers(): void {
   ipcMain.handle(IPC.SKILL_OPEN_DIR, async () => {
     const error = await shell.openPath(userSkillsDir());
     return { ok: !error, error: error || undefined };
+  });
+
+  ipcMain.handle(IPC.SKILL_IMPORT_PICK, async (event): Promise<SkillImportPickResult> => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(win!, {
+      title: 'Select a skill folder',
+      buttonLabel: 'Preview skill',
+      properties: ['openDirectory']
+    });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, cancelled: true };
+
+    const inspection = inspectSkillDirectory(result.filePaths[0]);
+    return inspection.ok
+      ? { ok: true, preview: inspection.preview }
+      : { ok: false, error: inspection.error };
+  });
+
+  ipcMain.handle(IPC.SKILL_IMPORT, (_event, sourceDir: string): SkillImportResult => {
+    if (typeof sourceDir !== 'string') return { ok: false, error: 'Invalid skill folder.' };
+
+    // Revalidate at the trust boundary; the renderer-provided preview is not authoritative.
+    const inspection = inspectSkillDirectory(sourceDir);
+    if (!inspection.ok) return inspection;
+
+    const destination = join(userSkillsDir(), inspection.preview.name);
+    if (existsSync(destination)) {
+      return { ok: false, error: `/${inspection.preview.name} is already installed.` };
+    }
+
+    let created = false;
+    try {
+      mkdirSync(destination);
+      created = true;
+      copyFileSync(inspection.skillPath, join(destination, 'SKILL.md'), constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (created) rmSync(destination, { recursive: true, force: true });
+      return { ok: false, error: error instanceof Error ? error.message : 'Skill import failed.' };
+    }
+
+    syncFileSkills();
+    const skill = listSkills().find((item) => item.id === `user-${inspection.preview.name}`);
+    return skill ? { ok: true, skill } : { ok: false, error: 'Skill copied but could not be loaded.' };
   });
 
   ipcMain.handle(IPC.SKILL_SAVE, (_e, skill: Skill) => {

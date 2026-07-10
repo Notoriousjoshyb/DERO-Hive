@@ -19,7 +19,7 @@ import { registerProjectHandlers } from './ipc/projects';
 import { registerWhisperHandlers } from './ipc/whisper';
 import { registerSimulatorHandlers } from './ipc/simulator';
 import { registerAgentHandlers } from './ipc/agent';
-import { initDb, closeDb, getSetting } from './db/client';
+import { initDb, closeDb, getDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
 import { ensureDirs } from './utils/paths';
@@ -27,6 +27,7 @@ import { McpManager } from './mcp/manager';
 import { WhisperManager } from './whisper/manager';
 import { SimulatorManager } from './simulator/manager';
 import { terminalDisposeAll } from './terminal/session';
+import { cleanupAttachmentFiles, serializedAttachmentIds } from './utils/attachments';
 import type { AppSettings } from '../shared/types';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -229,6 +230,11 @@ app.whenReady().then(async () => {
   // Init DB + secrets BEFORE registering handlers
   await initDb();
   await initSecrets();
+  const attachmentRefs = new Set(
+    (getDb().prepare("SELECT content FROM messages WHERE content LIKE '%attachment_ref%'").all() as Array<{ content: string }>)
+      .flatMap((row) => serializedAttachmentIds(row.content))
+  );
+  await cleanupAttachmentFiles(attachmentRefs);
 
   // Init MCP manager. Connect to enabled servers in the background so a slow
   // or failing server (e.g., dero-mcp-server) never blocks the window from showing.

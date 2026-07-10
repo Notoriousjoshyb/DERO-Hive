@@ -31,8 +31,9 @@ The assistant can use these tools directly in chat (with your permission):
 | `todo_write` | Maintain a structured task list |
 
 ### 🔌 MCP (Model Context Protocol) Server Support
-- Connect any stdio-based MCP server for custom tools, resources, and prompts.
+- Connect stdio or Streamable HTTP MCP servers for custom tools, resources, and prompts.
 - Built-in bundled MCP servers auto-discovered from `resources/mcp/`.
+- Curated Discover entries include a local Obsidian MCP connection.
 - Start/stop/restart servers from the Settings UI.
 - Real-time status monitoring with auto-reconnect.
 - Permission gating for MCP-provided tools.
@@ -94,13 +95,13 @@ Built-in slash-command prompt templates:
 | `/fix` | Fix bugs in the selected code |
 | `/refactor` | Suggest refactoring improvements |
 
-Custom skills can be added as markdown files in the `resources/skills/` folder with YAML frontmatter.
+Custom skills can be created in Settings or imported from a local folder containing `SKILL.md`.
 
 ### 🔒 Permission System
 Granular control over tool execution:
-- **Always allow** — tools run without asking.
-- **Always deny** — tools are blocked entirely.
-- **Ask** — you are prompted each time (with a modal showing tool name, arguments, and estimated risk).
+- **Always ask** — sensitive and untrusted MCP tools prompt every time.
+- **Ask once per chat** — remember approval for one tool in one conversation.
+- **Never ask** — skip implicit prompts; explicit deny/ask rules still apply.
 - Per-tool rules stored securely.
 
 ### 🗃️ Local-First & SQLite
@@ -343,7 +344,7 @@ dero-hive/
 4. **Provider streams tokens** back via SSE → forwarded to renderer via IPC events.
 5. **Renderer** updates streaming content in real-time, renders Markdown with syntax highlighting.
 6. **Tool calls** from the assistant are intercepted by ToolRegistry → permission check → execution → result sent back.
-7. **MCP tools** are handled via the McpManager which wraps stdio MCP server processes.
+7. **MCP tools** are handled via the McpManager over stdio or Streamable HTTP.
 8. **All conversations** are persisted to SQLite with FTS5 full-text search indexing.
 
 ---
@@ -361,7 +362,7 @@ The app uses **better-sqlite3** with these tables:
 | `artifacts` | Saved artifacts (HTML, SVG, Mermaid, etc.) |
 | `projects` | Project folders with icon, color, path |
 | `providers` | Provider configurations (base URL, models, enabled state) |
-| `mcp_servers` | MCP server configurations (command, args, env) |
+| `mcp_servers` | MCP server transport and non-secret configuration; credentials are encrypted separately |
 | `skills` | Custom skills (name, description, prompt, category) |
 | `tool_permissions` | Per-tool permission rules (allow/deny/ask) |
 | `schema_version` | Migration tracking |
@@ -389,24 +390,18 @@ All data (SQLite DB, encrypted secrets, logs) is stored at:
 ## 🧪 Testing & Quality
 
 ```bash
-# Type checking
-npm run typecheck
+# Typecheck, tests, and production build
+npm run check
 
-# Linting
-npm run lint
-
-# Full check (typecheck + lint)
-npm run typecheck && npm run lint
+# Tests only
+npm test
 ```
-
-> Note: No test runner is configured yet — this is on the roadmap.
 
 ---
 
 ## 🚧 Roadmap & Future Work
 
 ### 🔴 High Priority
-- [ ] **Agentic Chat** — Custom "agent" definitions (system prompt presets) with a UI to switch between them mid-conversation.
 - [ ] **Conversation Branching / Forking** — UI buttons to fork from any message, fork lineage visualization.
 - [ ] **Full-Text Search Dialog** — `Cmd/Ctrl+Shift+F` search dialog with snippets, context, filters, match highlighting.
 - [ ] **Message Editing** — Edit any user/assistant message and re-send to continue the conversation.
@@ -414,7 +409,6 @@ npm run typecheck && npm run lint
 
 ### 🟡 Medium Priority
 - [ ] **macOS & Linux Builds** — Package for `.dmg` (macOS) and `.AppImage`/`.deb` (Linux).
-- [ ] **Custom Slash Commands** — UI for creating/editing skills without markdown files.
 - [ ] **Multiple Windows / Tabs** — Open multiple conversations in separate windows.
 - [ ] **Export / Import** — Export conversations as Markdown, JSON, or PDF.
 - [ ] **Prompt Library** — Save and organize reusable prompts.
@@ -428,7 +422,6 @@ npm run typecheck && npm run lint
 - [ ] **Conversation Stats** — Word count, token usage over time, most used models.
 - [ ] **Multi-Language Spelling/Grammar Check** — Built-in proofreading skill.
 - [ ] **VSCode Extension** — Connect DERO Hive conversations to VS Code.
-- [ ] **Obsidian Plugin** — Link DERO Hive conversations to Obsidian notes.
 - [ ] **Auto-Tagging** — Automatic tagging of conversations by topic.
 - [ ] **Pinned Messages** — Pin important messages to the top of a conversation.
 - [ ] **Collaborative Chat** — Share conversations with others (via export or server).

@@ -1,15 +1,29 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-09",
-  "description": "Curated seed registry for Dero Hive's MCP 'Discover' tab (feature #23). Every entry was verified on 2026-07-09: repository live, install package published on npm/PyPI, license checked. See GITHUB_RESOURCES.md for the full research report and expansion candidates.",
+  "updatedAt": "2026-07-10",
+  "description": "Curated seed registry for Dero Hive's MCP Discover tab. Entries were verified through 2026-07-10: repository live, install package published where applicable, and license checked.",
   "notes": [
-    "Windows: npx/uvx resolve to .cmd shims — spawn as 'cmd /c npx ...' (or with shell:true) from Electron's child_process, per modelcontextprotocol/servers README and issues #40/#3460.",
+    "Windows: the MCP SDK's cross-spawn launcher resolves .cmd shims through ComSpec with escaped arguments.",
     "Runtime prerequisites: 'node' servers need Node.js (npx); 'python' servers need uv (uvx) or pip.",
     "Expansion: snapshot the official MCP Registry REST API (https://registry.modelcontextprotocol.io/v0/servers, frozen v0.1, unauthenticated, paginated JSON) and vet entries manually — its moderation policy says to assume minimal-to-no moderation, so pin a vetted snapshot rather than consuming the live feed.",
     "punkpeye/awesome-mcp-servers (MIT, 90.5k stars, 52 categories) may be mined for additional entries if its copyright/license notice is preserved; it has NO per-server OS/local-first/official metadata (claim refuted 0-3), so derive those fields independently.",
     "License note: the modelcontextprotocol/servers repo is transitioning MIT -> Apache-2.0; new contributions are Apache-2.0, unrelicensed older contributions remain MIT (LICENSE file, read 2026-07-09)."
   ],
   "servers": [
+    {
+      "id": "obsidian-local-rest-api",
+      "name": "Obsidian",
+      "description": "Connect to the active Obsidian vault through the Local REST API plugin's MCP endpoint.",
+      "repo": "https://github.com/coddingtonbear/obsidian-local-rest-api",
+      "license": "MIT",
+      "runtime": "http",
+      "install": { "transport": "http", "url": "https://127.0.0.1:27124/mcp/" },
+      "requiresConfig": "Enable the Local REST API plugin, paste its API key as the bearer token, and trust its local HTTPS certificate. Alternatively use the plugin's loopback-only endpoint: http://127.0.0.1:27123/mcp/.",
+      "category": "knowledge",
+      "local": true,
+      "windows": true,
+      "tags": ["obsidian", "notes", "markdown", "local"]
+    },
     {
       "id": "filesystem",
       "name": "Filesystem",

@@ -30,12 +30,9 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const setReasoning = useAppStore((s) => s.setComposerReasoning);
   const focusMode = useAppStore((s) => s.composerFocusMode);
   const toggleFocus = useAppStore((s) => s.toggleComposerFocus);
-  const agent = useAppStore((s) => s.composerAgent);
-  const setAgent = useAppStore((s) => s.setComposerAgent);
-
   const provider = providers.find((p) => p.id === selectedProviderId);
 
-  type MenuId = 'model' | 'agent' | 'perm' | 'attach' | 'think';
+  type MenuId = 'model' | 'perm' | 'attach' | 'think';
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const closeAll = (): void => setOpenMenu(null);
   // Toggle a menu: clicking the already-open trigger closes it, otherwise
@@ -44,7 +41,6 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const toggleMenu = (menu: MenuId): void => setOpenMenu((cur) => (cur === menu ? null : menu));
 
   const modelMenuOpen = openMenu === 'model';
-  const agentMenuOpen = openMenu === 'agent';
   const permMenuOpen = openMenu === 'perm';
   const attachMenuOpen = openMenu === 'attach';
   const thinkMenuOpen = openMenu === 'think';
@@ -60,14 +56,14 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   }, []);
 
   const cyclePermMode = async (): Promise<void> => {
-    const order: Array<'always' | 'project' | 'never'> = ['always', 'project', 'never'];
+    const order = ['always', 'session', 'never'] as const;
     const cur = settings.toolApprovalMode || 'always';
     const next = order[(order.indexOf(cur) + 1) % order.length];
     await useAppStore.getState().updateSettings({ toolApprovalMode: next });
   };
 
   const permLabel = settings.toolApprovalMode === 'never' ? 'No approval'
-    : settings.toolApprovalMode === 'project' ? 'Ask once/session'
+    : settings.toolApprovalMode === 'session' ? 'Ask once/chat'
     : 'Always ask';
 
   return (
@@ -110,13 +106,13 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
           {permMenuOpen && (
             <div className="absolute bottom-full left-0 mb-1 menu-panel overflow-hidden min-w-52 z-50">
               <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Tool approval</div>
-              {(['always', 'project', 'never'] as const).map((mode) => (
+              {(['always', 'session', 'never'] as const).map((mode) => (
                 <button
                   key={mode}
                   onClick={async () => { await useAppStore.getState().updateSettings({ toolApprovalMode: mode }); closeAll(); }}
                   className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-bg-input ${settings.toolApprovalMode === mode ? 'text-accent' : 'text-fg'}`}
                 >
-                  <span>{mode === 'always' ? 'Always ask' : mode === 'project' ? 'Ask once per session' : 'Never ask (trust all)'}</span>
+                  <span>{mode === 'always' ? 'Always ask' : mode === 'session' ? 'Ask once per chat' : 'Skip implicit prompts'}</span>
                   {settings.toolApprovalMode === mode && <CheckMark />}
                 </button>
               ))}
@@ -133,35 +129,6 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
 
       {/* Right side */}
       <div className="flex items-center gap-0.5">
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => toggleMenu('agent')}
-            title="Agent"
-            className="px-2 py-1 rounded text-[11px] hover:bg-bg-elev text-fg-muted hover:text-fg flex items-center gap-1"
-          >
-            <AgentIcon />
-            <span className="capitalize">{agent}</span>
-            <ChevronIcon />
-          </button>
-          {agentMenuOpen && (
-            <div className="absolute bottom-full right-0 mb-1 menu-panel overflow-hidden min-w-40 z-50">
-              <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Agent</div>
-              {['default', 'explore', 'review'].map((a) => (
-                <button
-                  key={a}
-                  onClick={() => { setAgent(a); closeAll(); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-bg-input ${agent === a ? 'text-accent' : 'text-fg'}`}
-                >
-                  <span className="capitalize">{a}</span>
-                  {agent === a && <CheckMark />}
-                </button>
-              ))}
-              <div className="px-3 py-2 text-[10px] text-fg-subtle border-t border-border/50">More agents coming soon</div>
-            </div>
-          )}
-        </div>
-
         <div className="relative">
           <button
             type="button"
@@ -347,9 +314,6 @@ function FocusIcon({ on }: { on: boolean }): JSX.Element {
 }
 function ShieldIcon(): JSX.Element {
   return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 2l5 2v4c0 3-2 5-5 6-3-1-5-3-5-6V4l5-2z" /></svg>;
-}
-function AgentIcon(): JSX.Element {
-  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="2" /><circle cx="11" cy="10" r="2" /><path d="M8 8l1 1" /></svg>;
 }
 function ModelIcon(): JSX.Element {
   return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M2 7h12" /></svg>;

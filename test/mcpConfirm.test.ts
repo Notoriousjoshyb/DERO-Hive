@@ -89,4 +89,15 @@ describe('confirmServerLaunch', () => {
     expect(ok).toBe(true);
     expect(shown).toEqual([]);
   });
+
+  test('shows an HTTP endpoint without exposing its bearer token', async () => {
+    const cfg = {
+      id: 'obsidian', name: 'Obsidian', enabled: true, transport: 'http',
+      url: 'https://127.0.0.1:27124/mcp/', bearerToken: 'do-not-display'
+    } as Cfg;
+
+    expect(await confirm(cfg)).toBe(true);
+    expect(shown[0].detail).toContain('https://127.0.0.1:27124/mcp/');
+    expect(shown[0].detail).not.toContain('do-not-display');
+  });
 });

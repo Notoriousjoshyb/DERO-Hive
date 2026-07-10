@@ -1,7 +1,10 @@
 import type {
   ChatRequest,
+  Attachment,
   Conversation,
   Message,
+  McpImportPickResult,
+  McpImportResult,
   McpServerConfig,
   McpServerStatus,
   McpRegistry,
@@ -10,6 +13,8 @@ import type {
   ProviderPreset,
   Project,
   Skill,
+  SkillImportPickResult,
+  SkillImportResult,
   AppSettings,
   Artifact,
   ToolDefinition,
@@ -22,7 +27,7 @@ import type {
 declare global {
   interface Window {
     hive: {
-      chatSend: (req: ChatRequest & { attachments?: Array<{ type: string; filename: string; mimeType: string; data: string }> }) => Promise<{ messageId: string }>;
+      chatSend: (req: ChatRequest) => Promise<{ messageId: string }>;
       chatAbort: (id: string) => Promise<{ ok: boolean }>;
       onChatStream: (cb: (e: StreamEvent) => void) => () => void;
 
@@ -53,6 +58,8 @@ declare global {
       mcpDisconnect: (id: string) => Promise<{ ok: boolean }>;
       mcpStatus: () => Promise<McpServerStatus[]>;
       mcpRegistry: () => Promise<McpRegistry>;
+      mcpImportPick: () => Promise<McpImportPickResult>;
+      mcpImport: (token: string, replace: boolean) => Promise<McpImportResult>;
       onMcpChanged: (cb: (s: McpServerStatus[]) => void) => () => void;
 
       skillList: () => Promise<Skill[]>;
@@ -60,6 +67,8 @@ declare global {
       skillDelete: (id: string) => Promise<{ ok: boolean }>;
       skillRescan: () => Promise<Skill[]>;
       skillOpenDir: () => Promise<{ ok: boolean; error?: string }>;
+      skillImportPick: () => Promise<SkillImportPickResult>;
+      skillImport: (sourceDir: string) => Promise<SkillImportResult>;
 
       agentProxyStart: (providerId: string) => Promise<{ ok: boolean; port?: number; token?: string; error?: string }>;
       agentProxyStop: () => Promise<{ ok: boolean }>;
@@ -69,7 +78,7 @@ declare global {
       projectDelete: (id: string) => Promise<{ ok: boolean }>;
 
       toolList: () => Promise<ToolDefinition[]>;
-      toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny'; remember?: boolean }) => Promise<{ ok: boolean }>;
+      toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;
       onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => () => void;
       onToolResult: (cb: (data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => void) => () => void;
 
@@ -95,7 +104,7 @@ declare global {
       settingsGet: () => Promise<AppSettings>;
       settingsSet: (s: Partial<AppSettings>) => Promise<AppSettings>;
 
-      attachFromFile: () => Promise<Array<{ type: string; filename: string; mimeType: string; data: string }> | null>;
+      attachFromFile: () => Promise<Attachment[] | null>;
 
       artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) => Promise<{ id: string }>;
       artifactList: (conversationId?: string) => Promise<Artifact[]>;

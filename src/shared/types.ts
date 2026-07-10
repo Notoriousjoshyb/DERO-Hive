@@ -2,11 +2,20 @@
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface StoredAttachment {
+  id: string;
+  type: 'image' | 'audio' | 'pdf' | 'file';
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } }
   | { type: 'input_audio'; input_audio: { data: string; format: 'wav' | 'mp3' } }
-  | { type: 'file'; file: { filename: string; data: string; mimeType: string } };
+  | { type: 'file'; file: { filename: string; data: string; mimeType: string } }
+  | { type: 'attachment_ref'; attachment: StoredAttachment };
 
 export interface Message {
   id: string;
@@ -56,12 +65,9 @@ export interface ChatRequest {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
-  systemPrompt?: string;
   stream?: boolean;
   reasoning?: { effort?: 'low' | 'medium' | 'high' };
   planMode?: boolean;
-  toolApprovalModeOverride?: 'always' | 'project' | 'never';
-  attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
 }
 
 export type StreamEvent =
@@ -115,18 +121,39 @@ export interface ProviderConfig {
   modelsFetchedAt?: number;
 }
 
-// MCP server config (matches Claude Desktop format)
-export interface McpServerConfig {
+interface McpServerConfigBase {
   id: string;
   name: string;
   enabled: boolean;
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  cwd?: string;
   timeoutMs?: number;
   trust?: boolean; // skip tool confirmations
+  env?: Record<string, string>; // write-only; values are never returned to the renderer
+  envKeys?: string[]; // renderer-safe indicator for stored environment values
 }
+
+export interface StdioMcpServerConfig extends McpServerConfigBase {
+  transport?: 'stdio'; // optional for configs created before HTTP transport support
+  command: string;
+  args?: string[];
+  cwd?: string;
+  url?: never;
+  bearerToken?: never;
+  hasBearerToken?: never;
+  clearBearerToken?: never;
+}
+
+export interface HttpMcpServerConfig extends McpServerConfigBase {
+  transport: 'http';
+  url: string;
+  bearerToken?: string; // write-only; encrypted before persistence
+  hasBearerToken?: boolean; // renderer-safe indicator
+  clearBearerToken?: boolean;
+  command?: never;
+  args?: never;
+  cwd?: never;
+}
+
+export type McpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig;
 
 export interface McpServerStatus {
   id: string;
@@ -145,8 +172,10 @@ export interface McpRegistryEntry {
   description: string;
   repo: string;
   license: string;
-  runtime: 'node' | 'python';
-  install: { command: string; args: string[] };
+  runtime: 'node' | 'python' | 'http';
+  install:
+    | { transport?: 'stdio'; command: string; args: string[] }
+    | { transport: 'http'; url: string };
   requiresConfig?: string;
   category: string;
   local: boolean;
@@ -175,6 +204,45 @@ export interface Skill {
   category?: string;
   sourceDir?: string; // set for skills synced from a SKILL.md folder
 }
+
+export interface McpImportPreview {
+  token: string;
+  sourceName: string;
+  servers: Array<{
+    id: string;
+    name: string;
+    transport: 'stdio' | 'http';
+    endpoint: string;
+    envKeys: string[];
+    conflict: boolean;
+  }>;
+  warnings: string[];
+}
+
+export type McpImportPickResult =
+  | { ok: true; preview: McpImportPreview }
+  | { ok: false; cancelled?: boolean; error?: string };
+
+export type McpImportResult =
+  | { ok: true; imported: number; skipped: number }
+  | { ok: false; error: string };
+
+export interface SkillImportPreview {
+  sourceDir: string;
+  name: string;
+  description: string;
+  slashCommand: string;
+  prompt: string;
+  warnings: string[];
+}
+
+export type SkillImportPickResult =
+  | { ok: true; preview: SkillImportPreview }
+  | { ok: false; cancelled?: boolean; error?: string };
+
+export type SkillImportResult =
+  | { ok: true; skill: Skill }
+  | { ok: false; error: string };
 
 export interface Project {
   id: string;
@@ -215,6 +283,14 @@ export interface PermissionRule {
   projectPath?: string;
 }
 
+export type ToolApprovalMode = 'always' | 'session' | 'never';
+
+/** Maps the retired `project` value without trusting arbitrary persisted data. */
+export function normalizeToolApprovalMode(value: unknown): ToolApprovalMode {
+  if (value === 'project') return 'session';
+  return value === 'session' || value === 'never' ? value : 'always';
+}
+
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system';
   fontSize: 'small' | 'medium' | 'large';
@@ -231,8 +307,7 @@ export interface AppSettings {
   defaultProviderId?: string;
   defaultModelId?: string;
   favouriteModels?: string[]; // entries are "providerId:modelId"
-  maxConcurrentToolCalls: number;
-  toolApprovalMode: 'always' | 'project' | 'never';
+  toolApprovalMode: ToolApprovalMode;
   workingDirectory?: string;
   codeFolder?: string; // last folder opened in the Code tab explorer (persists across sessions)
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
@@ -242,7 +317,6 @@ export interface AppSettings {
   // Composer (per-session, but persists in settings)
   composerFocusMode?: boolean;
   composerPlanMode?: boolean;
-  composerAgent?: string; // "default" | other
   composerReasoning?: 'off' | 'low' | 'medium' | 'high';
   microphoneDeviceId?: string;
   voiceNotificationSounds?: boolean;
@@ -253,12 +327,7 @@ export interface AppSettings {
   whisperModel?: string; // model filename, e.g. "ggml-base.en.bin"
 }
 
-export interface Attachment {
-  id: string;
-  type: 'image' | 'audio' | 'pdf' | 'file';
-  filename: string;
-  mimeType: string;
-  size: number;
+export interface Attachment extends StoredAttachment {
   // base64 data
   data: string;
 }
@@ -320,6 +389,8 @@ export const IPC = {
   MCP_STATUS: 'mcp:status',
   MCP_CHANGED: 'mcp:changed', // event
   MCP_REGISTRY: 'mcp:registry',
+  MCP_IMPORT_PICK: 'mcp:import-pick',
+  MCP_IMPORT: 'mcp:import',
 
   // Skills
   SKILL_LIST: 'skill:list',
@@ -327,6 +398,8 @@ export const IPC = {
   SKILL_DELETE: 'skill:delete',
   SKILL_RESCAN: 'skill:rescan',
   SKILL_OPEN_DIR: 'skill:open-dir',
+  SKILL_IMPORT_PICK: 'skill:import-pick',
+  SKILL_IMPORT: 'skill:import',
 
   // Projects
   PROJECT_LIST: 'project:list',

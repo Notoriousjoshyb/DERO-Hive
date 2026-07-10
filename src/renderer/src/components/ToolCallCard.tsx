@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ToolCall } from '@shared/types';
+import { useAppStore } from '../stores/app';
 
 interface Props {
   toolCall: ToolCall;
@@ -10,6 +11,12 @@ interface Props {
 
 export function ToolCallCard({ toolCall, result, isError, durationMs }: Props): JSX.Element {
   const [expanded, setExpanded] = useState(false);
+  const tools = useAppStore((s) => s.tools);
+  const mcpStatuses = useAppStore((s) => s.mcpStatuses);
+  const source = tools.find((tool) => tool.name === toolCall.function.name)?.source;
+  const sourceLabel = source?.startsWith('mcp:')
+    ? mcpStatuses.find((server) => server.id === source.slice(4))?.name || 'MCP'
+    : undefined;
 
   let args: unknown;
   try { args = JSON.parse(toolCall.function.arguments); } catch { args = toolCall.function.arguments; }
@@ -30,6 +37,7 @@ export function ToolCallCard({ toolCall, result, isError, durationMs }: Props): 
         <span className={`font-medium ${status === 'error' ? 'text-danger' : 'text-fg'}`}>
           {toolCall.function.name}
         </span>
+        {sourceLabel && <span className="text-[9px] text-accent bg-accent-soft rounded px-1 py-0.5">{sourceLabel}</span>}
         {durationMs !== undefined && (
           <span className="text-fg-subtle/80 tabular-nums text-[10px]">{formatDuration(durationMs)}</span>
         )}

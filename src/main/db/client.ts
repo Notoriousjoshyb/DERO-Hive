@@ -83,7 +83,9 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   enabled INTEGER DEFAULT 1,
-  command TEXT NOT NULL,
+  transport TEXT NOT NULL DEFAULT 'stdio',
+  command TEXT NOT NULL DEFAULT '',
+  url TEXT,
   args TEXT,
   env TEXT,
   cwd TEXT,
@@ -139,7 +141,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifact_conv ON artifacts(conversation_id);
 `;
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -204,6 +206,17 @@ const MIGRATIONS: Migration[] = [
     description: 'Add skills.source_dir for file-synced skills',
     up: (database) => {
       database.exec(`ALTER TABLE skills ADD COLUMN source_dir TEXT`);
+    }
+  },
+  {
+    version: 7,
+    description: 'Add HTTP transport fields to MCP servers',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(mcp_servers)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('transport')) database.exec(`ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'`);
+      if (!columns.has('url')) database.exec(`ALTER TABLE mcp_servers ADD COLUMN url TEXT`);
     }
   }
 ];

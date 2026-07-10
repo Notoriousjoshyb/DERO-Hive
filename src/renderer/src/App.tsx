@@ -47,7 +47,10 @@ export default function App(): JSX.Element {
     void loadConversations();
     void loadTools();
 
-    const offMcp = window.hive.onMcpChanged(() => loadMcpStatuses());
+    const offMcp = window.hive.onMcpChanged(() => {
+      void loadMcpStatuses();
+      void loadTools();
+    });
     const offMenu = window.hive.onMenu((action) => {
       if (action === 'new-conversation') void useAppStore.getState().createConversation();
       else if (action === 'toggle-sidebar') toggleSidebar();
