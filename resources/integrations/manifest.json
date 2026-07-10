@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "integrations": [
+    {
+      "id": "hologram",
+      "kind": "desktop-sidecar",
+      "optional": true,
+      "source": "https://github.com/DHEBP/HOLOGRAM",
+      "commit": "0ae9398a60856b56ebda0adf153cfe1fa00b441a",
+      "windowsBinary": "hologram/bin/Hologram.exe"
+    },
+    {
+      "id": "purewolf",
+      "kind": "native-host",
+      "optional": true,
+      "source": "https://github.com/ArcaneSphere/PureWolf-Browser-Extension",
+      "commit": "a2a7e2f04206b66f39fac5b296e2e87a562e1196",
+      "windowsBinary": "purewolf/bin/purewolf-native.exe"
+    },
+    {
+      "id": "hermes",
+      "kind": "gateway",
+      "optional": true,
+      "source": "https://github.com/NousResearch/hermes-agent",
+      "browserGatewayReference": {
+        "source": "https://github.com/abundantbeing/hermes-browser-extension",
+        "commit": "13c79de5b50ec98c2560881b989bc3461e0586f5",
+        "vendored": false
+      },
+      "endpointEnvironmentVariable": "HERMES_GATEWAY_URL",
+      "vendored": false
+    }
+  ]
+}

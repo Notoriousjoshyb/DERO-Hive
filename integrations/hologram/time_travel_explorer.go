@@ -77,8 +77,7 @@ type TimeTravelExplorer struct {
 
 // NewTimeTravelExplorer creates a new time-travel explorer service
 func NewTimeTravelExplorer(app *App, logFn func(string)) (*TimeTravelExplorer, error) {
-	wd, _ := os.Getwd()
-	explorePath := filepath.Join(wd, "datashards", "time_travel")
+	explorePath := filepath.Join(getDatashardsDir(), "time_travel")
 	_ = os.MkdirAll(explorePath, 0755)
 
 	store, err := graviton.NewDiskStore(explorePath)

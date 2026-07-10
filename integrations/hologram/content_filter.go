@@ -82,8 +82,7 @@ type ContentFilter struct {
 
 // NewContentFilter creates a new content filter service
 func NewContentFilter(logFn func(string)) (*ContentFilter, error) {
-	wd, _ := os.Getwd()
-	filterPath := filepath.Join(wd, "datashards", "content_filter")
+	filterPath := filepath.Join(getDatashardsDir(), "content_filter")
 	_ = os.MkdirAll(filterPath, 0755)
 
 	store, err := graviton.NewDiskStore(filterPath)

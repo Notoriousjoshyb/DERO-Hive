@@ -19,6 +19,7 @@ import { registerGithubHandlers } from './ipc/github';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerWhisperHandlers } from './ipc/whisper';
 import { registerSimulatorHandlers } from './ipc/simulator';
+import { registerIntegrationHandlers } from './ipc/integrations';
 import { registerAgentHandlers } from './ipc/agent';
 import { initDb, closeDb, getDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
@@ -27,6 +28,7 @@ import { ensureDirs } from './utils/paths';
 import { McpManager } from './mcp/manager';
 import { WhisperManager } from './whisper/manager';
 import { SimulatorManager } from './simulator/manager';
+import { IntegrationRegistry } from './integrations/registry';
 import { BrowserBridge } from './browserBridge';
 import { terminalDisposeAll } from './terminal/session';
 import { shutdownAdapterCache } from './providers/registry';
@@ -39,6 +41,7 @@ let mainWindow: BrowserWindow | null = null;
 let mcpManager: McpManager | null = null;
 let whisperManager: WhisperManager | null = null;
 let simulatorManager: SimulatorManager | null = null;
+let integrationRegistry: IntegrationRegistry | null = null;
 let browserBridge: BrowserBridge | null = null;
 
 async function createMainWindow(): Promise<void> {
@@ -262,6 +265,7 @@ app.whenReady().then(async () => {
   simulatorManager = new SimulatorManager((status) => {
     mainWindow?.webContents.send(IPC.SIMULATOR_STATUS_CHANGED, status);
   });
+  integrationRegistry = new IntegrationRegistry();
   browserBridge = new BrowserBridge(() => mainWindow, () => whisperManager);
   // The browser extension should work whenever the app is running, so the
   // loopback bridge starts with the app instead of with the Companion panel.
@@ -285,6 +289,7 @@ app.whenReady().then(async () => {
   registerProjectHandlers();
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
+  registerIntegrationHandlers(integrationRegistry);
   registerAgentHandlers();
   ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120 });
   ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120 });
@@ -340,6 +345,7 @@ app.on('before-quit', async (event) => {
   try { terminalDisposeAll(); } catch { /* ignore */ }
   try { await shutdownAdapterCache(); } catch { /* ignore */ }
   try { await simulatorManager?.stop(); } catch { /* ignore */ }
+  try { await integrationRegistry?.shutdown(); } catch { /* ignore */ }
   try { await browserBridge?.stop(); } catch { /* ignore */ }
   try { browserBridge?.dispose(); } catch { /* ignore */ }
   try { await whisperManager?.stop(); } catch { /* ignore */ }

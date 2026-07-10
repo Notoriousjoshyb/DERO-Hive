@@ -16,6 +16,7 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - MCP server support with a curated Discover catalog, bundled DERO MCP resources, and DERO-focused skills.
 - Appearance engine: themes, accent colour override, and custom CSS injection.
 - Browser Companion extension (Chrome/Edge side panel) that sends page context to DERO Hive and streams replies live back into the browser. See below.
+- Optional, process-isolated Hologram, PureWolf, and Hermes integration status. See [`INTEGRATIONS.md`](INTEGRATIONS.md).
 
 ## Requirements
 
@@ -110,6 +111,8 @@ src/shared/               Shared types, presets, model metadata, capabilities
 browser-extension/        Chrome/Edge side-panel Browser Companion (unpacked MV3 extension)
 resources/mcp/            Bundled DERO MCP server source and assets
 resources/skills/         Bundled DERO development skills
+integrations/             Pinned upstream Hologram and PureWolf source subtrees
+resources/integrations/   Optional sidecar packaging manifest and staged binaries
 scripts/                  Resource setup and Codex ACP patch scripts
 ```
 
@@ -119,6 +122,9 @@ scripts/                  Resource setup and Codex ACP patch scripts
 |---|---|
 | `DERO_HIVE_DATA_DIR` | Overrides DERO Hive's local app-data directory. |
 | `CODEX_PATH` | Optional custom Codex executable used by ACP. |
+| `DERO_HIVE_HOLOGRAM_PATH` | Optional external Hologram executable. |
+| `DERO_HIVE_PUREWOLF_PATH` | Optional external PureWolf native-host executable. |
+| `HERMES_GATEWAY_URL` | Optional independently managed Hermes HTTP(S) gateway. |
 
 ## Acknowledgments
 
@@ -149,6 +155,7 @@ DERO Hive is possible because of these open-source projects and services. This l
 ### DERO ecosystem
 
 - [DERO](https://derofoundation.co) and the projects, documentation, and community that support the bundled DERO MCP server and DERO development skills.
+- [Hologram](https://github.com/DHEBP/HOLOGRAM) and [PureWolf](https://github.com/ArcaneSphere/PureWolf-Browser-Extension) are retained as pinned optional source subtrees. [Hermes Agent](https://github.com/NousResearch/hermes-agent) remains an external optional gateway. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## License
 

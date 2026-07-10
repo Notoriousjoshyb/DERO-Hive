@@ -451,7 +451,7 @@ func (a *App) RemoveFile(path string) map[string]interface{} {
 
 	// Security check: only allow removal from datashards directory
 	absPath, _ := filepath.Abs(path)
-	shardsDir, _ := filepath.Abs(filepath.Join(".", "datashards"))
+	shardsDir := getDatashardsDir()
 	
 	if !strings.HasPrefix(absPath, shardsDir) {
 		return map[string]interface{}{
