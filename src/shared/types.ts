@@ -146,6 +146,11 @@ export interface ProviderConfig {
   modelsFetchedAt?: number;
 }
 
+export interface ProviderFallback {
+  providerId: string;
+  model: string;
+}
+
 interface McpServerConfigBase {
   id: string;
   name: string;
@@ -414,6 +419,7 @@ export interface AppSettings {
   autoTitle: boolean;
   defaultProviderId?: string;
   defaultModelId?: string;
+  providerFallbackChain?: ProviderFallback[];
   favouriteModels?: string[]; // entries are "providerId:modelId"
   maxConcurrentToolCalls: number;
   /** Maximum model → tools → model cycles for one submitted task (1–50). */

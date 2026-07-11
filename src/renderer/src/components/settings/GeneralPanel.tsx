@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/app';
-import type { WhisperStatus, AppSettings } from '@shared/types';
+import type { WhisperStatus, AppSettings, ProviderFallback } from '@shared/types';
 
 interface AudioDevice {
   deviceId: string;
@@ -43,6 +43,23 @@ export function GeneralPanel(): JSX.Element {
   };
 
   const defaultProvider = providers.find((p) => p.id === settings.defaultProviderId);
+  const fallbackChain = settings.providerFallbackChain || [];
+  const setFallbackChain = (next: ProviderFallback[]): void => {
+    void updateSettings({ providerFallbackChain: next.length ? next : undefined });
+  };
+  const addFallback = (value: string): void => {
+    if (!value) return;
+    const [providerId, model] = JSON.parse(value) as [string, string];
+    if (fallbackChain.some((item) => item.providerId === providerId && item.model === model)) return;
+    setFallbackChain([...fallbackChain, { providerId, model }]);
+  };
+  const moveFallback = (index: number, offset: -1 | 1): void => {
+    const destination = index + offset;
+    if (destination < 0 || destination >= fallbackChain.length) return;
+    const next = [...fallbackChain];
+    [next[index], next[destination]] = [next[destination], next[index]];
+    setFallbackChain(next);
+  };
   return (
     <div className="space-y-6 max-w-xl">
       <Section title="Appearance">
@@ -216,6 +233,36 @@ export function GeneralPanel(): JSX.Element {
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
+        </Field>
+        <Field label="Fallback chain" hint="Tried in order only when the selected model fails before producing output or tools.">
+          <div className="w-72 space-y-2">
+            <select value="" onChange={(e) => addFallback(e.target.value)} className="input w-full">
+              <option value="">Add provider / model…</option>
+              {providers.filter((provider) => provider.enabled).flatMap((provider) => provider.models.map((model) => (
+                <option
+                  key={JSON.stringify([provider.id, model.id])}
+                  value={JSON.stringify([provider.id, model.id])}
+                  disabled={fallbackChain.some((item) => item.providerId === provider.id && item.model === model.id)}
+                >
+                  {provider.name} — {model.name}
+                </option>
+              )))}
+            </select>
+            {fallbackChain.map((item, index) => {
+              const provider = providers.find((entry) => entry.id === item.providerId);
+              const model = provider?.models.find((entry) => entry.id === item.model);
+              return (
+                <div key={`${item.providerId}\0${item.model}`} className="flex items-center gap-1 rounded border border-border bg-bg-input px-2 py-1 text-xs">
+                  <span className="min-w-0 flex-1 truncate" title={`${item.providerId} / ${item.model}`}>
+                    {index + 1}. {provider?.name || item.providerId} — {model?.name || item.model}
+                  </span>
+                  <button type="button" onClick={() => moveFallback(index, -1)} disabled={index === 0} className="text-fg-muted hover:text-fg disabled:opacity-30" aria-label={`Move fallback ${index + 1} up`}>↑</button>
+                  <button type="button" onClick={() => moveFallback(index, 1)} disabled={index === fallbackChain.length - 1} className="text-fg-muted hover:text-fg disabled:opacity-30" aria-label={`Move fallback ${index + 1} down`}>↓</button>
+                  <button type="button" onClick={() => setFallbackChain(fallbackChain.filter((_, itemIndex) => itemIndex !== index))} className="text-danger hover:opacity-70" aria-label={`Remove fallback ${index + 1}`}>×</button>
+                </div>
+              );
+            })}
+          </div>
         </Field>
         {(settings.favouriteModels || []).length > 0 && (
           <Field label="Favourites" hint="Click the ★ in the model dropdown to add/remove.">

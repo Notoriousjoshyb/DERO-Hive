@@ -2,9 +2,10 @@ import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
+import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel } from '@shared/types';
 import { logger } from '../utils/logger';
-import { getAdapter } from '../providers/registry';
+import { getAdapter, listProviders } from '../providers/registry';
+import type { ProviderStreamEvent } from '../providers/base';
 import { ToolRegistry } from '../tools/registry';
 import { McpManager } from '../mcp/manager';
 import { getDb } from '../db/client';
@@ -34,7 +35,8 @@ async function* streamWithRetry<T>(
   makeStream: () => AsyncIterable<T>,
   signal: AbortSignal,
   maxRetries = MAX_STREAM_RETRIES,
-  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS
+  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS,
+  retryAllowed: () => boolean = () => true
 ): AsyncGenerator<T> {
   let attempt = 0;
   while (true) {
@@ -48,9 +50,97 @@ async function* streamWithRetry<T>(
       return;
     } catch (err) {
       if (signal.aborted) throw err;
-      if (produced || attempt >= maxRetries) throw err;
+      if (produced || !retryAllowed() || attempt >= maxRetries) throw err;
       attempt++;
       await new Promise((r) => setTimeout(r, baseDelayMs * attempt));
+    }
+  }
+}
+
+export interface ProviderChainResolution {
+  targets: Array<ProviderFallback & { modelDef: ProviderModel }>;
+  unavailable: string[];
+}
+
+export function resolveProviderChain(
+  primary: ProviderFallback,
+  fallbackValue: unknown,
+  providers: readonly ProviderConfig[]
+): ProviderChainResolution {
+  const refs: ProviderFallback[] = [primary];
+  if (Array.isArray(fallbackValue)) {
+    for (const value of fallbackValue) {
+      if (!value || typeof value !== 'object') continue;
+      const providerId = (value as { providerId?: unknown }).providerId;
+      const model = (value as { model?: unknown }).model;
+      if (typeof providerId === 'string' && typeof model === 'string') refs.push({ providerId, model });
+    }
+  }
+
+  const available = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
+  const seen = new Set<string>();
+  const targets: ProviderChainResolution['targets'] = [];
+  const unavailable: string[] = [];
+  for (const ref of refs) {
+    const providerId = ref.providerId.trim();
+    const model = ref.model.trim();
+    const key = `${providerId}\0${model}`;
+    if (!providerId || !model || seen.has(key)) continue;
+    seen.add(key);
+    const provider = available.get(providerId);
+    if (!provider) {
+      unavailable.push(`Provider "${providerId}" is not configured or enabled.`);
+      continue;
+    }
+    const modelDef = provider.models.find((item) => item.id === model);
+    if (!modelDef) {
+      unavailable.push(`Model "${model}" is not configured for provider "${provider.name}".`);
+      continue;
+    }
+    targets.push({ providerId, model, modelDef });
+  }
+  return { targets, unavailable };
+}
+
+function commitsProviderOutput(event: ProviderStreamEvent): boolean {
+  return (event.type === 'delta' && Boolean(event.content))
+    || (event.type === 'reasoning' && Boolean(event.reasoning))
+    || (event.type === 'tool_calls' && Boolean(event.toolCalls?.length))
+    || event.type === 'usage';
+}
+
+export async function* streamWithFallback<T extends ProviderFallback>(
+  targets: readonly T[],
+  makeStream: (target: T) => AsyncIterable<ProviderStreamEvent>,
+  signal: AbortSignal,
+  fallbackAllowed: () => boolean = () => true,
+  retryAllowed: () => boolean = () => true,
+  maxRetries = MAX_STREAM_RETRIES,
+  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS
+): AsyncGenerator<{ target: T; event: ProviderStreamEvent }> {
+  const failures: string[] = [];
+  for (let index = 0; index < targets.length; index++) {
+    const target = targets[index];
+    let committed = false;
+    try {
+      for await (const event of streamWithRetry(
+        () => makeStream(target), signal, maxRetries, baseDelayMs, retryAllowed
+      )) {
+        if (commitsProviderOutput(event)) committed = true;
+        if (event.type === 'error') throw new Error(event.error || 'Provider stream failed');
+        yield { target, event };
+      }
+      return;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      failures.push(`${target.providerId}/${target.model}: ${error instanceof Error ? error.message : String(error)}`);
+      const hasNext = index + 1 < targets.length;
+      if (committed || !fallbackAllowed() || !hasNext) {
+        if (!committed && fallbackAllowed() && failures.length > 1) {
+          throw new Error(`Provider fallback chain exhausted: ${failures.join(' | ')}`, { cause: error });
+        }
+        throw error;
+      }
     }
   }
 }
@@ -173,9 +263,22 @@ async function runChat(
   // Run async without blocking the invoke response
   (async () => {
     try {
-      const adapter = getAdapter(req.providerId);
-      if (!adapter) {
-        send({ type: 'error', conversationId: req.conversationId, messageId, error: `Provider ${req.providerId} not configured` });
+      const appSettings = getSetting<Partial<AppSettings>>('appSettings');
+      const resolution = resolveProviderChain(
+        { providerId: req.providerId, model: req.model },
+        appSettings?.providerFallbackChain,
+        listProviders()
+      );
+      const providerTargets = resolution.targets.flatMap((target) => {
+        const adapter = getAdapter(target.providerId);
+        if (adapter) return [{ ...target, adapter }];
+        resolution.unavailable.push(`Provider "${target.providerId}" could not be loaded.`);
+        return [];
+      });
+      if (resolution.unavailable.length) logger.warn('chat', resolution.unavailable.join(' '));
+      if (providerTargets.length === 0) {
+        const error = resolution.unavailable.join(' ') || 'No configured provider/model is available.';
+        send({ type: 'error', conversationId: req.conversationId, messageId, error });
         send({ type: 'done', conversationId: req.conversationId, messageId });
         return;
       }
@@ -203,36 +306,28 @@ async function runChat(
         projectPath,
         planMode: req.planMode
       });
-      const customAgents = getSetting<Partial<AppSettings>>('appSettings')?.customAgents;
+      const customAgents = appSettings?.customAgents;
       const agentPrompt = resolveAgent(req.agentId, customAgents)?.prompt.trim();
       const additiveLayers = agentPrompt ? [agentPrompt] : [];
       if (projectPath) additiveLayers.push(buildProjectSnapshot(projectPath));
       const systemPrompt = [corePrompt, ...additiveLayers].join('\n\n');
       let messages = req.messages;
 
-      // Look up model context window for adaptive truncation
-      const providerRow = getDb().prepare('SELECT models FROM providers WHERE id = ?').get(req.providerId) as { models?: string } | undefined;
-      let modelDef: ProviderModel | null = null;
-      if (providerRow?.models) {
-        try {
-          const list = JSON.parse(providerRow.models) as ProviderModel[];
-          modelDef = list.find((m) => m.id === req.model) || null;
-        } catch { /* ignore */ }
-      }
+      let activeTargets = providerTargets;
+      let modelDef: ProviderModel | null = activeTargets[0].modelDef;
 
       // Block vision if the model doesn't support it
-      const modelSupportsVision = modelDef?.supportsVision ?? false;
-      if (!modelSupportsVision) {
-        for (const m of messages) {
-          const parts = Array.isArray(m.content) ? m.content : [];
-          for (const p of parts) {
-            if ('image_url' in p || (p.type === 'attachment_ref' && p.attachment.type === 'image')) {
-              send({ type: 'error', conversationId: req.conversationId, messageId, error: `Model "${req.model}" does not support image input. Please switch to a vision-capable model or remove the image attachment.` });
-              send({ type: 'done', conversationId: req.conversationId, messageId });
-              return;
-            }
-          }
+      const hasImage = messages.some((message) => Array.isArray(message.content) && message.content.some((part) =>
+        'image_url' in part || (part.type === 'attachment_ref' && part.attachment.type === 'image')
+      ));
+      if (hasImage) {
+        activeTargets = activeTargets.filter((target) => target.modelDef.supportsVision);
+        if (activeTargets.length === 0) {
+          send({ type: 'error', conversationId: req.conversationId, messageId, error: 'No configured model in the provider fallback chain supports image input.' });
+          send({ type: 'done', conversationId: req.conversationId, messageId });
+          return;
         }
+        modelDef = activeTargets[0].modelDef;
       }
 
       // ---- OpenChamber-style AUTO COMPACTION ----
@@ -312,12 +407,14 @@ async function runChat(
       // results and decide the next action. Keep it bounded so a mistaken or
       // repetitive plan cannot run indefinitely.
       const availableTools = tools.listTools();
-      const configuredRounds = getSetting<Partial<AppSettings>>('appSettings')?.maxAgenticRounds ?? 20;
+      const configuredRounds = appSettings?.maxAgenticRounds ?? 20;
       const maxAgenticRounds = Number.isFinite(configuredRounds)
         ? Math.min(50, Math.max(1, Math.floor(configuredRounds)))
         : 20;
 
       let lastTurnId = messageId;
+      let selectedTarget = activeTargets[0];
+      let fallbackAllowed = true;
       for (let round = 0; round < maxAgenticRounds; round++) {
         const turnId = round === 0 ? messageId : randomUUID();
         lastTurnId = turnId;
@@ -327,52 +424,70 @@ async function runChat(
         let assistantContent = '';
         let assistantReasoning = '';
         const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-        const providerMessages = await hydrateAttachmentRefs(
-          truncateMessagesForContext(currentMessages, modelDef, systemPrompt)
-        );
-
-        for await (const evt of streamWithRetry(
-          () => adapter.stream({
-            conversationId: req.conversationId,
-            cwd,
-            model: req.model,
-            messages: providerMessages,
-            tools: availableTools,
-            systemPrompt,
-            temperature: req.temperature,
-            topP: req.topP,
-            maxTokens: req.maxTokens,
-            reasoning: req.reasoning,
-            signal: abort.signal,
-            requestPermission: (permission) => tools.requestPermission(permission, {
-              cwd,
-              conversationId: req.conversationId
-            })
-          }),
-          abort.signal
-        )) {
-          if (abort.signal.aborted) break;
-          if (evt.type === 'delta' && evt.content) {
-            assistantContent += evt.content;
-            send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, content: evt.content });
-          } else if (evt.type === 'reasoning' && evt.reasoning) {
-            assistantReasoning += evt.reasoning;
-            send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, reasoning: evt.reasoning });
-          } else if (evt.type === 'tool_calls' && evt.toolCalls) {
-            toolCalls.push(...evt.toolCalls);
-            send({ type: 'tool_calls', conversationId: req.conversationId, messageId: turnId, toolCalls: [] });
-          } else if (evt.type === 'usage' && evt.usage) {
-            roundUsage.promptTokens += evt.usage.promptTokens;
-            roundUsage.completionTokens += evt.usage.completionTokens;
-            roundUsage.totalTokens += evt.usage.totalTokens;
-            send({ type: 'usage', conversationId: req.conversationId, messageId: turnId, usage: evt.usage });
-          } else if (evt.type === 'error' && evt.error) {
-            send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: evt.error });
-            send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
-            notifyStreamOutcome(win, 'error', evt.error);
-            return;
+        const preparedTargets = await Promise.all(activeTargets.map(async (target) => ({
+          ...target,
+          providerMessages: await hydrateAttachmentRefs(
+            truncateMessagesForContext(currentMessages, target.modelDef, systemPrompt)
+          )
+        })));
+        let sideEffectOccurred = false;
+        try {
+          for await (const { event: evt } of streamWithFallback(
+            preparedTargets,
+            (target) => {
+              if (selectedTarget.providerId !== target.providerId || selectedTarget.model !== target.model) {
+                logger.info('chat', `falling back to ${target.providerId}/${target.model}`);
+              }
+              selectedTarget = target;
+              return target.adapter.stream({
+                conversationId: req.conversationId,
+                cwd,
+                model: target.model,
+                messages: target.providerMessages,
+                tools: availableTools,
+                systemPrompt,
+                temperature: req.temperature,
+                topP: req.topP,
+                maxTokens: req.maxTokens,
+                reasoning: req.reasoning,
+                signal: abort.signal,
+                requestPermission: (permission) => {
+                  sideEffectOccurred = true;
+                  fallbackAllowed = false;
+                  return tools.requestPermission(permission, { cwd, conversationId: req.conversationId });
+                }
+              });
+            },
+            abort.signal,
+            () => fallbackAllowed,
+            () => !sideEffectOccurred
+          )) {
+            if (abort.signal.aborted) break;
+            if (commitsProviderOutput(evt)) fallbackAllowed = false;
+            if (evt.type === 'delta' && evt.content) {
+              assistantContent += evt.content;
+              send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, content: evt.content });
+            } else if (evt.type === 'reasoning' && evt.reasoning) {
+              assistantReasoning += evt.reasoning;
+              send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, reasoning: evt.reasoning });
+            } else if (evt.type === 'tool_calls' && evt.toolCalls) {
+              toolCalls.push(...evt.toolCalls);
+              send({ type: 'tool_calls', conversationId: req.conversationId, messageId: turnId, toolCalls: [] });
+            } else if (evt.type === 'usage' && evt.usage) {
+              roundUsage.promptTokens += evt.usage.promptTokens;
+              roundUsage.completionTokens += evt.usage.completionTokens;
+              roundUsage.totalTokens += evt.usage.totalTokens;
+              send({ type: 'usage', conversationId: req.conversationId, messageId: turnId, usage: evt.usage });
+            }
           }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: errorMessage });
+          send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+          notifyStreamOutcome(win, 'error', errorMessage);
+          return;
         }
+        activeTargets = [selectedTarget];
 
         // Persist assistant message
         const assistantMsg: Message = {
@@ -384,8 +499,8 @@ async function runChat(
             id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments }
           })) : undefined,
           createdAt: Date.now(),
-          model: req.model,
-          provider: req.providerId,
+          model: selectedTarget.model,
+          provider: selectedTarget.providerId,
           usage: roundUsage.totalTokens > 0 ? { ...roundUsage } : undefined
         };
         persistMessage(req.conversationId, assistantMsg);
@@ -406,7 +521,7 @@ async function runChat(
         if (toolCalls.length === 0 && queued.length === 0) {
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
           notifyStreamOutcome(win, 'done', assistantContent);
-          void maybeGenerateTitle(req.conversationId, req.providerId, req.model);
+          void maybeGenerateTitle(req.conversationId, selectedTarget.providerId, selectedTarget.model);
           return;
         }
 
