@@ -22,6 +22,7 @@ import { registerSimulatorHandlers } from './ipc/simulator';
 import { registerIntegrationHandlers } from './ipc/integrations';
 import { registerAgentHandlers } from './ipc/agent';
 import { registerSwarmHandlers } from './ipc/swarm';
+import { registerKnowledgeHandlers } from './ipc/knowledge';
 import { initDb, closeDb, getDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
@@ -36,6 +37,7 @@ import { shutdownAdapterCache } from './providers/registry';
 import { cleanupAttachmentFiles, serializedAttachmentIds } from './utils/attachments';
 import type { AppSettings } from '../shared/types';
 import type { SwarmManager } from './swarm/manager';
+import { initializeKnowledgeService, type KnowledgeService } from './knowledge/service';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -46,6 +48,7 @@ let simulatorManager: SimulatorManager | null = null;
 let integrationRegistry: IntegrationRegistry | null = null;
 let browserBridge: BrowserBridge | null = null;
 let swarmManager: SwarmManager | null = null;
+let knowledgeService: KnowledgeService | null = null;
 
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -254,6 +257,7 @@ app.whenReady().then(async () => {
   // Init MCP manager. Connect to enabled servers in the background so a slow
   // or failing server (e.g., dero-mcp-server) never blocks the window from showing.
   mcpManager = new McpManager();
+  knowledgeService = initializeKnowledgeService(mcpManager);
   await mcpManager.ensureBundledServers();
   void mcpManager.loadFromSettings().catch((err) => {
     logger.error('mcp', 'background load failed', err);
@@ -290,6 +294,7 @@ app.whenReady().then(async () => {
   registerToolHandlers(mcpManager);
   registerGithubHandlers();
   registerProjectHandlers();
+  registerKnowledgeHandlers(knowledgeService);
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
   registerIntegrationHandlers(integrationRegistry);

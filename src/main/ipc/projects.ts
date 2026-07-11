@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { IPC, type Project } from '@shared/types';
+import { IPC, normalizeProjectConfig, type Project, type ProjectConfig } from '@shared/types';
 import { getDb } from '../db/client';
 import { logger } from '../utils/logger';
 import { statSync } from 'node:fs';
@@ -13,17 +13,19 @@ export function registerProjectHandlers(): void {
 
   ipcMain.handle(IPC.PROJECT_SAVE, (_e, project: Project) => {
     const projectPath = validateProjectPath(project.path);
+    const config = normalizeProjectConfig(project.config);
     const now = Date.now();
     getDb().prepare(`
-      INSERT INTO projects (id, name, icon, color, path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (id, name, icon, color, path, config, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         icon = excluded.icon,
         color = excluded.color,
         path = excluded.path,
+        config = excluded.config,
         updated_at = excluded.updated_at
-    `).run(project.id, project.name, project.icon, project.color || null, projectPath, project.createdAt, now);
+    `).run(project.id, project.name, project.icon, project.color || null, projectPath, JSON.stringify(config), project.createdAt, now);
     logger.info('project', `saved ${project.name} (id=${project.id})`);
     return rowToProject(getDb().prepare('SELECT * FROM projects WHERE id = ?').get(project.id) as Record<string, unknown>);
   });
@@ -50,14 +52,24 @@ export function validateProjectPath(value: unknown): string {
   return projectPath;
 }
 
-function rowToProject(row: Record<string, unknown>): Project {
+export function rowToProject(row: Record<string, unknown>): Project {
   return {
     id: row.id as string,
     name: row.name as string,
     icon: row.icon as string,
     color: row.color as string | undefined,
     path: row.path as string,
+    config: parseStoredProjectConfig(row.config),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number
   };
+}
+
+function parseStoredProjectConfig(value: unknown): ProjectConfig {
+  if (typeof value !== 'string' || !value) return {};
+  try { return normalizeProjectConfig(JSON.parse(value)); }
+  catch (error) {
+    logger.warn('project', `ignoring invalid stored config: ${error instanceof Error ? error.message : String(error)}`);
+    return {};
+  }
 }

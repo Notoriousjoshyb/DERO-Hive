@@ -124,9 +124,22 @@ CREATE TABLE IF NOT EXISTS projects (
   icon TEXT DEFAULT '📁',
   color TEXT,
   path TEXT NOT NULL,
+  config TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS knowledge_outbox (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  content TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_project ON knowledge_outbox(project_id, created_at);
 
 CREATE TABLE IF NOT EXISTS permissions (
   id TEXT PRIMARY KEY,
@@ -191,7 +204,7 @@ CREATE TABLE IF NOT EXISTS swarm_tasks (
 CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
 `;
 
-const CURRENT_SCHEMA_VERSION = 10;
+const CURRENT_SCHEMA_VERSION = 11;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -349,10 +362,33 @@ const MIGRATIONS: Migration[] = [
       );
       if (!columns.has('integration_head')) database.exec('ALTER TABLE swarm_runs ADD COLUMN integration_head TEXT');
     }
+  },
+  {
+    version: 11,
+    description: 'Add project config and knowledge capture outbox',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('config')) database.exec("ALTER TABLE projects ADD COLUMN config TEXT NOT NULL DEFAULT '{}'");
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS knowledge_outbox (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          path TEXT NOT NULL,
+          content TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_project ON knowledge_outbox(project_id, created_at);
+      `);
+    }
   }
 ];
 
-function runMigrations(database: Database.Database): void {
+export function runMigrations(database: Database.Database): void {
   // Get current version (0 if no row exists)
   const versionRow = database.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number | null } | undefined;
   const currentVersion = versionRow?.v ?? 0;

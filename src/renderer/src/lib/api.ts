@@ -14,7 +14,18 @@ import type {
   ProviderModel,
   ProviderPreset,
   Project,
-  ProjectKnowledgeStatus,
+  KnowledgeAppendRequest,
+  KnowledgeBootstrapResult,
+  KnowledgeCaptureRequest,
+  KnowledgeCaptureResult,
+  KnowledgeListResult,
+  KnowledgeOpenRequest,
+  KnowledgePatchRequest,
+  KnowledgeReadResult,
+  KnowledgeRetryResult,
+  KnowledgeSearchHit,
+  KnowledgeStatus,
+  KnowledgeWriteResult,
   PromptTemplate,
   Skill,
   SkillImportPickResult,
@@ -103,10 +114,16 @@ declare global {
       projectList: () => Promise<Project[]>;
       projectSave: (p: Project) => Promise<Project>;
       projectDelete: (id: string) => Promise<{ ok: boolean }>;
-      knowledgeStatus?: (projectId: string) => Promise<ProjectKnowledgeStatus>;
-      knowledgeBootstrap?: (projectId: string) => Promise<ProjectKnowledgeStatus>;
-      knowledgeSearch?: (projectId: string, query: string) => Promise<unknown>;
-      knowledgeCapture?: (projectId: string, payload: unknown) => Promise<unknown>;
+      knowledgeStatus: (projectId: string) => Promise<KnowledgeStatus>;
+      knowledgeList: (projectId: string, path?: string) => Promise<KnowledgeListResult>;
+      knowledgeRead: (projectId: string, path: string) => Promise<KnowledgeReadResult>;
+      knowledgeSearch: (projectId: string, query: string, limit?: number, contextLength?: number) => Promise<KnowledgeSearchHit[]>;
+      knowledgeBootstrap: (projectId: string) => Promise<KnowledgeBootstrapResult>;
+      knowledgeCapture: (input: KnowledgeCaptureRequest) => Promise<KnowledgeCaptureResult>;
+      knowledgeAppend: (input: KnowledgeAppendRequest) => Promise<KnowledgeWriteResult>;
+      knowledgePatch: (input: KnowledgePatchRequest) => Promise<KnowledgeWriteResult>;
+      knowledgeOpen: (input: KnowledgeOpenRequest) => Promise<KnowledgeWriteResult>;
+      knowledgeRetryOutbox: (projectId?: string) => Promise<KnowledgeRetryResult>;
 
       toolList: () => Promise<ToolDefinition[]>;
       toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;

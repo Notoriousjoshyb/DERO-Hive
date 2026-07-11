@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus } from '../shared/types';
+import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus, type KnowledgeAppendRequest, type KnowledgeBootstrapResult, type KnowledgeCaptureRequest, type KnowledgeCaptureResult, type KnowledgeListResult, type KnowledgeOpenRequest, type KnowledgePatchRequest, type KnowledgeReadResult, type KnowledgeRetryResult, type KnowledgeSearchHit, type KnowledgeStatus, type KnowledgeWriteResult } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -98,6 +98,19 @@ const api = {
   projectList: () => ipcRenderer.invoke(IPC.PROJECT_LIST),
   projectSave: (p: Project) => ipcRenderer.invoke(IPC.PROJECT_SAVE, p),
   projectDelete: (id: string) => ipcRenderer.invoke(IPC.PROJECT_DELETE, id),
+
+  // Project knowledge
+  knowledgeStatus: (projectId: string): Promise<KnowledgeStatus> => ipcRenderer.invoke(IPC.KNOWLEDGE_STATUS, projectId),
+  knowledgeList: (projectId: string, path?: string): Promise<KnowledgeListResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_LIST, { projectId, path }),
+  knowledgeRead: (projectId: string, path: string): Promise<KnowledgeReadResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_READ, { projectId, path }),
+  knowledgeSearch: (projectId: string, query: string, limit?: number, contextLength?: number): Promise<KnowledgeSearchHit[]> =>
+    ipcRenderer.invoke(IPC.KNOWLEDGE_SEARCH, { projectId, query, limit, contextLength }),
+  knowledgeBootstrap: (projectId: string): Promise<KnowledgeBootstrapResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_BOOTSTRAP, projectId),
+  knowledgeCapture: (input: KnowledgeCaptureRequest): Promise<KnowledgeCaptureResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_CAPTURE, input),
+  knowledgeAppend: (input: KnowledgeAppendRequest): Promise<KnowledgeWriteResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_APPEND, input),
+  knowledgePatch: (input: KnowledgePatchRequest): Promise<KnowledgeWriteResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_PATCH, input),
+  knowledgeOpen: (input: KnowledgeOpenRequest): Promise<KnowledgeWriteResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_OPEN, input),
+  knowledgeRetryOutbox: (projectId?: string): Promise<KnowledgeRetryResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_RETRY_OUTBOX, projectId),
 
   // Tools
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),

@@ -308,27 +308,106 @@ export interface Project {
   icon: string;
   color?: string;
   path: string;
-  config?: {
-    kind?: 'general' | 'dero';
-    knowledge?: {
-      provider: 'obsidian';
-      serverId: string;
-      folder: string;
-      allowAutomationWrites?: boolean;
-    };
-    mcpServerIds?: string[];
-  };
+  config?: ProjectConfig;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface ProjectKnowledgeStatus {
-  state: 'ready' | 'unconfigured' | 'offline' | 'error';
-  noteCount?: number;
-  lastSyncAt?: number;
+export interface ProjectConfig {
+  kind?: 'general' | 'dero';
+  knowledge?: {
+    provider: 'obsidian';
+    serverId: string;
+    folder: string;
+    allowAutomationWrites?: boolean;
+  };
+  mcpServerIds?: string[];
+}
+
+export type KnowledgeCapability = 'list' | 'read' | 'search' | 'write' | 'append' | 'patch' | 'open';
+
+export interface KnowledgeStatus {
+  projectId: string;
+  configured: boolean;
+  connected: boolean;
+  serverId?: string;
+  folder?: string;
+  capabilities: KnowledgeCapability[];
+  missing: KnowledgeCapability[];
   error?: string;
 }
 
+export interface KnowledgeListEntry { name: string; directory: boolean }
+export interface KnowledgeListResult { path: string; entries: KnowledgeListEntry[] }
+export interface KnowledgeReadResult { path: string; content: string }
+export interface KnowledgeSearchHit { path: string; score?: number; matches: unknown[] }
+export interface KnowledgeBootstrapResult { created: string[]; existing: string[] }
+export interface KnowledgeWriteResult { path: string }
+export interface KnowledgeCaptureResult { path: string; queued: boolean; outboxId?: string; error?: string }
+export interface KnowledgeRetryResult { retried: number; delivered: number; failed: number }
+
+export interface KnowledgeCaptureRequest { projectId: string; content: string; source?: string; title?: string }
+export interface KnowledgeAppendRequest { projectId: string; path: string; content: string }
+export interface KnowledgePatchRequest {
+  projectId: string;
+  path: string;
+  targetType: 'heading' | 'block' | 'frontmatter';
+  target: string;
+  operation: 'replace' | 'prepend' | 'append';
+  content: string;
+  contentType?: 'text/markdown' | 'application/json';
+  createTargetIfMissing?: boolean;
+  rejectIfContentPreexists?: boolean;
+}
+export interface KnowledgeOpenRequest { projectId: string; path: string; newLeaf?: boolean }
+
+export function normalizeKnowledgePath(value: unknown, allowEmpty = false): string {
+  if (typeof value !== 'string' || value.includes('\0')) throw new Error('Knowledge path must be a string');
+  const raw = value.trim().replace(/\\/g, '/');
+  if (!raw) {
+    if (allowEmpty) return '';
+    throw new Error('Knowledge path is required');
+  }
+  if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) throw new Error('Knowledge path must be vault-relative');
+  const parts = raw.split('/').filter(Boolean);
+  if (parts.some((part) => part === '.' || part === '..')) throw new Error('Knowledge path cannot traverse outside the project folder');
+  return parts.join('/');
+}
+
+export function normalizeProjectConfig(value: unknown): ProjectConfig {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Project config must be an object');
+  const input = value as Record<string, unknown>;
+  const config: ProjectConfig = {};
+  if (input.kind !== undefined) {
+    if (input.kind !== 'general' && input.kind !== 'dero') throw new Error('Invalid project kind');
+    config.kind = input.kind;
+  }
+  if (input.mcpServerIds !== undefined) {
+    if (!Array.isArray(input.mcpServerIds) || input.mcpServerIds.some((id) => typeof id !== 'string' || !id.trim())) {
+      throw new Error('Project MCP server ids must be non-empty strings');
+    }
+    config.mcpServerIds = [...new Set(input.mcpServerIds.map((id) => (id as string).trim()))];
+  }
+  if (input.knowledge !== undefined) {
+    if (typeof input.knowledge !== 'object' || input.knowledge === null || Array.isArray(input.knowledge)) {
+      throw new Error('Project knowledge config must be an object');
+    }
+    const knowledge = input.knowledge as Record<string, unknown>;
+    if (knowledge.provider !== 'obsidian') throw new Error('Only Obsidian project knowledge is supported');
+    if (typeof knowledge.serverId !== 'string' || !knowledge.serverId.trim()) throw new Error('Knowledge MCP server id is required');
+    if (knowledge.allowAutomationWrites !== undefined && typeof knowledge.allowAutomationWrites !== 'boolean') {
+      throw new Error('allowAutomationWrites must be a boolean');
+    }
+    config.knowledge = {
+      provider: 'obsidian',
+      serverId: knowledge.serverId.trim(),
+      folder: normalizeKnowledgePath(knowledge.folder),
+      ...(knowledge.allowAutomationWrites === undefined ? {} : { allowAutomationWrites: knowledge.allowAutomationWrites })
+    };
+  }
+  return config;
+}
 export interface Conversation {
   id: string;
   title: string;
@@ -595,6 +674,18 @@ export const IPC = {
   PROJECT_LIST: 'project:list',
   PROJECT_SAVE: 'project:save',
   PROJECT_DELETE: 'project:delete',
+
+  // Project knowledge (Obsidian is canonical)
+  KNOWLEDGE_STATUS: 'knowledge:status',
+  KNOWLEDGE_LIST: 'knowledge:list',
+  KNOWLEDGE_READ: 'knowledge:read',
+  KNOWLEDGE_SEARCH: 'knowledge:search',
+  KNOWLEDGE_BOOTSTRAP: 'knowledge:bootstrap',
+  KNOWLEDGE_CAPTURE: 'knowledge:capture',
+  KNOWLEDGE_APPEND: 'knowledge:append',
+  KNOWLEDGE_PATCH: 'knowledge:patch',
+  KNOWLEDGE_OPEN: 'knowledge:open',
+  KNOWLEDGE_RETRY_OUTBOX: 'knowledge:retry-outbox',
 
   // Tools
   TOOL_LIST: 'tool:list',

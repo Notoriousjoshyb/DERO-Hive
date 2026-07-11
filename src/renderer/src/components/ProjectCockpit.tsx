@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { IntegrationStatus, ProjectKnowledgeStatus, SimulatorStatus, SwarmRun } from '@shared/types';
+import type { IntegrationStatus, KnowledgeStatus, SimulatorStatus, SwarmRun } from '@shared/types';
 import { swarmTeamSummary } from '@shared/swarm';
 import { useAppStore } from '../stores/app';
 
@@ -30,7 +30,7 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const [simulator, setSimulator] = useState<SimulatorStatus | null>(null);
   const [simulatorBusy, setSimulatorBusy] = useState(false);
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
-  const [knowledge, setKnowledge] = useState<ProjectKnowledgeStatus | null>(null);
+  const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null);
 
   const projectConversations = useMemo(
     () => conversations.filter((item) => item.projectId === projectId && !item.archived).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -122,7 +122,9 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const connectedMcp = assignedMcp.filter((server) => server.connected).length;
   const vaultServer = mcpStatuses.find((server) => server.id === project.config?.knowledge?.serverId);
   const vaultConfigured = !!project.config?.knowledge?.serverId && !!project.config?.knowledge?.folder;
-  const vaultState = knowledge?.state || (vaultConfigured ? (vaultServer?.connected ? 'ready' : 'offline') : 'unconfigured');
+  const vaultState = knowledge
+    ? !knowledge.configured ? 'unconfigured' : !knowledge.connected ? 'offline' : knowledge.missing.length ? 'error' : 'ready'
+    : vaultConfigured ? (vaultServer?.connected ? 'ready' : 'offline') : 'unconfigured';
 
   const enterProjectChat = async (title = 'New chat'): Promise<string> => {
     const existing = projectConversations[0];
@@ -275,7 +277,6 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-fg">{vaultState === 'ready' ? 'Vault ready' : vaultState === 'offline' ? 'Server offline' : vaultState === 'error' ? 'Vault error' : 'Vault not linked'}</p>
                     <p className="mt-1 truncate font-mono text-[10px] text-fg-subtle">{project.config?.knowledge?.folder || 'Choose a server and folder'}</p>
-                    {typeof knowledge?.noteCount === 'number' && <p className="mt-1 text-[10px] text-fg-muted">{knowledge.noteCount.toLocaleString()} indexed notes</p>}
                     {knowledge?.error && <p className="mt-1 text-[10px] text-danger">{knowledge.error}</p>}
                   </div>
                 </div>

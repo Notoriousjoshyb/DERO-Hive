@@ -64,8 +64,12 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 `;
 
 export function createTestDb(): TestDb {
+  return createTestDbFromSchema(SCHEMA);
+}
+
+export function createTestDbFromSchema(schema: string): TestDb {
   const db = new DatabaseSync(':memory:');
-  db.exec(SCHEMA);
+  db.exec(schema);
 
   return {
     prepare(sql: string) {
