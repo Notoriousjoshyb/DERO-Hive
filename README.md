@@ -81,7 +81,7 @@ Codex normally stores its reusable credentials in the operating-system credentia
 
 `browser-extension/` contains a Manifest V3 side-panel extension for Chrome/Edge. Load it via `chrome://extensions` → Developer mode → **Load unpacked**, then open it with the toolbar icon or **Alt+H**.
 
-While the desktop app is running, the extension pairs automatically with a loopback-only bridge on `127.0.0.1:43120` (ephemeral token, rotated each app start). It can then:
+While the desktop app is running, the extension uses a revocable bearer credential to reconnect to a loopback-only bridge on `127.0.0.1:43120`. It can then:
 
 - Capture the active page, a drag-to-snip region, or the open-tab list as transparent, untrusted context.
 - Save the current context receipt to the active project's Obsidian `Inbox/Raw/` folder.
@@ -97,7 +97,7 @@ Obsidian is optional. DERO Hive coordinates its MCP servers; Obsidian, the DERO 
 
 ### Connect a vault
 
-1. In Obsidian, install and enable the **Local REST API** community plugin and copy its API key.
+1. In Obsidian, install and enable the **Local REST API with MCP** community plugin and copy its API key.
 2. In DERO Hive, open **Settings → Discover → Obsidian**. Use the plugin's loopback MCP endpoint: `https://127.0.0.1:27124/mcp/` after trusting its local certificate, or its loopback-only HTTP endpoint, `http://127.0.0.1:27123/mcp/`.
 3. Paste the Obsidian API key into **Bearer token**, keep the server enabled, save, and approve the connection. Leave **Trust tools** off unless you deliberately want all tools from that server to skip normal approval prompts.
 4. Open **Settings → Projects**, edit a project, and choose the server plus a vault-relative folder such as `Projects/My Project` under **Obsidian knowledge**. Check the server under **Project MCP servers** too if project chats should call its MCP tools directly.
