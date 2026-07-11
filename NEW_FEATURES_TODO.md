@@ -2,8 +2,8 @@
 
 > A curated list of features that would add meaningful value to the app. Prioritised roughly by impact × feasibility.
 
-**Progress (2026-07-10):** 28 of 35 shipped (✅), 3 partial (🟡), 4 open.
-Shipped: #1–#5, #7–#9, #11, #12, #16, #18–#23, #25–#35 · Partial: #6, #13, #24 · Open: #10, #14, #15, #17
+**Progress (2026-07-10):** 29 of 35 shipped (✅), 3 partial (🟡), 3 open.
+Shipped: #1–#5, #7–#12, #16, #18–#23, #25–#35 · Partial: #6, #13, #24 · Open: #14, #15, #17
 
 ---
 
@@ -15,9 +15,9 @@ Shipped: #1–#5, #7–#9, #11, #12, #16, #18–#23, #25–#35 · Partial: #6, #
 **Why:** Visual output is highly engaging; gallery lets users browse past artifacts.
 
 ### 10. Model Fallback / Chain-of-Providers
-**Status:** Single provider per conversation.  
-**What:** Configure a "fallback chain": if Provider A returns an error or rate-limit, automatically retry with Provider B (e.g., Claude → Ollama). Optionally let the AI pick the cheapest model for simple tasks.  
-**Why:** Robustness against outages; cost optimisation.
+**Status:** ✅ **Done.** Settings expose an ordered provider/model fallback chain. Chat retries the next configured target only when the current provider fails before emitting content, reasoning, tool calls, usage, or permission effects; once observable work begins, Hive fails closed instead of risking duplicate side effects.  
+~~**What:** Configure a "fallback chain": if Provider A returns an error or rate-limit, automatically retry with Provider B (e.g., Claude → Ollama). Optionally let the AI pick the cheapest model for simple tasks.~~  
+~~**Why:** Robustness against outages; cost optimisation.~~
 
 ---
 
@@ -111,7 +111,7 @@ Shipped: #1–#5, #7–#9, #11, #12, #16, #18–#23, #25–#35 · Partial: #6, #
 - **Local RAG (#14)** needs an embedding pipeline + a vector store
 - **Plugin system (#17)** needs a loader, sandbox, and lifecycle hooks
 - **Collaborative chat (#15)** needs a lightweight server or P2P transport
-- **Model fallback (#10)** touches the streaming core
+- **Model fallback (#10)** is shipped with pre-side-effect failover; future routing can add explicit cost policies without letting the model choose providers implicitly
 - **Pyodide execution (#13)** is wired for JS with output limits; Python still needs offline bundling
 - **Image generation (#6)** needs provider image-generation endpoints wired in
 - **Offline mode (#24)** is mostly shipped; message queueing for offline periods could still be added
