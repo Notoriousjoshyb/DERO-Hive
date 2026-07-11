@@ -21,6 +21,7 @@ import { registerWhisperHandlers } from './ipc/whisper';
 import { registerSimulatorHandlers } from './ipc/simulator';
 import { registerIntegrationHandlers } from './ipc/integrations';
 import { registerAgentHandlers } from './ipc/agent';
+import { registerSwarmHandlers } from './ipc/swarm';
 import { initDb, closeDb, getDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
@@ -34,6 +35,7 @@ import { terminalDisposeAll } from './terminal/session';
 import { shutdownAdapterCache } from './providers/registry';
 import { cleanupAttachmentFiles, serializedAttachmentIds } from './utils/attachments';
 import type { AppSettings } from '../shared/types';
+import type { SwarmManager } from './swarm/manager';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -43,6 +45,7 @@ let whisperManager: WhisperManager | null = null;
 let simulatorManager: SimulatorManager | null = null;
 let integrationRegistry: IntegrationRegistry | null = null;
 let browserBridge: BrowserBridge | null = null;
+let swarmManager: SwarmManager | null = null;
 
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -291,6 +294,7 @@ app.whenReady().then(async () => {
   registerSimulatorHandlers(simulatorManager);
   registerIntegrationHandlers(integrationRegistry);
   registerAgentHandlers();
+  swarmManager = registerSwarmHandlers(() => mainWindow);
   ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_REVOKE, () => browserBridge?.revokePairing() ?? { enabled: false, port: 43120, paired: false });
@@ -344,6 +348,7 @@ app.on('before-quit', async (event) => {
   isQuitting = true;
   event.preventDefault();
   try { terminalDisposeAll(); } catch { /* ignore */ }
+  try { swarmManager?.shutdown(); } catch { /* ignore */ }
   try { await shutdownAdapterCache(); } catch { /* ignore */ }
   try { await simulatorManager?.stop(); } catch { /* ignore */ }
   try { await integrationRegistry?.shutdown(); } catch { /* ignore */ }

@@ -16,6 +16,7 @@ export function ChatView(): JSX.Element {
   const chatError = useAppStore((s) => s.chatError);
   const setChatError = useAppStore((s) => s.setChatError);
   const currentId = useAppStore((s) => s.currentConversationId);
+  const hasSwarm = useAppStore((s) => Object.values(s.swarmRuns).some((run) => run.conversationId === s.currentConversationId));
   const scrollRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const atBottomRef = useRef(true);
@@ -53,7 +54,7 @@ export function ChatView(): JSX.Element {
     <main className="flex-1 flex flex-col bg-bg min-w-0 relative">
       <CompactionToast />
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
-        {!hasMessages && !chatError ? (
+        {!hasMessages && !chatError && !hasSwarm ? (
           <EmptyState />
         ) : (
           <div className="max-w-3xl mx-auto message-list-density h-full">

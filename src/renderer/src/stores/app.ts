@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, PromptTemplate, Skill, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
+import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, PromptTemplate, Skill, SwarmRun, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
 import { speak } from '../lib/speech';
 import type { CustomSlashCommand } from '../lib/customSlashCommands';
 import { loadCustomSlashCommands } from '../lib/customSlashCommands';
@@ -56,19 +56,6 @@ export interface FileChange {
   bytesAdded: number;
   isNewFile?: boolean;
   at: number;
-}
-
-export interface SwarmWorkerActivity {
-  agentId: string;
-  agentName: string;
-  task: string;
-  dialogue: Message[];
-  error?: string;
-}
-
-export interface SwarmRunActivity {
-  task: string;
-  workers: SwarmWorkerActivity[];
 }
 
 interface PendingPermission {
@@ -239,8 +226,9 @@ interface AppState {
   swarmAutoLaunch: boolean;
   openSwarm: (prompt?: string, autoLaunch?: boolean) => void;
   closeSwarm: () => void;
-  swarmRuns: Record<string, SwarmRunActivity>;
-  recordSwarmRun: (conversationId: string, run: SwarmRunActivity) => void;
+  swarmRuns: Record<string, SwarmRun>;
+  loadSwarmRuns: () => Promise<void>;
+  upsertSwarmRun: (run: SwarmRun) => void;
 
   // Full-text search dialog (Ctrl+Shift+F)
   searchDialogOpen: boolean;
@@ -547,7 +535,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       providerId: opts.providerId || conv.providerId || get().selectedProviderId || '',
       model: opts.model || conv.model || get().selectedModel || '',
       messages,
-      skipUserPersist: true
     });
   },
 
@@ -692,7 +679,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   openSwarm: (prompt = '', autoLaunch = false) => set({ swarmOpen: true, swarmPrompt: prompt, swarmAutoLaunch: autoLaunch }),
   closeSwarm: () => set({ swarmOpen: false, swarmAutoLaunch: false }),
   swarmRuns: {},
-  recordSwarmRun: (conversationId, run) => set((s) => ({ swarmRuns: { ...s.swarmRuns, [conversationId]: run } })),
+  loadSwarmRuns: async () => {
+    const runs = await window.hive.swarmList();
+    set({ swarmRuns: Object.fromEntries(runs.map((run) => [run.id, run])) });
+  },
+  upsertSwarmRun: (run) => set((s) => ({ swarmRuns: { ...s.swarmRuns, [run.id]: run } })),
 
   searchDialogOpen: false,
   setSearchDialogOpen: (open) => set({ searchDialogOpen: open }),

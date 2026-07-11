@@ -12,7 +12,7 @@ import { getDefaultWorkspace } from './paths';
  * every `write_file` to a new file — so canonicalise the deepest existing
  * ancestor and re-append the rest.
  */
-function canonicalize(p: string): string {
+export function canonicalizePath(p: string): string {
   const abs = resolve(p);
   let current = abs;
   const missing: string[] = [];
@@ -40,8 +40,8 @@ export function getWorkspaceRoot(): string {
 export function isPathWithin(absPath: string, root: string): boolean {
   // Compare canonical paths: a symlink out of the workspace must not be
   // mistaken for a path inside it.
-  const rootAbs = canonicalize(root);
-  const targetAbs = canonicalize(absPath);
+  const rootAbs = canonicalizePath(root);
+  const targetAbs = canonicalizePath(absPath);
   const rel = relative(rootAbs, targetAbs);
   return !rel.startsWith('..') && !isAbsolute(rel);
 }

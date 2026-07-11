@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus } from '../shared/types';
+import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -13,6 +13,19 @@ const api = {
     const listener = (_: IpcRendererEvent, data: StreamEvent) => cb(data);
     ipcRenderer.on(IPC.CHAT_STREAM, listener);
     return () => ipcRenderer.off(IPC.CHAT_STREAM, listener);
+  },
+
+  // Native swarm
+  swarmStart: (req: SwarmStartRequest): Promise<SwarmRun> => ipcRenderer.invoke(IPC.SWARM_START, req),
+  swarmGet: (runId: string): Promise<SwarmRun | null> => ipcRenderer.invoke(IPC.SWARM_GET, runId),
+  swarmList: (limit?: number): Promise<SwarmRun[]> => ipcRenderer.invoke(IPC.SWARM_LIST, limit),
+  swarmAbort: (runId: string): Promise<SwarmRun> => ipcRenderer.invoke(IPC.SWARM_ABORT, runId),
+  swarmResume: (runId: string): Promise<SwarmRun> => ipcRenderer.invoke(IPC.SWARM_RESUME, runId),
+  swarmApply: (runId: string): Promise<SwarmRun> => ipcRenderer.invoke(IPC.SWARM_APPLY, runId),
+  onSwarmProgress: (cb: (event: SwarmProgressEvent) => void) => {
+    const listener = (_: IpcRendererEvent, event: SwarmProgressEvent) => cb(event);
+    ipcRenderer.on(IPC.SWARM_PROGRESS, listener);
+    return () => ipcRenderer.off(IPC.SWARM_PROGRESS, listener);
   },
 
   // Conversations

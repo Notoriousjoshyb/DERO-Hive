@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { ProviderAdapter, ProviderStreamRequest, ProviderStreamEvent } from './base';
+import type { ProviderAdapter, ProviderNativeExecutionMode, ProviderStreamRequest, ProviderStreamEvent } from './base';
 import type { Message, ProviderConfig, ProviderModel, ThinkingOption } from '@shared/types';
 import { logger } from '../utils/logger';
 import { getWorkspaceRoot, resolveWithinAllowed } from '../utils/pathPolicy';
@@ -188,6 +188,8 @@ function extractAcpError(error: unknown): { message: string; details?: string } 
 
 export class CodexAcpAdapter implements ProviderAdapter {
   readonly id: string;
+  readonly nativeToolScope = 'unconfined' as const;
+  readonly nativeExecutionModes = ['read-only'] as const;
   private runtimePromise: Promise<Runtime> | null = null;
   private disposed = false;
 
@@ -347,6 +349,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
       runtime.sessions.set(req.conversationId, session);
     }
 
+    await setNativeExecutionMode(runtime.conn, session.sessionId, req.nativeExecutionMode);
     await this.configureSession(runtime, session, req.model, req.reasoning?.effort);
     const queue = new AsyncQueue<AcpEvent>();
     runtime.queues.set(session.sessionId, queue);
@@ -401,4 +404,12 @@ export class CodexAcpAdapter implements ProviderAdapter {
     try { runtime.proc.kill(); } catch { /* best effort */ }
     this.runtimePromise = null;
   }
+}
+
+export async function setNativeExecutionMode(
+  conn: Pick<acp.ClientSideConnection, 'setSessionMode'>,
+  sessionId: string,
+  mode?: ProviderNativeExecutionMode
+): Promise<void> {
+  if (mode === 'read-only') await conn.setSessionMode({ sessionId, modeId: 'read-only' });
 }

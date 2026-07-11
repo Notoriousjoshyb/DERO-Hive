@@ -28,7 +28,10 @@ import type {
   SimulatorStatus,
   SimulatorStartOptions,
   IntegrationId,
-  IntegrationStatus
+  IntegrationStatus,
+  SwarmProgressEvent,
+  SwarmRun,
+  SwarmStartRequest
 } from '@shared/types';
 
 declare global {
@@ -38,6 +41,13 @@ declare global {
       chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: Message['content']; createdAt: number }) => Promise<void>;
       chatAbort: (id: string) => Promise<{ ok: boolean }>;
       onChatStream: (cb: (e: StreamEvent) => void) => () => void;
+      swarmStart: (req: SwarmStartRequest) => Promise<SwarmRun>;
+      swarmGet: (runId: string) => Promise<SwarmRun | null>;
+      swarmList: (limit?: number) => Promise<SwarmRun[]>;
+      swarmAbort: (runId: string) => Promise<SwarmRun>;
+      swarmResume: (runId: string) => Promise<SwarmRun>;
+      swarmApply: (runId: string) => Promise<SwarmRun>;
+      onSwarmProgress: (cb: (event: SwarmProgressEvent) => void) => () => void;
 
       convList: (opts?: { archived?: boolean }) => Promise<Conversation[]>;
       convGet: (id: string) => Promise<(Conversation & { messages: Message[] }) | null>;

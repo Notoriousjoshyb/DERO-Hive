@@ -8,6 +8,8 @@ import { anthropicThinkingBudget, supportsAnthropicExtendedThinking } from '@sha
 // Supports: system prompt, multi-modal (images), tools, prompt caching, extended thinking.
 export class AnthropicAdapter implements ProviderAdapter {
   readonly id: string;
+  readonly nativeToolScope = 'none' as const;
+  readonly nativeExecutionModes = [] as const;
   constructor(private readonly cfg: ProviderConfig, private readonly apiKey: string) {
     this.id = cfg.id;
   }

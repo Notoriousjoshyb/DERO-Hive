@@ -1,5 +1,8 @@
 import type { Message, ProviderModel, ThinkingEffort, ToolDefinition, TokenUsage } from '@shared/types';
 
+export type ProviderNativeExecutionMode = 'read-only';
+export type ProviderNativeToolScope = 'none' | 'cwd-confined' | 'unconfined';
+
 export interface ProviderStreamRequest {
   conversationId: string;
   cwd?: string;
@@ -11,6 +14,7 @@ export interface ProviderStreamRequest {
   topP?: number;
   maxTokens?: number;
   reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
+  nativeExecutionMode?: ProviderNativeExecutionMode;
   signal?: AbortSignal;
   requestPermission?: (request: { requestId: string; toolName: string; args: Record<string, unknown>; description?: string }) => Promise<boolean>;
   // For multi-modal: raw base64 attachments the user uploaded
@@ -28,6 +32,8 @@ export interface ProviderStreamEvent {
 
 export interface ProviderAdapter {
   readonly id: string;
+  readonly nativeToolScope: ProviderNativeToolScope;
+  readonly nativeExecutionModes: readonly ProviderNativeExecutionMode[];
   stream(req: ProviderStreamRequest): AsyncGenerator<ProviderStreamEvent>;
   testConnection(): Promise<{ ok: boolean; error?: string; models?: string[]; modelDetails?: Record<string, Partial<ProviderModel>>; hint?: string }>;
   closeConversation?(conversationId: string): Promise<void>;
