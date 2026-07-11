@@ -128,11 +128,11 @@ describe('SwarmManager research pipeline', () => {
       providerId: 'fake',
       model: 'fake-model'
     });
-    expect(started.workerCount).toBe(4);
+    expect(started.workerCount).toBe(3);
 
     const final = await completed;
-    expect(final.tasks).toHaveLength(6);
-    expect(final.tasks.map((task) => task.phase)).toEqual(['worker', 'worker', 'worker', 'worker', 'verifier', 'synthesizer']);
+    expect(final.tasks).toHaveLength(5);
+    expect(final.tasks.map((task) => task.phase)).toEqual(['worker', 'worker', 'worker', 'verifier', 'synthesizer']);
     expect(final.tasks.every((task) => task.status === 'completed')).toBe(true);
     expect(final.result).toContain('report from swarm:');
     expect(state.tools.flat()).not.toEqual(expect.arrayContaining(['write_file', 'edit_file', 'run_shell']));
@@ -208,7 +208,7 @@ describe('SwarmManager research pipeline', () => {
 
     const applied = await manager.apply(ready.id);
     expect(applied.status).toBe('applied');
-    expect(readdirSync(repo).filter((name) => name.startsWith('worker-'))).toHaveLength(4);
+    expect(readdirSync(repo).filter((name) => name.startsWith('worker-'))).toHaveLength(3);
     const integrationParent = dirname(ready.integrationPath!);
     const quarantined = readdirSync(integrationParent).filter((name) => name.startsWith('integration.invalid-'));
     expect(quarantined.length).toBeGreaterThan(0);
@@ -244,7 +244,7 @@ describe('SwarmManager research pipeline', () => {
     await manager.start({ prompt: 'redirect git metadata', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'redirect-project' });
     const ready = await finished;
     expect(ready.status).toBe('awaiting_apply');
-    expect(state.gitDenials).toBe(4);
+    expect(state.gitDenials).toBe(3);
     expect(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(baseHead);
     for (const task of ready.tasks.filter((item) => item.phase === 'worker')) {
       expect(readFileSync(join(task.worktreePath!, '.git'), 'utf8').trim()).not.toBe(state.gitRedirect);
@@ -300,7 +300,7 @@ describe('SwarmManager research pipeline', () => {
       await manager.start({ prompt: 'edit without hooks', mode: 'build', providerId: 'fake', model: 'fake-model', projectId: 'hooks-project' });
       const ready = await finished;
       expect(ready.status).toBe('awaiting_apply');
-      expect(ready.tasks.filter((task) => task.phase === 'worker' && task.status === 'completed')).toHaveLength(4);
+      expect(ready.tasks.filter((task) => task.phase === 'worker' && task.status === 'completed')).toHaveLength(3);
       expect(existsSync(marker)).toBe(false);
       await manager.apply(ready.id);
       expect(existsSync(marker)).toBe(false);

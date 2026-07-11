@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { SwarmRun, SwarmTask } from '@shared/types';
+import { swarmTaskLabel, swarmTeamSummary } from '@shared/swarm';
 import { useAppStore } from '../stores/app';
 
 const ACTIVE = new Set(['queued', 'running', 'verifying', 'synthesizing']);
@@ -40,7 +41,7 @@ export function SwarmActivity({ conversationId }: { conversationId?: string }): 
             <Status value={run.status} />
           </div>
           <p className="mt-1 line-clamp-2 text-xs text-fg-muted">{run.prompt}</p>
-          <p className="mt-1 text-[10px] text-fg-subtle">{run.mode} · {run.workerCount} workers · concurrency 3</p>
+          <p className="mt-1 text-[10px] text-fg-subtle">{run.mode} · {swarmTeamSummary(run.workerCount)}</p>
         </div>
         <div className="flex gap-1">
           {ACTIVE.has(run.status) && <Action label="Abort" disabled={busy} onClick={() => void command('abort')} />}
@@ -54,7 +55,7 @@ export function SwarmActivity({ conversationId }: { conversationId?: string }): 
         {run.tasks.map((task) => (
           <button key={task.id} onClick={() => setOpenTask(task)} className="rounded-lg border border-border bg-bg/80 px-3 py-2 text-left hover:border-accent/50 hover:bg-bg-elev">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium capitalize text-fg">{task.phase === 'worker' ? `Worker ${task.index + 1}` : task.phase}</span>
+              <span className="text-xs font-medium text-fg">{swarmTaskLabel(task.phase, task.index, run.workerCount)}</span>
               <Status value={task.status} />
             </div>
             <div className="mt-0.5 truncate text-[10px] text-fg-subtle">{task.error || task.output || 'Waiting…'}</div>
@@ -96,7 +97,7 @@ function TaskDetails({ task, run, onClose }: { task: SwarmTask; run: SwarmRun; o
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/55 p-5 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-bg-elev shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between border-b border-border px-4 py-3">
-          <div><h3 className="text-sm font-semibold capitalize text-fg">{task.phase === 'worker' ? `Worker ${task.index + 1}` : task.phase}</h3><p className="mt-0.5 text-[10px] text-fg-subtle">{task.branchName || run.mode}</p></div>
+          <div><h3 className="text-sm font-semibold text-fg">{swarmTaskLabel(task.phase, task.index, run.workerCount)}</h3><p className="mt-0.5 text-[10px] text-fg-subtle">{task.branchName || run.mode}</p></div>
           <button onClick={onClose} className="rounded p-1 text-fg-subtle hover:bg-bg-input hover:text-fg" aria-label="Close">×</button>
         </div>
         <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap p-4 font-sans text-xs leading-relaxed text-fg-muted">{task.error || task.output || 'No output yet.'}</pre>

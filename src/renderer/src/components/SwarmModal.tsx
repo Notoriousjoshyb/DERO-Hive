@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SwarmMode } from '@shared/types';
+import { SWARM_SPECIALISTS } from '@shared/swarm';
 import { useAppStore } from '../stores/app';
 import { VoiceInput } from './VoiceInput';
 
@@ -10,7 +11,6 @@ export function SwarmModal(): JSX.Element | null {
   const close = useAppStore((state) => state.closeSwarm);
   const [prompt, setPrompt] = useState(initialPrompt);
   const [mode, setMode] = useState<SwarmMode>('research');
-  const [workerCount, setWorkerCount] = useState(4);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState('');
   const launchRef = useRef<() => void>(() => undefined);
@@ -20,7 +20,6 @@ export function SwarmModal(): JSX.Element | null {
     if (!open) return;
     setPrompt(initialPrompt);
     setMode('research');
-    setWorkerCount(4);
     setLaunching(false);
     setError('');
   }, [open, initialPrompt]);
@@ -53,8 +52,7 @@ export function SwarmModal(): JSX.Element | null {
         mode: autoLaunch ? 'research' : mode,
         providerId,
         model,
-        conversationId: state.currentConversationId,
-        workerCount
+        conversationId: state.currentConversationId
       });
       state.upsertSwarmRun(run);
       await state.loadConversations();
@@ -83,7 +81,7 @@ export function SwarmModal(): JSX.Element | null {
         <div className="flex items-start justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold text-fg">Launch native swarm</h2>
-            <p className="mt-1 text-xs text-fg-subtle">Workers run in main, then a verifier and synthesizer finish the result.</p>
+            <p className="mt-1 text-xs text-fg-subtle">Three specialists work in parallel, then verification and synthesis finish the result.</p>
           </div>
           <button onClick={close} disabled={launching} className="rounded-md p-1 text-fg-subtle hover:bg-bg-input hover:text-fg disabled:opacity-40" aria-label="Close">×</button>
         </div>
@@ -108,10 +106,22 @@ export function SwarmModal(): JSX.Element | null {
             ))}
           </fieldset>
 
-          <label className="block text-xs text-fg-muted">
-            Workers: <span className="font-medium text-fg">{workerCount}</span>
-            <input type="range" min={1} max={8} value={workerCount} disabled={launching} onChange={(event) => setWorkerCount(Number(event.target.value))} className="mt-2 w-full accent-accent" />
-          </label>
+          <section aria-labelledby="swarm-team-heading" className="rounded-lg border border-border bg-bg-input/40 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 id="swarm-team-heading" className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">Five-role team</h3>
+              <span className="font-mono text-[10px] text-accent">3 → 1 → 1</span>
+            </div>
+            <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {SWARM_SPECIALISTS.map((role) => (
+                <li key={role.label} className="rounded-md border border-border bg-bg px-2.5 py-2 text-xs font-medium text-fg">{role.label}</li>
+              ))}
+            </ul>
+            <div className="mt-2 flex items-center justify-center gap-2 text-[10px] text-fg-muted">
+              <span className="rounded-md border border-border bg-bg px-2.5 py-1.5">Verifier</span>
+              <span aria-hidden="true" className="text-accent">→</span>
+              <span className="rounded-md border border-border bg-bg px-2.5 py-1.5">Synthesizer</span>
+            </div>
+          </section>
 
           {error && <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</div>}
         </div>

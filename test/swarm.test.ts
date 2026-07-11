@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clampWorkerCount, isForbiddenSwarmWritePath, markInterruptedSwarmRuns, runPool, swarmToolNames, verifyRepositorySnapshot } from '../src/main/swarm/manager';
+import { swarmTaskLabel, swarmTeamSummary } from '../src/shared/swarm';
 import { createTestDb } from './helpers/sqlite';
 
 describe('native swarm', () => {
@@ -13,8 +14,10 @@ describe('native swarm', () => {
     expect(source).not.toMatch(/git\(run\.repoRoot[^\n]+['"](?:checkout|reset)['"]/);
   });
 
-  test('defaults to four workers, caps at eight, and runs at concurrency three', async () => {
-    expect(clampWorkerCount(undefined)).toBe(4);
+  test('defaults to three workers, caps at eight, and runs at concurrency three', async () => {
+    expect(clampWorkerCount(undefined)).toBe(3);
+    expect(clampWorkerCount(1)).toBe(1);
+    expect(clampWorkerCount(4)).toBe(4);
     expect(clampWorkerCount(99)).toBe(8);
     expect(swarmToolNames(false)).not.toEqual(expect.arrayContaining(['write_file', 'edit_file', 'run_shell']));
     expect(swarmToolNames(true)).toEqual(expect.arrayContaining(['write_file', 'edit_file']));
@@ -28,6 +31,27 @@ describe('native swarm', () => {
       active--;
     });
     expect(peak).toBe(3);
+  });
+
+  test('names the five standard roles and falls back for legacy workers', () => {
+    expect([0, 1, 2].map((index) => swarmTaskLabel('worker', index))).toEqual([
+      'Core solution', 'Validation', 'Safety & integration'
+    ]);
+    expect(swarmTaskLabel('verifier', 0)).toBe('Verifier');
+    expect(swarmTaskLabel('synthesizer', 0)).toBe('Synthesizer');
+    expect(swarmTaskLabel('worker', 3)).toBe('Worker 4');
+    expect(swarmTaskLabel('worker', 0, 4)).toBe('Worker 1');
+    expect(swarmTeamSummary(3)).toBe('5-role team · up to 3 specialists in parallel');
+    expect(swarmTeamSummary(4)).toBe('6-role team · up to 3 specialists in parallel');
+    expect(swarmTeamSummary(1)).toBe('3-role team · up to 1 specialist in parallel');
+  });
+
+  test('normal launches expose the fixed five-role roster', () => {
+    const source = readFileSync('src/renderer/src/components/SwarmModal.tsx', 'utf8');
+    expect(source).toContain('Five-role team');
+    expect(source).toContain('3 → 1 → 1');
+    expect(source).not.toContain('type="range"');
+    expect(source).not.toContain('workerCount');
   });
 
   test('denies Git metadata write aliases without blocking ordinary dotfiles', () => {

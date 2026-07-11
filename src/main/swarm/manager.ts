@@ -14,6 +14,7 @@ import type {
   SwarmTaskPhase,
   SwarmTaskStatus
 } from '@shared/types';
+import { SWARM_SPECIALISTS } from '@shared/swarm';
 import { getDb, getSetting } from '../db/client';
 import { getAdapter, closeConversationSessions } from '../providers/registry';
 import { BUILTIN_TOOLS, builtinExecutors } from '../tools/builtin';
@@ -23,7 +24,7 @@ import { getDefaultWorkspace, paths } from '../utils/paths';
 import { logger } from '../utils/logger';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_WORKERS = 4;
+const DEFAULT_WORKERS = 3;
 const MAX_WORKERS = 8;
 const WORKER_CONCURRENCY = 3;
 const REPORT_LIMIT = 16_000;
@@ -31,13 +32,6 @@ const GIT_TIMEOUT_MS = 120_000;
 const GIT_HOOKS_SINK = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const READ_TOOLS = new Set(['read_file', 'list_directory', 'glob_files', 'grep_files']);
 const WRITE_TOOLS = new Set([...READ_TOOLS, 'write_file', 'edit_file']);
-const WORKER_ROLES = [
-  'Trace the relevant code and identify the smallest correct change.',
-  'Implement a focused solution for the task.',
-  'Inspect tests, failure modes, and compatibility risks; implement fixes when needed.',
-  'Review security, correctness, and maintainability; implement concrete improvements when needed.'
-];
-
 export function clampWorkerCount(value: unknown): number {
   const count = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : DEFAULT_WORKERS;
   return Math.max(1, Math.min(MAX_WORKERS, count));
@@ -328,7 +322,8 @@ export class SwarmManager {
 
   private async runWorker(run: SwarmRun, task: SwarmTask, signal: AbortSignal): Promise<void> {
     const cwd = run.mode === 'build' ? task.worktreePath! : run.repoRoot!;
-    const role = WORKER_ROLES[task.index] || 'Independently investigate the task and propose the smallest evidence-backed solution.';
+    const role = SWARM_SPECIALISTS[task.index]?.[run.mode]
+      || 'Independently investigate the task and propose the smallest evidence-backed solution.';
     const prompt = `${role}\n\nOriginal task:\n${run.prompt}\n\n${run.mode === 'research'
       ? 'Research only. Do not modify files or execute commands.'
       : 'Work only inside the assigned git worktree. Make focused edits using the provided file tools.'}`;
