@@ -11,6 +11,7 @@ import { IntegrationsPanel } from './IntegrationsPanel';
 
 interface Props {
   onClose: () => void;
+  initialTab?: Tab;
 }
 
 type Tab = 'general' | 'providers' | 'projects' | 'mcp' | 'discover' | 'skills' | 'prompts' | 'tools' | 'integrations';
@@ -27,8 +28,8 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'tools', label: 'Tools & Permissions' }
 ];
 
-export function SettingsModal({ onClose }: Props): JSX.Element {
-  const [tab, setTab] = useState<Tab>('general');
+export function SettingsModal({ onClose, initialTab }: Props): JSX.Element {
+  const [tab, setTab] = useState<Tab>(initialTab || 'general');
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {

@@ -21,6 +21,9 @@ export function Sidebar(): JSX.Element {
   const toggleCodeTab = useAppStore((s) => s.toggleCodeTab);
   const visionTabOpen = useAppStore((s) => s.visionTabOpen);
   const toggleVisionTab = useAppStore((s) => s.toggleVisionTab);
+  const projectCockpitId = useAppStore((s) => s.projectCockpitId);
+  const openProjectCockpit = useAppStore((s) => s.openProjectCockpit);
+  const closeProjectCockpit = useAppStore((s) => s.closeProjectCockpit);
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Array<{ conversationId: string; snippet: string; role: string }>>([]);
@@ -53,6 +56,7 @@ export function Sidebar(): JSX.Element {
     const s = useAppStore.getState();
     if (s.codeTabOpen) s.toggleCodeTab();
     else if (s.visionTabOpen) s.toggleVisionTab();
+    else if (s.projectCockpitId) s.closeProjectCockpit();
   };
 
   const handleNew = async (projectId?: string): Promise<void> => {
@@ -136,6 +140,7 @@ export function Sidebar(): JSX.Element {
   const goHome = (): void => {
     if (codeTabOpen) toggleCodeTab();
     if (useAppStore.getState().visionTabOpen) useAppStore.getState().toggleVisionTab();
+    closeProjectCockpit();
   };
   const goCode = (): void => { if (!codeTabOpen) toggleCodeTab(); };
   const goVision = (): void => { if (!visionTabOpen) toggleVisionTab(); };
@@ -151,7 +156,7 @@ export function Sidebar(): JSX.Element {
           <button
             onClick={goHome}
             className={`flex-1 px-2 py-1 text-[11px] font-medium rounded-md transition ${
-              !codeTabOpen && !visionTabOpen ? 'bg-bg-input text-fg shadow-sm' : 'text-fg-subtle hover:text-fg'
+              !codeTabOpen && !visionTabOpen && !projectCockpitId ? 'bg-bg-input text-fg shadow-sm' : 'text-fg-subtle hover:text-fg'
             }`}
           >
             Home
@@ -324,6 +329,8 @@ export function Sidebar(): JSX.Element {
               onMoveToProject={onMoveToProject}
               currentId={currentId}
               isOpen={projectsExpanded}
+              activeProjectId={projectCockpitId}
+              onOpenProject={openProjectCockpit}
             />
 
             <BookmarksSection onOpen={(conversationId, messageId) => {
@@ -984,7 +991,9 @@ function ProjectsSection({
   onArchive,
   onMoveToProject,
   currentId,
-  isOpen
+  isOpen,
+  activeProjectId,
+  onOpenProject
 }: {
   projects: Project[];
   expanded: Set<string>;
@@ -1009,6 +1018,8 @@ function ProjectsSection({
   onMoveToProject: (id: string, projectId?: string) => Promise<void> | void;
   currentId?: string;
   isOpen: boolean;
+  activeProjectId?: string;
+  onOpenProject: (id: string) => void;
 }): JSX.Element {
   if (!isOpen) return <></>;
   return (
@@ -1063,15 +1074,25 @@ function ProjectsSection({
           const projectConvs = conversations.filter((c) => c.projectId === p.id);
           return (
             <div key={p.id}>
-              <button
-                onClick={() => toggleProject(p.id)}
-                className="w-full flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-bg-elev rounded-md transition"
-              >
-                <span className="text-fg-subtle text-[10px]">{isOpen ? '▾' : '▸'}</span>
-                <span className="text-fg-subtle">{p.icon || '📁'}</span>
-                <span className="flex-1 text-left text-fg-muted truncate">{p.name}</span>
-                <span className="text-fg-subtle text-[10px]">{projectConvs.length}</span>
-              </button>
+              <div className={`flex items-center rounded-md transition ${activeProjectId === p.id ? 'bg-accent-soft text-accent' : 'hover:bg-bg-elev'}`}>
+                <button
+                  onClick={() => toggleProject(p.id)}
+                  aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${p.name}`}
+                  aria-expanded={isOpen}
+                  className="ml-1 rounded p-1 text-[10px] text-fg-subtle hover:text-fg"
+                >
+                  {isOpen ? '▾' : '▸'}
+                </button>
+                <button
+                  onClick={() => onOpenProject(p.id)}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-xs text-left"
+                  title={`Open ${p.name} cockpit`}
+                >
+                  <span className="text-fg-subtle">{p.icon || '📁'}</span>
+                  <span className={`flex-1 truncate ${activeProjectId === p.id ? 'font-medium text-accent' : 'text-fg-muted'}`}>{p.name}</span>
+                  <span className="text-fg-subtle text-[10px]">{projectConvs.length}</span>
+                </button>
+              </div>
               {isOpen && (
                 <div className="ml-3 pl-2 border-l border-border space-y-0.5">
                   <button

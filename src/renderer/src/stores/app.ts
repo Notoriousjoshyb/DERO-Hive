@@ -188,15 +188,20 @@ interface AppState {
   visionOpen: boolean;
   companionOpen: boolean;
   settingsOpen: boolean;
+  settingsSection?: 'projects';
   rightSidebarOpen: boolean;
   codeTabOpen: boolean;
+  projectCockpitId?: string;
   toggleSidebar: () => void;
   toggleVision: () => void;
   setVisionOpen: (open: boolean) => void;
   toggleCompanion: () => void;
   setSettingsOpen: (open: boolean) => void;
+  openProjectSettings: () => void;
   toggleRightSidebar: () => void;
   toggleCodeTab: () => void;
+  openProjectCockpit: (projectId: string) => void;
+  closeProjectCockpit: () => void;
   visionTabOpen: boolean;
   toggleVisionTab: () => void;
 
@@ -382,7 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   selectConversation: async (id) => {
     if (!id) {
-      set({ currentConversationId: undefined, currentMessages: [], isStreaming: false, streamingContent: '', streamingReasoning: '', chatError: undefined });
+      set({ currentConversationId: undefined, currentMessages: [], projectCockpitId: undefined, isStreaming: false, streamingContent: '', streamingReasoning: '', chatError: undefined });
       return;
     }
     const conv = await window.hive.convGet(id);
@@ -400,14 +405,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         isStreaming: false,
         streamingContent: '',
         streamingReasoning: '',
-        chatError: undefined
+        chatError: undefined,
+        projectCockpitId: undefined
       });
     }
   },
   createConversation: async (data) => {
     // A new chat always lands in the chat view — leave any full-view tab
     // (Code/Vision) that currently occupies the main column.
-    set({ codeTabOpen: false, visionTabOpen: false });
+    set({ codeTabOpen: false, visionTabOpen: false, projectCockpitId: undefined });
     const { id } = await window.hive.convCreate({
       ...data,
       providerId: data?.providerId || get().selectedProviderId,
@@ -581,6 +587,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   deleteProject: async (id) => {
     await window.hive.projectDelete(id);
+    if (get().projectCockpitId === id) set({ projectCockpitId: undefined });
     await get().loadProjects();
     await get().loadConversations();
   },
@@ -640,22 +647,27 @@ export const useAppStore = create<AppState>((set, get) => ({
   visionOpen: false,
   companionOpen: false,
   settingsOpen: false,
+  settingsSection: undefined,
   rightSidebarOpen: false,
   codeTabOpen: false,
+  projectCockpitId: undefined,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen, companionOpen: s.visionOpen ? s.companionOpen : false })),
   setVisionOpen: (open) => set({ visionOpen: open, companionOpen: open ? false : get().companionOpen }),
   toggleCompanion: () => set((s) => ({ companionOpen: !s.companionOpen, visionOpen: s.companionOpen ? s.visionOpen : false })),
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsOpen: (open) => set({ settingsOpen: open, settingsSection: open ? get().settingsSection : undefined }),
+  openProjectSettings: () => set({ settingsOpen: true, settingsSection: 'projects' }),
 
   artifactsChangedAt: 0,
   lastStreamFinishedAt: 0,
   notifyArtifactsChanged: () => set({ artifactsChangedAt: Date.now() }),
   toggleRightSidebar: () => set((s) => ({ rightSidebarOpen: !s.rightSidebarOpen })),
   // Code and Vision are full-view tabs sharing the main column — exclusive.
-  toggleCodeTab: () => set((s) => ({ codeTabOpen: !s.codeTabOpen, visionTabOpen: false })),
+  toggleCodeTab: () => set((s) => ({ codeTabOpen: !s.codeTabOpen, visionTabOpen: false, projectCockpitId: undefined })),
   visionTabOpen: false,
-  toggleVisionTab: () => set((s) => ({ visionTabOpen: !s.visionTabOpen, codeTabOpen: false })),
+  toggleVisionTab: () => set((s) => ({ visionTabOpen: !s.visionTabOpen, codeTabOpen: false, projectCockpitId: undefined })),
+  openProjectCockpit: (projectId) => set({ projectCockpitId: projectId, codeTabOpen: false, visionTabOpen: false }),
+  closeProjectCockpit: () => set({ projectCockpitId: undefined }),
 
   shortcutsOpen: false,
   toggleShortcuts: () => set((s) => ({ shortcutsOpen: !s.shortcutsOpen })),

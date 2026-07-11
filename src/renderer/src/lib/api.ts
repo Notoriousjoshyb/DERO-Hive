@@ -14,6 +14,7 @@ import type {
   ProviderModel,
   ProviderPreset,
   Project,
+  ProjectKnowledgeStatus,
   PromptTemplate,
   Skill,
   SkillImportPickResult,
@@ -102,6 +103,10 @@ declare global {
       projectList: () => Promise<Project[]>;
       projectSave: (p: Project) => Promise<Project>;
       projectDelete: (id: string) => Promise<{ ok: boolean }>;
+      knowledgeStatus?: (projectId: string) => Promise<ProjectKnowledgeStatus>;
+      knowledgeBootstrap?: (projectId: string) => Promise<ProjectKnowledgeStatus>;
+      knowledgeSearch?: (projectId: string, query: string) => Promise<unknown>;
+      knowledgeCapture?: (projectId: string, payload: unknown) => Promise<unknown>;
 
       toolList: () => Promise<ToolDefinition[]>;
       toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;

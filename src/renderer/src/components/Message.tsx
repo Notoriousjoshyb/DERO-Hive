@@ -22,6 +22,9 @@ export function Message({ message }: Props): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const pendingToolResults = useAppStore((s) => s.pendingToolResults);
   const currentConversationId = useAppStore((s) => s.currentConversationId);
+  const currentMessages = useAppStore((s) => s.currentMessages);
+  const currentConversation = useAppStore((s) => s.conversations.find((item) => item.id === s.currentConversationId));
+  const openSwarm = useAppStore((s) => s.openSwarm);
   const forkConversation = useAppStore((s) => s.forkConversation);
   const revertConversation = useAppStore((s) => s.revertConversation);
   const updateMessage = useAppStore((s) => s.updateMessage);
@@ -50,6 +53,19 @@ export function Message({ message }: Props): JSX.Element {
     const combined = [message.reasoning, thinking].filter(Boolean).join('\n\n').trim();
     return { cleanContent: content, combinedReasoning: combined || undefined };
   }, [message.content, message.reasoning]);
+
+  const messageIndex = currentMessages.findIndex((item) => item.id === message.id);
+  const precedingUser = messageIndex > 0
+    ? [...currentMessages.slice(0, messageIndex)].reverse().find((item) => item.role === 'user')
+    : undefined;
+  const precedingText = precedingUser ? messageContentToText(precedingUser.content) : '';
+  const isDeroResearchReport = message.role === 'assistant'
+    && !message.error
+    && typeof cleanContent === 'string'
+    && !!cleanContent.trim()
+    && (/^\/dero-research\b/i.test(currentConversation?.title || '')
+      || /^\/dero-research\b/i.test(precedingText.trim())
+      || precedingText.includes('Coordinate the connected MCP servers through Hive'));
 
   // Extract and save Vision artifacts (idempotent), then tell the panel to
   // refresh. Auto-open only right after a response finished streaming — not
@@ -130,6 +146,11 @@ export function Message({ message }: Props): JSX.Element {
   const doRegenerate = async (providerId?: string, model?: string): Promise<void> => {
     setRegenerateOpen(false);
     await regenerateFrom(message.id, { providerId, model });
+  };
+
+  const verifyWithSwarm = (): void => {
+    if (typeof cleanContent !== 'string') return;
+    openSwarm(`Verify this completed DERO research report. Cross-check its chain claims, code references, vault evidence, discrepancies, and unresolved assumptions. Return corrections with concrete evidence.\n\nREPORT\n${cleanContent.slice(0, 80_000)}`);
   };
 
   if (message.role === 'user') {
@@ -262,6 +283,7 @@ export function Message({ message }: Props): JSX.Element {
             onRevert={() => void revertToHere()}
             onBookmark={() => void toggleBookmark()}
             onRegenerate={() => setRegenerateOpen(true)}
+            onVerify={isDeroResearchReport ? verifyWithSwarm : undefined}
           />
           {regenerateOpen && (
             <RegeneratePanel
@@ -278,7 +300,7 @@ export function Message({ message }: Props): JSX.Element {
   );
 }
 
-function MessageActions({ copied, bookmarked, isUser, onCopy, onFork, onRevert, onBookmark, onEdit, onRegenerate }: {
+function MessageActions({ copied, bookmarked, isUser, onCopy, onFork, onRevert, onBookmark, onEdit, onRegenerate, onVerify }: {
   copied: boolean;
   bookmarked: boolean;
   isUser?: boolean;
@@ -288,6 +310,7 @@ function MessageActions({ copied, bookmarked, isUser, onCopy, onFork, onRevert, 
   onBookmark: () => void;
   onEdit?: () => void;
   onRegenerate?: () => void;
+  onVerify?: () => void;
 }): JSX.Element {
   return (
     <div className={`${bookmarked ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 transition-opacity mt-1.5 flex items-center gap-2`}>
@@ -317,6 +340,16 @@ function MessageActions({ copied, bookmarked, isUser, onCopy, onFork, onRevert, 
         >
           <RefreshIcon />
           Regenerate
+        </button>
+      )}
+      {!isUser && onVerify && (
+        <button
+          onClick={onVerify}
+          className="inline-flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent transition-colors hover:bg-accent hover:text-white"
+          title="Verify this DERO research report with Swarm"
+        >
+          <VerifyIcon />
+          Verify with Swarm
         </button>
       )}
       <button
@@ -453,6 +486,15 @@ function RefreshIcon(): JSX.Element {
     <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 6c0 2.2-1.8 4-4 4S1 8.2 1 6s1.8-4 4-4 4 1.8 4 4z" />
       <path d="M9 2v2.5H6.5" />
+    </svg>
+  );
+}
+
+function VerifyIcon(): JSX.Element {
+  return (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 1.5l4 1.4v3.2c0 2.2-1.6 3.7-4 4.4-2.4-.7-4-2.2-4-4.4V2.9L6 1.5z" />
+      <path d="M4.2 6l1.2 1.2L8 4.7" />
     </svg>
   );
 }

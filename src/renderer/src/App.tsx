@@ -18,6 +18,7 @@ import { ComparePanel } from './components/ComparePanel';
 import { SwarmModal } from './components/SwarmModal';
 import { CommandPalette } from './components/CommandPalette';
 import { AgentBar } from './components/AgentBar';
+import { ProjectCockpit } from './components/ProjectCockpit';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
@@ -30,6 +31,8 @@ export default function App(): JSX.Element {
   const codeTabOpen = useAppStore((s) => s.codeTabOpen);
   const visionTabOpen = useAppStore((s) => s.visionTabOpen);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
+  const settingsSection = useAppStore((s) => s.settingsSection);
+  const projectCockpitId = useAppStore((s) => s.projectCockpitId);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const toggleVision = useAppStore((s) => s.toggleVision);
@@ -115,12 +118,12 @@ export default function App(): JSX.Element {
       <TitleBar />
       <div className="relative flex flex-1 overflow-hidden">
         {sidebarOpen && <Sidebar />}
-        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : <ChatView />}
+        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : projectCockpitId ? <ProjectCockpit projectId={projectCockpitId} /> : <ChatView />}
         {visionOpen && <VisionPanel />}
         {companionOpen && <HiveCompanionPanel />}
         <RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} />
       </div>
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal initialTab={settingsSection} onClose={() => setSettingsOpen(false)} />}
       <PermissionDialog />
       <ShortcutsCheatsheet />
       <SystemPromptModal />

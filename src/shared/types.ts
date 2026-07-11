@@ -308,8 +308,25 @@ export interface Project {
   icon: string;
   color?: string;
   path: string;
+  config?: {
+    kind?: 'general' | 'dero';
+    knowledge?: {
+      provider: 'obsidian';
+      serverId: string;
+      folder: string;
+      allowAutomationWrites?: boolean;
+    };
+    mcpServerIds?: string[];
+  };
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ProjectKnowledgeStatus {
+  state: 'ready' | 'unconfigured' | 'offline' | 'error';
+  noteCount?: number;
+  lastSyncAt?: number;
+  error?: string;
 }
 
 export interface Conversation {
