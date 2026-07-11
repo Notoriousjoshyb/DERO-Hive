@@ -25,6 +25,21 @@
       "tags": ["obsidian", "notes", "markdown", "local"]
     },
     {
+      "id": "gitnexus",
+      "name": "GitNexus",
+      "description": "Local code knowledge graph with hybrid search, symbol context, impact analysis, and an optional graph explorer.",
+      "repo": "https://github.com/abhigyanpatwari/GitNexus",
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "runtime": "node",
+      "install": { "command": "npx", "args": ["-y", "gitnexus@1.6.9", "mcp"] },
+      "requiresConfig": "Run npx gitnexus@1.6.9 analyze inside each repository first. Noncommercial license: review the terms before use or configure your own compatible fork.",
+      "category": "code",
+      "local": true,
+      "windows": true,
+      "verified": "npm gitnexus 1.6.9 (2026-07-10)",
+      "tags": ["code", "knowledge-graph", "impact", "local", "noncommercial"]
+    },
+    {
       "id": "filesystem",
       "name": "Filesystem",
       "description": "Secure file operations with configurable access controls. Pass one or more allowed directories as trailing arguments.",
