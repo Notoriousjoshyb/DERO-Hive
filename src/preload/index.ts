@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type Attachment, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus, type KnowledgeAppendRequest, type KnowledgeBootstrapResult, type KnowledgeCaptureRequest, type KnowledgeCaptureResult, type KnowledgeListResult, type KnowledgeOpenRequest, type KnowledgePatchRequest, type KnowledgeReadResult, type KnowledgeRetryResult, type KnowledgeSearchHit, type KnowledgeStatus, type KnowledgeWriteResult } from '../shared/types';
+import { IPC, type Attachment, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus, type KnowledgeAppendRequest, type KnowledgeAutomation, type KnowledgeAutomationKind, type KnowledgeAutomationRunResult, type KnowledgeAutomationSaveRequest, type KnowledgeAutomationStatus, type KnowledgeBootstrapResult, type KnowledgeCaptureRequest, type KnowledgeCaptureResult, type KnowledgeListResult, type KnowledgeOpenRequest, type KnowledgePatchRequest, type KnowledgeReadResult, type KnowledgeRetryResult, type KnowledgeSearchHit, type KnowledgeStatus, type KnowledgeWriteResult } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -111,6 +111,13 @@ const api = {
   knowledgePatch: (input: KnowledgePatchRequest): Promise<KnowledgeWriteResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_PATCH, input),
   knowledgeOpen: (input: KnowledgeOpenRequest): Promise<KnowledgeWriteResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_OPEN, input),
   knowledgeRetryOutbox: (projectId?: string): Promise<KnowledgeRetryResult> => ipcRenderer.invoke(IPC.KNOWLEDGE_RETRY_OUTBOX, projectId),
+  knowledgeAutomationList: (projectId?: string): Promise<KnowledgeAutomation[]> => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_LIST, projectId),
+  knowledgeAutomationSave: (input: KnowledgeAutomationSaveRequest): Promise<KnowledgeAutomation> => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_SAVE, input),
+  knowledgeAutomationDelete: (projectId: string, kind: KnowledgeAutomationKind): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_DELETE, { projectId, kind }),
+  knowledgeAutomationRunNow: (projectId: string, kind: KnowledgeAutomationKind): Promise<KnowledgeAutomationRunResult> =>
+    ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_RUN_NOW, { projectId, kind }),
+  knowledgeAutomationStatus: (projectId?: string): Promise<KnowledgeAutomationStatus[]> => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_STATUS, projectId),
 
   // Tools
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),

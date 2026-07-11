@@ -16,6 +16,11 @@ import type {
   ProviderPreset,
   Project,
   KnowledgeAppendRequest,
+  KnowledgeAutomation,
+  KnowledgeAutomationKind,
+  KnowledgeAutomationRunResult,
+  KnowledgeAutomationSaveRequest,
+  KnowledgeAutomationStatus,
   KnowledgeBootstrapResult,
   KnowledgeCaptureRequest,
   KnowledgeCaptureResult,
@@ -125,6 +130,11 @@ declare global {
       knowledgePatch: (input: KnowledgePatchRequest) => Promise<KnowledgeWriteResult>;
       knowledgeOpen: (input: KnowledgeOpenRequest) => Promise<KnowledgeWriteResult>;
       knowledgeRetryOutbox: (projectId?: string) => Promise<KnowledgeRetryResult>;
+      knowledgeAutomationList: (projectId?: string) => Promise<KnowledgeAutomation[]>;
+      knowledgeAutomationSave: (input: KnowledgeAutomationSaveRequest) => Promise<KnowledgeAutomation>;
+      knowledgeAutomationDelete: (projectId: string, kind: KnowledgeAutomationKind) => Promise<{ ok: boolean }>;
+      knowledgeAutomationRunNow: (projectId: string, kind: KnowledgeAutomationKind) => Promise<KnowledgeAutomationRunResult>;
+      knowledgeAutomationStatus: (projectId?: string) => Promise<KnowledgeAutomationStatus[]>;
 
       toolList: () => Promise<ToolDefinition[]>;
       toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;

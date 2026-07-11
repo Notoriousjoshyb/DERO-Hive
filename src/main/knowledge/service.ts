@@ -87,12 +87,22 @@ export class KnowledgeService {
   }
 
   async read(projectId: string, path: string): Promise<KnowledgeReadResult> {
+    const document = await this.readDocument(projectId, path);
+    return { path: document.path, content: document.content };
+  }
+
+  /** Main-process metadata read used by bounded automations; IPC returns content only. */
+  async readDocument(projectId: string, path: string): Promise<KnowledgeReadResult & { modifiedAt?: number }> {
     const context = this.context(projectId);
     const relative = normalizeKnowledgePath(path);
     const text = await this.call(context, 'read', { path: scopedPath(context.folder, relative) });
-    const parsed = parseJson(text, 'read') as { content?: unknown };
+    const parsed = parseJson(text, 'read') as { content?: unknown; stat?: { mtime?: unknown } };
     if (typeof parsed.content !== 'string') throw new Error('Invalid Obsidian MCP read response');
-    return { path: relative, content: parsed.content };
+    return {
+      path: relative,
+      content: parsed.content,
+      ...(typeof parsed.stat?.mtime === 'number' ? { modifiedAt: parsed.stat.mtime } : {})
+    };
   }
 
   async search(projectId: string, query: string, limit = 50, contextLength = 100): Promise<KnowledgeSearchHit[]> {
@@ -154,6 +164,16 @@ export class KnowledgeService {
     const path = normalizeKnowledgePath(input.path);
     const content = requiredText(input.content, 'Knowledge content', MAX_CONTENT, false);
     await this.call(context, 'append', { path: scopedPath(context.folder, path), content });
+    return { path };
+  }
+
+  /** Main-process create/overwrite for verified-missing or unique automation targets. */
+  async write(input: KnowledgeAppendRequest, options: KnowledgeWriteOptions = {}): Promise<KnowledgeWriteResult> {
+    const context = this.context(input.projectId);
+    this.assertAutomation(context, options);
+    const path = normalizeKnowledgePath(input.path);
+    const content = requiredText(input.content, 'Knowledge content', MAX_CONTENT, false);
+    await this.call(context, 'write', { path: scopedPath(context.folder, path), content });
     return { path };
   }
 

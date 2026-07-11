@@ -21,6 +21,8 @@ describe('project config persistence', () => {
         .toEqual({ name: 'Old Project', config: '{}' });
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_outbox'").get())
         .toEqual({ name: 'knowledge_outbox' });
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_automations'").get())
+        .toEqual({ name: 'knowledge_automations' });
     } finally {
       db.close();
     }

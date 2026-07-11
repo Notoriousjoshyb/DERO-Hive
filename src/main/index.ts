@@ -38,6 +38,7 @@ import { cleanupAttachmentFiles, serializedAttachmentIds } from './utils/attachm
 import type { AppSettings } from '../shared/types';
 import type { SwarmManager } from './swarm/manager';
 import { initializeKnowledgeService, type KnowledgeService } from './knowledge/service';
+import { KnowledgeAutomationScheduler } from './knowledge/automation';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -49,6 +50,7 @@ let integrationRegistry: IntegrationRegistry | null = null;
 let browserBridge: BrowserBridge | null = null;
 let swarmManager: SwarmManager | null = null;
 let knowledgeService: KnowledgeService | null = null;
+let knowledgeAutomations: KnowledgeAutomationScheduler | null = null;
 
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -258,6 +260,7 @@ app.whenReady().then(async () => {
   // or failing server (e.g., dero-mcp-server) never blocks the window from showing.
   mcpManager = new McpManager();
   knowledgeService = initializeKnowledgeService(mcpManager);
+  knowledgeAutomations = new KnowledgeAutomationScheduler(knowledgeService);
   await mcpManager.ensureBundledServers();
   void mcpManager.loadFromSettings().catch((err) => {
     logger.error('mcp', 'background load failed', err);
@@ -294,12 +297,13 @@ app.whenReady().then(async () => {
   registerToolHandlers(mcpManager);
   registerGithubHandlers();
   registerProjectHandlers();
-  registerKnowledgeHandlers(knowledgeService);
+  registerKnowledgeHandlers(knowledgeService, knowledgeAutomations);
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
   registerIntegrationHandlers(integrationRegistry);
   registerAgentHandlers();
   swarmManager = registerSwarmHandlers(() => mainWindow);
+  knowledgeAutomations.start();
   ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_REVOKE, () => browserBridge?.revokePairing() ?? { enabled: false, port: 43120, paired: false });
@@ -354,6 +358,7 @@ app.on('before-quit', async (event) => {
   event.preventDefault();
   try { terminalDisposeAll(); } catch { /* ignore */ }
   try { swarmManager?.shutdown(); } catch { /* ignore */ }
+  try { await knowledgeAutomations?.shutdown(); } catch { /* ignore */ }
   try { await shutdownAdapterCache(); } catch { /* ignore */ }
   try { await simulatorManager?.stop(); } catch { /* ignore */ }
   try { await integrationRegistry?.shutdown(); } catch { /* ignore */ }

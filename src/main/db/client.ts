@@ -141,6 +141,21 @@ CREATE TABLE IF NOT EXISTS knowledge_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_project ON knowledge_outbox(project_id, created_at);
 
+CREATE TABLE IF NOT EXISTS knowledge_automations (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('morning-digest', 'weekly-synthesis')),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  local_hour INTEGER NOT NULL,
+  local_minute INTEGER NOT NULL,
+  weekly_weekday INTEGER,
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  last_run_key TEXT,
+  last_run_at INTEGER,
+  last_error TEXT,
+  PRIMARY KEY(project_id, kind)
+);
+
 CREATE TABLE IF NOT EXISTS permissions (
   id TEXT PRIMARY KEY,
   tool_name TEXT NOT NULL,
@@ -204,7 +219,7 @@ CREATE TABLE IF NOT EXISTS swarm_tasks (
 CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
 `;
 
-const CURRENT_SCHEMA_VERSION = 11;
+const CURRENT_SCHEMA_VERSION = 12;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -383,6 +398,28 @@ const MIGRATIONS: Migration[] = [
           updated_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_project ON knowledge_outbox(project_id, created_at);
+      `);
+    }
+  },
+  {
+    version: 12,
+    description: 'Add fixed vault automations',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS knowledge_automations (
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK(kind IN ('morning-digest', 'weekly-synthesis')),
+          enabled INTEGER NOT NULL DEFAULT 0,
+          local_hour INTEGER NOT NULL,
+          local_minute INTEGER NOT NULL,
+          weekly_weekday INTEGER,
+          provider_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          last_run_key TEXT,
+          last_run_at INTEGER,
+          last_error TEXT,
+          PRIMARY KEY(project_id, kind)
+        );
       `);
     }
   }

@@ -366,6 +366,34 @@ export interface KnowledgePatchRequest {
 }
 export interface KnowledgeOpenRequest { projectId: string; path: string; newLeaf?: boolean }
 
+export type KnowledgeAutomationKind = 'morning-digest' | 'weekly-synthesis';
+export interface KnowledgeAutomation {
+  projectId: string;
+  kind: KnowledgeAutomationKind;
+  enabled: boolean;
+  localHour: number;
+  localMinute: number;
+  weeklyWeekday?: number; // 0=Sunday ... 6=Saturday
+  providerId: string;
+  model: string;
+  lastRunKey?: string;
+  lastRunAt?: number;
+  error?: string;
+}
+export type KnowledgeAutomationSaveRequest = Omit<KnowledgeAutomation, 'lastRunKey' | 'lastRunAt' | 'error'>;
+export interface KnowledgeAutomationStatus extends KnowledgeAutomation {
+  running: boolean;
+  due: boolean;
+  currentRunKey: string;
+}
+export interface KnowledgeAutomationRunResult {
+  projectId: string;
+  kind: KnowledgeAutomationKind;
+  runKey: string;
+  status: 'completed' | 'skipped';
+  path?: string;
+}
+
 export function normalizeKnowledgePath(value: unknown, allowEmpty = false): string {
   if (typeof value !== 'string' || value.includes('\0')) throw new Error('Knowledge path must be a string');
   const raw = value.trim().replace(/\\/g, '/');
@@ -691,6 +719,13 @@ export const IPC = {
   KNOWLEDGE_PATCH: 'knowledge:patch',
   KNOWLEDGE_OPEN: 'knowledge:open',
   KNOWLEDGE_RETRY_OUTBOX: 'knowledge:retry-outbox',
+
+  // Fixed vault automations
+  KNOWLEDGE_AUTOMATION_LIST: 'knowledge-automation:list',
+  KNOWLEDGE_AUTOMATION_SAVE: 'knowledge-automation:save',
+  KNOWLEDGE_AUTOMATION_DELETE: 'knowledge-automation:delete',
+  KNOWLEDGE_AUTOMATION_RUN_NOW: 'knowledge-automation:run-now',
+  KNOWLEDGE_AUTOMATION_STATUS: 'knowledge-automation:status',
 
   // Tools
   TOOL_LIST: 'tool:list',
