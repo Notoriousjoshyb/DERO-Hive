@@ -4,8 +4,9 @@ import type { BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
 import { getDb, getSetting, setSetting } from './db/client';
 import { onChatStreamEvent } from './ipc/chat';
-import type { BrowserBridgeStatus, StreamEvent } from '../shared/types';
+import type { BrowserBridgeActiveProject, BrowserBridgeStatus, StreamEvent } from '../shared/types';
 import type { WhisperManager } from './whisper/manager';
+import type { KnowledgeService } from './knowledge/service';
 
 const PORT = 43120;
 const MAX_BODY_BYTES = 180_000;
@@ -63,11 +64,12 @@ export class BrowserBridge {
   private readonly runs = new Map<string, Run>();
   private readonly unsubscribeStream: () => void;
   private sweeper: NodeJS.Timeout | null = null;
-  private selection: { providerId?: string; model?: string } = {};
+  private selection: { providerId?: string; model?: string; activeProject?: BrowserBridgeActiveProject } = {};
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
-    private readonly getWhisper: () => WhisperManager | null = () => null
+    private readonly getWhisper: () => WhisperManager | null = () => null,
+    private readonly getKnowledge: () => Pick<KnowledgeService, 'capture'> | null = () => null
   ) {
     this.unsubscribeStream = onChatStreamEvent((event) => this.recordStream(event));
   }
@@ -80,8 +82,14 @@ export class BrowserBridge {
   }
 
   /** Called from the renderer whenever the composer's provider/model changes. */
-  reportSelection(providerId?: string, model?: string): { ok: boolean } {
-    this.selection = { providerId: clipped(providerId, 256) || undefined, model: clipped(model, 512) || undefined };
+  reportSelection(providerId?: string, model?: string, activeProject?: BrowserBridgeActiveProject): { ok: boolean } {
+    const projectId = clipped(activeProject?.id, 200).trim();
+    const projectName = clipped(activeProject?.name, 300).trim();
+    this.selection = {
+      providerId: clipped(providerId, 256) || undefined,
+      model: clipped(model, 512) || undefined,
+      ...(projectId && projectName ? { activeProject: { id: projectId, name: projectName } } : {})
+    };
     return { ok: true };
   }
 
@@ -195,7 +203,12 @@ export class BrowserBridge {
     if (request.method === 'GET' && url.pathname === '/health') { json(response, 200, { ok: true }); return; }
     if (request.method === 'GET' && url.pathname === '/v1/models') { this.handleModels(response); return; }
     if (request.method === 'GET' && url.pathname === '/v1/state') {
-      json(response, 200, { providerId: this.selection.providerId || '', model: this.selection.model || '', whisper: Boolean(this.getWhisper()) });
+      json(response, 200, {
+        providerId: this.selection.providerId || '',
+        model: this.selection.model || '',
+        whisper: Boolean(this.getWhisper()),
+        activeProject: this.selection.activeProject || null
+      });
       return;
     }
     if (request.method === 'GET' && url.pathname === '/v1/stream') { this.handleStream(url, response); return; }
@@ -205,7 +218,11 @@ export class BrowserBridge {
         const providerId = clipped(payload.providerId, 256);
         const model = clipped(payload.model, 512);
         if (!providerId || !model) { json(response, 400, { error: 'providerId and model are required' }); return; }
-        this.selection = { providerId, model };
+        this.selection = {
+          providerId,
+          model,
+          ...(this.selection.activeProject ? { activeProject: this.selection.activeProject } : {})
+        };
         this.getWindow()?.webContents.send('browser-bridge:select-model', { providerId, model });
         json(response, 200, { ok: true });
       }).catch(() => json(response, 400, { error: 'Invalid payload' }));
@@ -220,6 +237,39 @@ export class BrowserBridge {
         const result = await whisper.transcribe(payload.wav, typeof payload.model === 'string' ? payload.model : undefined);
         json(response, 'error' in result ? 502 : 200, result);
       }).catch(() => json(response, 400, { error: 'Invalid transcribe payload' }));
+      return;
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/capture') {
+      void readBody(request, MAX_BODY_BYTES).then(async (body) => {
+        const payload = JSON.parse(body) as { content?: unknown; title?: unknown; url?: unknown };
+        const content = clipped(payload.content, MAX_BODY_BYTES).trim();
+        const title = clipped(payload.title, 300).trim();
+        const source = clipped(payload.url, 200).trim() || 'browser';
+        if (!content) { json(response, 400, { error: 'content is required' }); return; }
+        const activeProject = this.selection.activeProject;
+        if (!activeProject) { json(response, 409, { error: 'Open a project in DERO Hive before saving' }); return; }
+        const knowledge = this.getKnowledge();
+        if (!knowledge) { json(response, 503, { error: 'Project knowledge is not available' }); return; }
+        try {
+          const result = await knowledge.capture({
+            projectId: activeProject.id,
+            content,
+            source,
+            ...(title ? { title } : {})
+          }, { automated: true });
+          json(response, result.queued ? 202 : 200, result);
+        } catch (error) {
+          const message = clipped(error instanceof Error ? error.message : String(error), 500);
+          const status = /automated knowledge writes are disabled/i.test(message)
+            ? 403
+            : /project not found/i.test(message)
+              ? 404
+              : /not configured/i.test(message)
+                ? 409
+                : 500;
+          json(response, status, { error: message || 'Capture failed' });
+        }
+      }).catch(() => json(response, 400, { error: 'Invalid capture payload' }));
       return;
     }
     if (request.method === 'POST' && url.pathname === '/v1/context') {

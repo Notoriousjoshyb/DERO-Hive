@@ -54,6 +54,10 @@ main { display:flex; min-height:calc(100vh - 172px); flex-direction:column; gap:
 .context-controls { margin-top:9px; font-size:10px; color:var(--subtle) }
 .text-button { border:0; background:transparent; padding:2px 3px; font-size:10px }
 pre { max-height:160px; overflow:auto; margin:9px 0 0; padding:8px; border-radius:7px; background:var(--input); color:var(--muted); font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap }
+.capture-row { display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:9px; border-top:1px solid var(--border) }
+.capture-row button { min-width:0; max-width:70%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.capture-row button:disabled { cursor:default; opacity:.5 }
+#capture-status { min-width:0; flex:1; color:var(--subtle); font-size:10px; overflow-wrap:anywhere; text-align:right }
 
 /* ---------- timeline ---------- */
 .timeline-head { display:flex; align-items:center; justify-content:space-between; padding:0 2px; color:var(--subtle); font-size:10px; text-transform:uppercase; letter-spacing:.06em }

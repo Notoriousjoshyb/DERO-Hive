@@ -273,7 +273,7 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send(IPC.SIMULATOR_STATUS_CHANGED, status);
   });
   integrationRegistry = new IntegrationRegistry();
-  browserBridge = new BrowserBridge(() => mainWindow, () => whisperManager);
+  browserBridge = new BrowserBridge(() => mainWindow, () => whisperManager, () => knowledgeService);
   // The browser extension should work whenever the app is running, so the
   // loopback bridge starts with the app instead of with the Companion panel.
   void browserBridge.setEnabled(true).catch((err) => logger.error('browser-bridge', 'failed to start', err));
@@ -304,7 +304,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_REVOKE, () => browserBridge?.revokePairing() ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_BIND, (_event, requestId: string, conversationId: string) => browserBridge?.bind(requestId, conversationId) ?? { ok: false });
-  ipcMain.handle(IPC.BROWSER_BRIDGE_SELECTION, (_event, providerId?: string, model?: string) => browserBridge?.reportSelection(providerId, model) ?? { ok: false });
+  ipcMain.handle(IPC.BROWSER_BRIDGE_SELECTION, (_event, providerId?: string, model?: string, activeProject?: { id: string; name: string }) => browserBridge?.reportSelection(providerId, model, activeProject) ?? { ok: false });
 
   // Window controls (custom titlebar)
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());

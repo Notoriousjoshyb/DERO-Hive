@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type Attachment, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus, type KnowledgeAppendRequest, type KnowledgeBootstrapResult, type KnowledgeCaptureRequest, type KnowledgeCaptureResult, type KnowledgeListResult, type KnowledgeOpenRequest, type KnowledgePatchRequest, type KnowledgeReadResult, type KnowledgeRetryResult, type KnowledgeSearchHit, type KnowledgeStatus, type KnowledgeWriteResult } from '../shared/types';
+import { IPC, type Attachment, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type ChatRequest, type Message, type StreamEvent, type McpImportPickResult, type McpImportResult, type McpServerStatus, type AppSettings, type Conversation, type Skill, type SkillImportPickResult, type SkillImportResult, type ProviderConfig, type ProviderModel, type McpServerConfig, type McpRegistry, type Project, type SwarmProgressEvent, type SwarmRun, type SwarmStartRequest, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type IntegrationId, type IntegrationStatus, type KnowledgeAppendRequest, type KnowledgeBootstrapResult, type KnowledgeCaptureRequest, type KnowledgeCaptureResult, type KnowledgeListResult, type KnowledgeOpenRequest, type KnowledgePatchRequest, type KnowledgeReadResult, type KnowledgeRetryResult, type KnowledgeSearchHit, type KnowledgeStatus, type KnowledgeWriteResult } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -182,7 +182,7 @@ const api = {
     ipcRenderer.on('browser-bridge:context', l);
     return () => ipcRenderer.off('browser-bridge:context', l);
   },
-  browserBridgeReportSelection: (providerId?: string, model?: string) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SELECTION, providerId, model) as Promise<{ ok: boolean }>,
+  browserBridgeReportSelection: (providerId?: string, model?: string, activeProject?: BrowserBridgeActiveProject) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SELECTION, providerId, model, activeProject) as Promise<{ ok: boolean }>,
   onBrowserBridgeSelectModel: (cb: (data: { providerId: string; model: string }) => void) => {
     const l = (_: IpcRendererEvent, data: { providerId: string; model: string }) => cb(data);
     ipcRenderer.on('browser-bridge:select-model', l);

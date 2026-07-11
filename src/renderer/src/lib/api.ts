@@ -1,6 +1,7 @@
 import type {
   BookmarkEntry,
   BrowserBridgeStatus,
+  BrowserBridgeActiveProject,
   ChatRequest,
   Attachment,
   Conversation,
@@ -193,7 +194,7 @@ declare global {
       browserBridgeRevokePairing: () => Promise<BrowserBridgeStatus>;
       browserBridgeBind: (requestId: string, conversationId: string) => Promise<{ ok: boolean }>;
       onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => () => void;
-      browserBridgeReportSelection: (providerId?: string, model?: string) => Promise<{ ok: boolean }>;
+      browserBridgeReportSelection: (providerId?: string, model?: string, activeProject?: BrowserBridgeActiveProject) => Promise<{ ok: boolean }>;
       onBrowserBridgeSelectModel: (cb: (data: { providerId: string; model: string }) => void) => () => void;
 
       winMinimize: () => Promise<void>;

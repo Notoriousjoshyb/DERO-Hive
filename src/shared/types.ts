@@ -202,6 +202,11 @@ export interface BrowserBridgeStatus {
   paired: boolean;
 }
 
+export interface BrowserBridgeActiveProject {
+  id: string;
+  name: string;
+}
+
 export interface McpRegistryEntry {
   id: string;
   name: string;

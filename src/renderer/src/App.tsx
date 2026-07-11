@@ -59,9 +59,18 @@ export default function App(): JSX.Element {
   // Keep the browser extension's model picker in sync with the composer.
   const selectedProviderId = useAppStore((s) => s.selectedProviderId);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const currentConversationId = useAppStore((s) => s.currentConversationId);
+  const conversations = useAppStore((s) => s.conversations);
+  const projects = useAppStore((s) => s.projects);
+  const conversationProjectId = conversations.find((conversation) => conversation.id === currentConversationId)?.projectId;
+  const activeProject = projects.find((project) => project.id === (projectCockpitId || conversationProjectId));
   useEffect(() => {
-    void window.hive.browserBridgeReportSelection(selectedProviderId, selectedModel);
-  }, [selectedProviderId, selectedModel]);
+    void window.hive.browserBridgeReportSelection(
+      selectedProviderId,
+      selectedModel,
+      activeProject ? { id: activeProject.id, name: activeProject.name } : undefined
+    );
+  }, [selectedProviderId, selectedModel, activeProject?.id, activeProject?.name]);
 
   useEffect(() => {
     void loadSettings();

@@ -9,6 +9,9 @@ let recognition = null;          // Web Speech fallback
 let recording = null;            // { recorder, stream } while dictating via Whisper
 let renameSessionId = '';        // session currently being renamed inline
 let lastPushedSelection = '';    // guards the two-way model sync against loops
+let activeProject = null;        // supplied by Hive; the extension never chooses a project id
+let captureBusy = false;
+let captureFeedback = '';
 const activeStreams = new Map(); // handoffId -> { close: () => void }
 const openThinking = new Set();  // handoff ids whose "Thinking" details the user expanded
 
@@ -50,6 +53,7 @@ function applySettings() {
       : 'Enter the one-time code shown in DERO Hive.';
   if (store.bridgeConnected) $('pair-status').textContent = 'Paired and connected.';
   $('send').innerHTML = store.bridgeConnected ? 'Send to Hive <span>↗</span>' : 'Copy to Hive <span>↗</span>';
+  renderCapture();
 }
 
 function escapeHtml(value) { const div = document.createElement('div'); div.textContent = value ?? ''; return div.innerHTML; }
@@ -208,6 +212,15 @@ function renderModels() {
   $('model-status').textContent = model ? `${provider.name} · ${model.name}` : 'Pair with Hive to load models';
 }
 
+function renderCapture() {
+  const button = $('save-project');
+  const context = contextForScope();
+  button.disabled = captureBusy || !store.bridgeConnected || !activeProject || !context;
+  button.textContent = captureBusy ? 'Saving…' : activeProject ? `Save to ${activeProject.name}` : 'No active project';
+  button.title = activeProject ? `Save this context to ${activeProject.name}` : 'Open a project in DERO Hive first';
+  $('capture-status').textContent = captureFeedback;
+}
+
 function renderHandoff(handoff) {
   const meta = handoff.pending ? 'DERO Hive is responding…' : handoff.direct ? 'Sent to DERO Hive' : 'Copied to DERO Hive';
   const time = new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -238,6 +251,7 @@ function render(skipModels = false) {
   const renameInput = document.querySelector('[data-rename-input]');
   if (renameInput) { renameInput.focus(); renameInput.select(); }
   if (!skipModels) renderModels();
+  renderCapture();
 }
 
 // Coalesce streaming renders so a fast token stream doesn't thrash the DOM.
@@ -438,6 +452,11 @@ async function syncStateFromHive() {
     if (!response.ok) throw new Error('state failed');
     const state = await response.json();
     store.whisperAvailable = Boolean(state.whisper);
+    const previousProjectId = activeProject?.id;
+    activeProject = state.activeProject && typeof state.activeProject.id === 'string' && typeof state.activeProject.name === 'string'
+      ? { id: state.activeProject.id, name: state.activeProject.name }
+      : null;
+    if (activeProject?.id !== previousProjectId) captureFeedback = '';
     const remote = state.providerId && state.model ? `${state.providerId}::${state.model}` : '';
     const local = `${store.settings.providerId}::${store.settings.model}`;
     const interacting = document.activeElement === $('provider-select') || document.activeElement === $('model-select');
@@ -449,9 +468,33 @@ async function syncStateFromHive() {
       void persist();
       renderModels();
     }
+    renderCapture();
   } catch {
     // Hive quit or restarted: the saved credential reconnect loop will retry.
     if (store.bridgeConnected) { store.bridgeConnected = false; void persist(); applySettings(); }
+  }
+}
+
+async function saveToProject() {
+  const context = contextForScope();
+  if (!context || !activeProject || !store.bridgeConnected || captureBusy) return;
+  captureBusy = true;
+  captureFeedback = 'Saving…';
+  renderCapture();
+  try {
+    const response = await fetch(`${BRIDGE}/v1/capture`, {
+      method: 'POST',
+      headers: bridgeHeaders(true),
+      body: JSON.stringify({ title: context.title || 'Browser capture', url: context.url, content: receipt(context) })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Save failed (${response.status})`);
+    captureFeedback = result.queued ? 'Queued — vault offline' : 'Saved';
+  } catch (error) {
+    captureFeedback = error.message || 'Save failed';
+  } finally {
+    captureBusy = false;
+    renderCapture();
   }
 }
 
@@ -583,6 +626,7 @@ $('refresh').addEventListener('click', () => void capture());
 $('pick-text').addEventListener('click', () => void pickText());
 $('toggle-receipt').addEventListener('click', () => { $('receipt').hidden = !$('receipt').hidden; });
 $('send').addEventListener('click', () => void handoff());
+$('save-project').addEventListener('click', () => void saveToProject());
 $('voice').addEventListener('click', () => void startVoice());
 $('clear-chat').addEventListener('click', clearChat);
 
