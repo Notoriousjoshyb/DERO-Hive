@@ -39,19 +39,25 @@ export function registerProjectHandlers(): void {
       if (result.response !== 1) throw new Error('Automatic vault writes were not approved');
     }
     const now = Date.now();
-    getDb().prepare(`
-      INSERT INTO projects (id, name, icon, color, path, config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        icon = excluded.icon,
-        color = excluded.color,
-        path = excluded.path,
-        config = excluded.config,
-        updated_at = excluded.updated_at
-    `).run(project.id, project.name, project.icon, project.color || null, projectPath, JSON.stringify(config), project.createdAt, now);
+    const db = getDb();
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO projects (id, name, icon, color, path, config, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          icon = excluded.icon,
+          color = excluded.color,
+          path = excluded.path,
+          config = excluded.config,
+          updated_at = excluded.updated_at
+      `).run(project.id, project.name, project.icon, project.color || null, projectPath, JSON.stringify(config), project.createdAt, now);
+      if (revokesKnowledgeWriteConsent(currentConfig, config)) {
+        db.prepare('UPDATE knowledge_automations SET enabled = 0 WHERE project_id = ?').run(project.id);
+      }
+    })();
     logger.info('project', `saved ${project.name} (id=${project.id})`);
-    return rowToProject(getDb().prepare('SELECT * FROM projects WHERE id = ?').get(project.id) as Record<string, unknown>);
+    return rowToProject(db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id) as Record<string, unknown>);
   });
 
   ipcMain.handle(IPC.PROJECT_DELETE, (_e, id: string) => {
@@ -73,6 +79,10 @@ export function needsKnowledgeWriteConsent(current: ProjectConfig, next: Project
     || before.serverId !== after.serverId
     || before.folder !== after.folder
   );
+}
+
+export function revokesKnowledgeWriteConsent(current: ProjectConfig, next: ProjectConfig): boolean {
+  return current.knowledge?.allowAutomationWrites === true && next.knowledge?.allowAutomationWrites !== true;
 }
 
 export function validateProjectPath(value: unknown): string {

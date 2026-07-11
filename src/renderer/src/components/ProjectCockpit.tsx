@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { IntegrationStatus, KnowledgeStatus, SimulatorStatus, SwarmRun } from '@shared/types';
+import type {
+  IntegrationStatus,
+  KnowledgeAutomationKind,
+  KnowledgeAutomationSaveRequest,
+  KnowledgeAutomationStatus,
+  KnowledgeStatus,
+  SimulatorStatus,
+  SwarmRun
+} from '@shared/types';
 import { swarmTeamSummary } from '@shared/swarm';
 import { useAppStore } from '../stores/app';
 
@@ -12,6 +20,13 @@ interface GitEvidence {
   error?: string;
 }
 
+interface AutomationModelOption {
+  value: string;
+  providerId: string;
+  model: string;
+  label: string;
+}
+
 type ActivityItem =
   | { kind: 'conversation'; id: string; title: string; detail: string; updatedAt: number }
   | { kind: 'swarm'; id: string; title: string; detail: string; updatedAt: number; run: SwarmRun };
@@ -21,6 +36,9 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const conversations = useAppStore((state) => state.conversations);
   const swarmRuns = useAppStore((state) => Object.values(state.swarmRuns));
   const mcpStatuses = useAppStore((state) => state.mcpStatuses);
+  const providers = useAppStore((state) => state.providers);
+  const selectedProviderId = useAppStore((state) => state.selectedProviderId);
+  const selectedModel = useAppStore((state) => state.selectedModel);
   const selectConversation = useAppStore((state) => state.selectConversation);
   const createConversation = useAppStore((state) => state.createConversation);
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -31,6 +49,20 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const [simulatorBusy, setSimulatorBusy] = useState(false);
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null);
+  const [automations, setAutomations] = useState<KnowledgeAutomationStatus[]>([]);
+  const [vaultAction, setVaultAction] = useState('');
+  const [vaultNotice, setVaultNotice] = useState('');
+
+  const automationModels = useMemo<AutomationModelOption[]>(() => providers
+    .filter((provider) => provider.enabled)
+    .flatMap((provider) => provider.models.map((model) => ({
+      value: JSON.stringify([provider.id, model.id]),
+      providerId: provider.id,
+      model: model.id,
+      label: `${provider.name} — ${model.name}`
+    }))), [providers]);
+  const selectedAutomationModel = automationModels.find((option) =>
+    option.providerId === selectedProviderId && option.model === selectedModel) || automationModels[0];
 
   const projectConversations = useMemo(
     () => conversations.filter((item) => item.projectId === projectId && !item.archived).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -95,14 +127,19 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   useEffect(() => {
     let cancelled = false;
     setKnowledge(null);
+    setAutomations([]);
     void window.hive.simulatorStatus().then((status) => { if (!cancelled) setSimulator(status); }).catch(() => {});
     void window.hive.integrationList().then((statuses) => { if (!cancelled) setIntegrations(statuses); }).catch(() => {});
     void window.hive.knowledgeStatus?.(projectId).then((status) => { if (!cancelled) setKnowledge(status); }).catch(() => {});
+    void window.hive.knowledgeAutomationStatus(projectId).then((statuses) => { if (!cancelled) setAutomations(statuses); }).catch(() => {});
     const offSimulator = window.hive.onSimulatorStatus((status) => setSimulator(status));
     const offIntegrations = window.hive.onIntegrationChanged((status) => {
       setIntegrations((current) => [...current.filter((item) => item.id !== status.id), status]);
     });
-    return () => { cancelled = true; offSimulator(); offIntegrations(); };
+    const automationRefresh = window.setInterval(() => {
+      void window.hive.knowledgeAutomationStatus(projectId).then((statuses) => { if (!cancelled) setAutomations(statuses); }).catch(() => {});
+    }, 60_000);
+    return () => { cancelled = true; window.clearInterval(automationRefresh); offSimulator(); offIntegrations(); };
   }, [projectId]);
 
   if (!project) {
@@ -125,6 +162,8 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const vaultState = knowledge
     ? !knowledge.configured ? 'unconfigured' : !knowledge.connected ? 'offline' : knowledge.missing.length ? 'error' : 'ready'
     : vaultConfigured ? (vaultServer?.connected ? 'ready' : 'offline') : 'unconfigured';
+  const automationApproved = vaultConfigured && !!project.config?.knowledge?.allowAutomationWrites;
+  const automationReady = automationApproved && vaultState === 'ready';
 
   const enterProjectChat = async (title = 'New chat'): Promise<string> => {
     const existing = projectConversations[0];
@@ -165,6 +204,89 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
     } finally {
       setSimulatorBusy(false);
     }
+  };
+
+  const refreshVault = async (): Promise<void> => {
+    const [status, schedules] = await Promise.all([
+      window.hive.knowledgeStatus(projectId),
+      window.hive.knowledgeAutomationStatus(projectId)
+    ]);
+    setKnowledge(status);
+    setAutomations(schedules);
+  };
+
+  const initializeVault = async (): Promise<void> => {
+    if (!automationReady || vaultAction) return;
+    setVaultAction('bootstrap');
+    setVaultNotice('');
+    try {
+      const result = await window.hive.knowledgeBootstrap(projectId);
+      setVaultNotice(result.created.length
+        ? `Created ${result.created.length} vault file${result.created.length === 1 ? '' : 's'}.`
+        : 'Vault structure is already initialized.');
+      await refreshVault();
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const retryQueuedCaptures = async (): Promise<void> => {
+    if (!automationReady || vaultAction) return;
+    setVaultAction('outbox');
+    setVaultNotice('');
+    try {
+      const result = await window.hive.knowledgeRetryOutbox(projectId);
+      setVaultNotice(result.retried === 0
+        ? 'No queued captures.'
+        : `Delivered ${result.delivered}/${result.retried} queued capture${result.retried === 1 ? '' : 's'}${result.failed ? `; ${result.failed} still queued` : ''}.`);
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const saveAutomation = async (input: KnowledgeAutomationSaveRequest): Promise<void> => {
+    if (!automationApproved || vaultAction) return;
+    setVaultAction(`save:${input.kind}`);
+    setVaultNotice('');
+    try {
+      await window.hive.knowledgeAutomationSave(input);
+      setVaultNotice(`${automationLabel(input.kind)} schedule saved.`);
+      await refreshVault();
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const runAutomation = async (kind: KnowledgeAutomationKind): Promise<void> => {
+    if (!automationReady || vaultAction) return;
+    setVaultAction(`run:${kind}`);
+    setVaultNotice('');
+    try {
+      const result = await window.hive.knowledgeAutomationRunNow(projectId, kind);
+      setVaultNotice(result.status === 'completed'
+        ? `${automationLabel(kind)} written to ${result.path}.`
+        : `${automationLabel(kind)} already exists for ${result.runKey}.`);
+      await refreshVault();
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const openAutomation = async (automation: KnowledgeAutomationStatus): Promise<void> => {
+    if (vaultState !== 'ready' || !automation.lastRunKey) return;
+    const path = automation.kind === 'morning-digest'
+      ? `Daily/${automation.lastRunKey}.md`
+      : `Weekly/${automation.lastRunKey}.md`;
+    try { await window.hive.knowledgeOpen({ projectId, path, newLeaf: true }); }
+    catch (error) { setVaultNotice(error instanceof Error ? error.message : String(error)); }
   };
 
   return (
@@ -280,6 +402,48 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
                     {knowledge?.error && <p className="mt-1 text-[10px] text-danger">{knowledge.error}</p>}
                   </div>
                 </div>
+                {vaultConfigured && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void initializeVault()}
+                      disabled={!automationReady || !!vaultAction}
+                      className="rounded-md border border-border bg-bg-input px-2 py-1 text-[10px] font-medium text-fg-muted hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    >{vaultAction === 'bootstrap' ? 'Initializing…' : 'Initialize vault'}</button>
+                    <button
+                      onClick={() => void retryQueuedCaptures()}
+                      disabled={!automationReady || !!vaultAction}
+                      className="rounded-md border border-border bg-bg-input px-2 py-1 text-[10px] font-medium text-fg-muted hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    >{vaultAction === 'outbox' ? 'Retrying…' : 'Retry queued'}</button>
+                  </div>
+                )}
+                {vaultConfigured && !automationApproved && (
+                  <p className="mt-3 text-[10px] leading-relaxed text-warn">Approve scoped automatic writes in project settings to initialize the folder, save browser captures, or run vault jobs.</p>
+                )}
+                {vaultNotice && <p className="mt-3 text-[10px] leading-relaxed text-fg-subtle" role="status">{vaultNotice}</p>}
+              </BoardPanel>
+
+              <BoardPanel eyebrow="Vault rhythm" title="Daily & weekly jobs">
+                {!vaultConfigured ? <PanelNote>Link an Obsidian folder to this project first.</PanelNote> : (
+                  <div className="space-y-3">
+                    {(['morning-digest', 'weekly-synthesis'] as const).map((kind) => (
+                      <VaultAutomationRow
+                        key={kind}
+                        projectId={projectId}
+                        kind={kind}
+                        status={automations.find((automation) => automation.kind === kind)}
+                        models={automationModels}
+                        defaultModel={selectedAutomationModel}
+                        canSave={automationApproved}
+                        canRun={automationReady}
+                        canOpen={vaultState === 'ready'}
+                        busy={!!vaultAction}
+                        onSave={saveAutomation}
+                        onRun={runAutomation}
+                        onOpen={openAutomation}
+                      />
+                    ))}
+                  </div>
+                )}
               </BoardPanel>
 
               <BoardPanel eyebrow="Runtime" title="MCP & integrations" action={<button onClick={openProjectSettings} className="text-[10px] text-fg-subtle hover:text-accent">Assign</button>}>
@@ -303,6 +467,126 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
         </section>
       </div>
     </main>
+  );
+}
+
+function VaultAutomationRow({
+  projectId,
+  kind,
+  status,
+  models,
+  defaultModel,
+  canSave,
+  canRun,
+  canOpen,
+  busy,
+  onSave,
+  onRun,
+  onOpen
+}: {
+  projectId: string;
+  kind: KnowledgeAutomationKind;
+  status?: KnowledgeAutomationStatus;
+  models: AutomationModelOption[];
+  defaultModel?: AutomationModelOption;
+  canSave: boolean;
+  canRun: boolean;
+  canOpen: boolean;
+  busy: boolean;
+  onSave: (input: KnowledgeAutomationSaveRequest) => Promise<void>;
+  onRun: (kind: KnowledgeAutomationKind) => Promise<void>;
+  onOpen: (automation: KnowledgeAutomationStatus) => Promise<void>;
+}): JSX.Element {
+  const weekly = kind === 'weekly-synthesis';
+  const [enabled, setEnabled] = useState(status?.enabled ?? false);
+  const [time, setTime] = useState(formatAutomationTime(status?.localHour ?? (weekly ? 8 : 7), status?.localMinute ?? 0));
+  const [weekday, setWeekday] = useState(status?.weeklyWeekday ?? 0);
+  const [modelValue, setModelValue] = useState(status
+    ? JSON.stringify([status.providerId, status.model])
+    : defaultModel?.value || '');
+
+  useEffect(() => {
+    if (status) {
+      setEnabled(status.enabled);
+      setTime(formatAutomationTime(status.localHour, status.localMinute));
+      setWeekday(status.weeklyWeekday ?? 0);
+      setModelValue(JSON.stringify([status.providerId, status.model]));
+    } else if (defaultModel) {
+      setModelValue((current) => current || defaultModel.value);
+    }
+  }, [defaultModel, status]);
+
+  const save = async (): Promise<void> => {
+    const selected = models.find((model) => model.value === modelValue);
+    const match = /^(\d{2}):(\d{2})$/.exec(time);
+    if (!selected || !match) return;
+    await onSave({
+      projectId,
+      kind,
+      enabled,
+      localHour: Number(match[1]),
+      localMinute: Number(match[2]),
+      ...(weekly ? { weeklyWeekday: weekday } : {}),
+      providerId: selected.providerId,
+      model: selected.model
+    });
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-input/50 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium text-fg">{automationLabel(kind)}</div>
+          <div className="mt-0.5 text-[9px] text-fg-subtle">
+            {status?.running ? 'Running now' : status?.lastRunAt ? `Last run ${relativeTime(status.lastRunAt)}` : 'Not run yet'}
+          </div>
+        </div>
+        <label className="flex items-center gap-1.5 text-[10px] text-fg-muted">
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={!canSave || busy} className="accent-accent" />
+          Enabled
+        </label>
+      </div>
+
+      <div className={`mt-2 grid gap-2 ${weekly ? 'grid-cols-[6.5rem_1fr]' : 'grid-cols-1'}`}>
+        {weekly && (
+          <select
+            aria-label="Weekly synthesis weekday"
+            value={weekday}
+            onChange={(event) => setWeekday(Number(event.target.value))}
+            disabled={!canSave || busy}
+            className="min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
+          >
+            {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, index) => <option key={day} value={index}>{day}</option>)}
+          </select>
+        )}
+        <input
+          aria-label={`${automationLabel(kind)} local time`}
+          type="time"
+          value={time}
+          onChange={(event) => setTime(event.target.value)}
+          disabled={!canSave || busy}
+          className="min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
+        />
+      </div>
+
+      <select
+        aria-label={`${automationLabel(kind)} model`}
+        value={modelValue}
+        onChange={(event) => setModelValue(event.target.value)}
+        disabled={!canSave || busy || models.length === 0}
+        className="mt-2 w-full min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
+      >
+        {models.length === 0 && <option value="">No enabled model</option>}
+        {models.map((model) => <option key={model.value} value={model.value}>{model.label}</option>)}
+      </select>
+
+      {status?.error && <p className="mt-2 text-[9px] leading-relaxed text-danger">{status.error}</p>}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button onClick={() => void save()} disabled={!canSave || busy || !models.some((model) => model.value === modelValue) || !/^\d{2}:\d{2}$/.test(time)} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Save</button>
+        <button onClick={() => void onRun(kind)} disabled={!canRun || busy || !status} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Run now</button>
+        {status?.lastRunKey && <button onClick={() => void onOpen(status)} disabled={!canOpen || busy} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Open note</button>}
+      </div>
+    </div>
   );
 }
 
@@ -362,6 +646,14 @@ function ActionButton({ label, onClick, primary = false, disabled = false }: { l
       {label}
     </button>
   );
+}
+
+function automationLabel(kind: KnowledgeAutomationKind): string {
+  return kind === 'morning-digest' ? 'Morning digest' : 'Weekly synthesis';
+}
+
+function formatAutomationTime(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 function relativeTime(timestamp: number): string {

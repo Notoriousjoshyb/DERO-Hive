@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { runMigrations } from '../src/main/db/client';
-import { needsKnowledgeWriteConsent, rowToProject } from '../src/main/ipc/projects';
+import { needsKnowledgeWriteConsent, revokesKnowledgeWriteConsent, rowToProject } from '../src/main/ipc/projects';
 import { normalizeProjectConfig } from '../src/shared/types';
 import { createTestDbFromSchema } from './helpers/sqlite';
 
@@ -58,5 +58,9 @@ describe('project config persistence', () => {
     expect(needsKnowledgeWriteConsent(allowed, normalizeProjectConfig({
       knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/DERO', allowAutomationWrites: false }
     }))).toBe(false);
+    expect(revokesKnowledgeWriteConsent(allowed, normalizeProjectConfig({
+      knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/DERO', allowAutomationWrites: false }
+    }))).toBe(true);
+    expect(revokesKnowledgeWriteConsent({}, allowed)).toBe(false);
   });
 });
