@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS knowledge_outbox (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  server_id TEXT NOT NULL,
+  folder TEXT NOT NULL,
   path TEXT NOT NULL,
   content TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -219,7 +221,7 @@ CREATE TABLE IF NOT EXISTS swarm_tasks (
 CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
 `;
 
-const CURRENT_SCHEMA_VERSION = 12;
+const CURRENT_SCHEMA_VERSION = 13;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -421,6 +423,17 @@ const MIGRATIONS: Migration[] = [
           PRIMARY KEY(project_id, kind)
         );
       `);
+    }
+  },
+  {
+    version: 13,
+    description: 'Bind queued knowledge captures to their original vault scope',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(knowledge_outbox)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('server_id')) database.exec('ALTER TABLE knowledge_outbox ADD COLUMN server_id TEXT');
+      if (!columns.has('folder')) database.exec('ALTER TABLE knowledge_outbox ADD COLUMN folder TEXT');
     }
   }
 ];

@@ -74,6 +74,7 @@ async function createMainWindow(): Promise<void> {
       webviewTag: false
     }
   });
+  const window = mainWindow;
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show();
@@ -84,6 +85,11 @@ async function createMainWindow(): Promise<void> {
   });
   mainWindow.on('leave-full-screen', () => {
     mainWindow?.webContents.send('window:fullscreen-changed', { fullscreen: false });
+  });
+  window.on('closed', () => {
+    if (mainWindow !== window) return;
+    mainWindow = null;
+    browserBridge?.clearActiveProject();
   });
 
   // Open external links in default browser

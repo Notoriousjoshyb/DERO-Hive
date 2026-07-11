@@ -4,7 +4,12 @@ import type { TestDb } from './helpers/sqlite';
 import { createTestDbFromSchema } from './helpers/sqlite';
 
 let db: TestDb;
-const provider = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, closed: [] as string[] }));
+const provider = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>,
+  closed: [] as string[],
+  waitForAbort: false,
+  onStart: undefined as (() => void) | undefined
+}));
 
 vi.mock('../src/main/db/client', () => ({ getDb: () => db }));
 vi.mock('../src/main/providers/registry', () => ({
@@ -13,6 +18,15 @@ vi.mock('../src/main/providers/registry', () => ({
     nativeExecutionModes: ['read-only'],
     async *stream(request: Record<string, unknown>) {
       provider.calls.push(request);
+      provider.onStart?.();
+      if (provider.waitForAbort) {
+        const signal = request.signal as AbortSignal;
+        await new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(new Error('Aborted'));
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+        });
+      }
       yield { type: 'delta', content: 'Themes and next actions.' };
       yield { type: 'done' };
     }
@@ -61,6 +75,8 @@ const morning = (overrides: Partial<KnowledgeAutomation> = {}): KnowledgeAutomat
 beforeEach(() => {
   provider.calls.length = 0;
   provider.closed.length = 0;
+  provider.waitForAbort = false;
+  provider.onStart = undefined;
   db = createTestDbFromSchema(`
     CREATE TABLE projects (id TEXT PRIMARY KEY, config TEXT NOT NULL);
     CREATE TABLE providers (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
@@ -144,6 +160,84 @@ describe('fixed knowledge automation schedule', () => {
     expect(scheduler.list('p')[0]).toEqual(expect.objectContaining({
       error: 'Automated knowledge writes are disabled for this project'
     }));
+  });
+
+  test('waits for a pre-claim tick during shutdown and does not start the run', async () => {
+    const vault = knowledge();
+    let releaseRead!: () => void;
+    let reachedRead!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const reached = new Promise<void>((resolve) => { reachedRead = resolve; });
+    const originalRead = vault.readDocument;
+    vault.readDocument = async (projectId: string, path: string) => {
+      if (path.startsWith('Daily/')) {
+        reachedRead();
+        await blocked;
+        throw new Error(`File not found: ${path}`);
+      }
+      return originalRead(projectId, path);
+    };
+    const scheduler = new KnowledgeAutomationScheduler(vault as never);
+    scheduler.save({
+      projectId: 'p', kind: 'morning-digest', enabled: true,
+      localHour: 7, localMinute: 0, providerId: 'provider', model: 'model'
+    });
+
+    const tick = scheduler.tick(new Date(2026, 6, 10, 9, 30));
+    await reached;
+    let stopped = false;
+    const shutdown = scheduler.shutdown().then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    releaseRead();
+    await Promise.all([tick, shutdown]);
+
+    expect(provider.calls).toEqual([]);
+    expect(scheduler.list('p')[0]).not.toHaveProperty('lastRunKey');
+  });
+
+  test('preserves the interrupted marker on shutdown so the next scheduler resumes the run', async () => {
+    const vault = knowledge();
+    const scheduler = new KnowledgeAutomationScheduler(vault as never);
+    scheduler.save({
+      projectId: 'p', kind: 'morning-digest', enabled: true,
+      localHour: 7, localMinute: 0, providerId: 'provider', model: 'model'
+    });
+    provider.waitForAbort = true;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    provider.onStart = markStarted;
+    const now = new Date(2026, 6, 10, 9, 30);
+
+    const outcome = scheduler.runNow('p', 'morning-digest', now).catch((error) => error as Error);
+    await started;
+    await scheduler.shutdown();
+    expect((await outcome).message).toBe('Aborted');
+    expect(scheduler.list('p')[0]).toEqual(expect.objectContaining({
+      lastRunKey: '2026-07-10',
+      error: 'Run interrupted before completion'
+    }));
+
+    provider.waitForAbort = false;
+    provider.onStart = undefined;
+    const restarted = new KnowledgeAutomationScheduler(vault as never);
+    await restarted.tick(now);
+    expect(provider.calls).toHaveLength(2);
+    expect(restarted.list('p')[0]).not.toHaveProperty('error');
+  });
+
+  test('allows a persisted schedule to be disabled after its provider is deleted', () => {
+    const scheduler = new KnowledgeAutomationScheduler(knowledge() as never);
+    scheduler.save({
+      projectId: 'p', kind: 'morning-digest', enabled: true,
+      localHour: 7, localMinute: 0, providerId: 'provider', model: 'model'
+    });
+    db.prepare('DELETE FROM providers WHERE id = ?').run('provider');
+
+    expect(scheduler.save({
+      projectId: 'p', kind: 'morning-digest', enabled: false,
+      localHour: 7, localMinute: 0, providerId: 'provider', model: 'model'
+    }).enabled).toBe(false);
   });
 
   test('builds the weekly synthesis from daily, decision, and question notes', async () => {

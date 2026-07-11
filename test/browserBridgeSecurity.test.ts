@@ -131,7 +131,11 @@ describe('Browser Companion bridge security', () => {
       });
       expect(denied.status).toBe(403);
 
-      bridge.reportSelection('provider', 'model');
+      bridge.clearActiveProject();
+      const clearedStateResponse = await fetch('http://127.0.0.1:43120/v1/state', { headers });
+      expect(await clearedStateResponse.json()).toMatchObject({
+        providerId: 'other-provider', model: 'other-model', activeProject: null
+      });
       const unscoped = await fetch('http://127.0.0.1:43120/v1/capture', {
         method: 'POST', headers, body: JSON.stringify({ projectId: 'attacker-project', content: 'Page evidence' })
       });

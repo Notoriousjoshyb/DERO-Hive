@@ -93,6 +93,10 @@ export class BrowserBridge {
     return { ok: true };
   }
 
+  clearActiveProject(): void {
+    this.selection = { providerId: this.selection.providerId, model: this.selection.model };
+  }
+
   status(): BrowserBridgeStatus {
     return {
       enabled: Boolean(this.server),

@@ -23,6 +23,7 @@ const REQUIRED_CAPABILITIES = ['list', 'read', 'write', 'append'] as const;
 export class KnowledgeAutomationScheduler {
   private timer?: NodeJS.Timeout;
   private shuttingDown = false;
+  private tickPromise?: Promise<void>;
   private outboxRetry?: Promise<void>;
   private lastOutboxRetryAt = 0;
   private readonly running = new Map<string, { abort: AbortController; promise: Promise<KnowledgeAutomationRunResult> }>();
@@ -45,7 +46,8 @@ export class KnowledgeAutomationScheduler {
     for (const run of this.running.values()) run.abort.abort();
     await Promise.allSettled([
       ...[...this.running.values()].map((run) => run.promise),
-      ...(this.outboxRetry ? [this.outboxRetry] : [])
+      ...(this.outboxRetry ? [this.outboxRetry] : []),
+      ...(this.tickPromise ? [this.tickPromise] : [])
     ]);
   }
 
@@ -73,8 +75,10 @@ export class KnowledgeAutomationScheduler {
     if (input.enabled && !project.knowledge?.allowAutomationWrites) {
       throw new Error('Automated knowledge writes are disabled for this project');
     }
-    const provider = getDb().prepare('SELECT enabled FROM providers WHERE id = ?').get(input.providerId) as { enabled?: number } | undefined;
-    if (!provider || provider.enabled !== 1) throw new Error('Automation provider is not enabled');
+    if (input.enabled) {
+      const provider = getDb().prepare('SELECT enabled FROM providers WHERE id = ?').get(input.providerId) as { enabled?: number } | undefined;
+      if (!provider || provider.enabled !== 1) throw new Error('Automation provider is not enabled');
+    }
     getDb().prepare(`
       INSERT INTO knowledge_automations (
         project_id, kind, enabled, local_hour, local_minute, weekly_weekday, provider_id, model
@@ -103,7 +107,16 @@ export class KnowledgeAutomationScheduler {
     return this.execute(this.require(projectId, kind), now, true);
   }
 
-  async tick(now = new Date()): Promise<void> {
+  tick(now = new Date()): Promise<void> {
+    if (this.tickPromise) return this.tickPromise;
+    const promise = this.runTick(now).finally(() => {
+      if (this.tickPromise === promise) this.tickPromise = undefined;
+    });
+    this.tickPromise = promise;
+    return promise;
+  }
+
+  private async runTick(now: Date): Promise<void> {
     if (this.shuttingDown) return;
     await this.flushOutbox(now);
     if (this.shuttingDown) return;
@@ -131,14 +144,18 @@ export class KnowledgeAutomationScheduler {
   private async execute(automation: KnowledgeAutomation, now: Date, force: boolean): Promise<KnowledgeAutomationRunResult> {
     const id = automationId(automation);
     const runKey = knowledgeAutomationRunKey(automation.kind, now);
-    if (this.running.has(id) || (!force && automation.lastRunKey === runKey)) {
+    if (this.shuttingDown || this.running.has(id) || (!force && automation.lastRunKey === runKey)) {
       return { projectId: automation.projectId, kind: automation.kind, runKey, status: 'skipped' };
     }
 
     const target = automationTarget(automation.kind, runKey);
     const marker = automationMarker(automation.kind, runKey);
     try {
-      if (await this.targetContains(automation.projectId, target, marker)) {
+      const targetExists = await this.targetContains(automation.projectId, target, marker);
+      if (this.shuttingDown) {
+        return { projectId: automation.projectId, kind: automation.kind, runKey, status: 'skipped' };
+      }
+      if (targetExists) {
         getDb().prepare(`
           UPDATE knowledge_automations
           SET last_run_key = ?, last_run_at = COALESCE(last_run_at, ?), last_error = NULL
@@ -173,7 +190,7 @@ export class KnowledgeAutomationScheduler {
       return { projectId: automation.projectId, kind: automation.kind, runKey, status: 'completed' as const, path };
     }).catch((error) => {
       getDb().prepare('UPDATE knowledge_automations SET last_error = ? WHERE project_id = ? AND kind = ?')
-        .run(errorMessage(error).slice(0, 2_000), automation.projectId, automation.kind);
+        .run(abort.signal.aborted ? 'Run interrupted before completion' : errorMessage(error).slice(0, 2_000), automation.projectId, automation.kind);
       throw error;
     });
     this.running.set(id, { abort, promise });

@@ -23,6 +23,9 @@ describe('project config persistence', () => {
         .toEqual({ name: 'knowledge_outbox' });
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_automations'").get())
         .toEqual({ name: 'knowledge_automations' });
+      expect((db.prepare('PRAGMA table_info(knowledge_outbox)').all() as Array<{ name: string }>).map((column) => column.name))
+        .toEqual(expect.arrayContaining(['server_id', 'folder']));
+      expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({ version: 13 });
     } finally {
       db.close();
     }

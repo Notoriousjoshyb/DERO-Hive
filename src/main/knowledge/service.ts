@@ -240,9 +240,9 @@ export class KnowledgeService {
       const now = Date.now();
       const message = errorMessage(error).slice(0, 2_000);
       getDb().prepare(`
-        INSERT INTO knowledge_outbox (id, project_id, path, content, attempts, last_error, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-      `).run(id, input.projectId, path, body, message, now, now);
+        INSERT INTO knowledge_outbox (id, project_id, server_id, folder, path, content, attempts, last_error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+      `).run(id, input.projectId, knowledge.serverId, knowledge.folder, path, body, message, now, now);
       return { path, queued: true, outboxId: id, error: message };
     }
   }
@@ -259,6 +259,11 @@ export class KnowledgeService {
       try {
         const context = this.context(row.project_id as string);
         this.assertAutomation(context, options);
+        if (row.server_id !== context.serverId || row.folder !== context.folder) {
+          throw new Error(row.server_id && row.folder
+            ? 'Queued capture belongs to a different vault scope'
+            : 'Queued capture has no recorded vault scope');
+        }
         const path = normalizeKnowledgePath(row.path);
         await this.call(context, 'write', { path: scopedPath(context.folder, path), content: row.content as string });
         getDb().prepare('DELETE FROM knowledge_outbox WHERE id = ?').run(row.id);
