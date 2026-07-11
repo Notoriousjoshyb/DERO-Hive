@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { IPC, normalizeProjectConfig, type Project, type ProjectConfig } from '@shared/types';
 import { getDb } from '../db/client';
 import { logger } from '../utils/logger';
@@ -11,9 +11,33 @@ export function registerProjectHandlers(): void {
     return rows.map(rowToProject);
   });
 
-  ipcMain.handle(IPC.PROJECT_SAVE, (_e, project: Project) => {
+  ipcMain.handle(IPC.PROJECT_SAVE, async (event, project: Project) => {
     const projectPath = validateProjectPath(project.path);
     const config = normalizeProjectConfig(project.config);
+    const existing = getDb().prepare('SELECT config FROM projects WHERE id = ?').get(project.id) as { config?: string } | undefined;
+    const currentConfig = parseStoredProjectConfig(existing?.config);
+    if (needsKnowledgeWriteConsent(currentConfig, config)) {
+      const knowledge = config.knowledge!;
+      const options = {
+        type: 'warning' as const,
+        title: 'Allow automatic vault writes?',
+        message: `Allow DERO Hive to write inside “${knowledge.folder}”?`,
+        detail: [
+          `Obsidian server: ${knowledge.serverId}`,
+          `Allowed folder: ${knowledge.folder}`,
+          '',
+          'Hive may create, append, or patch notes in this folder for captures and scheduled syntheses.',
+          'It will not delete or move notes, execute Obsidian commands, or write outside this folder.'
+        ].join('\n'),
+        buttons: ['Cancel', 'Allow scoped writes'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      };
+      const parent = BrowserWindow.fromWebContents(event.sender);
+      const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+      if (result.response !== 1) throw new Error('Automatic vault writes were not approved');
+    }
     const now = Date.now();
     getDb().prepare(`
       INSERT INTO projects (id, name, icon, color, path, config, created_at, updated_at)
@@ -39,6 +63,16 @@ export function registerProjectHandlers(): void {
     })();
     logger.info('project', `deleted ${id}`);
   });
+}
+
+export function needsKnowledgeWriteConsent(current: ProjectConfig, next: ProjectConfig): boolean {
+  const before = current.knowledge;
+  const after = next.knowledge;
+  return after?.allowAutomationWrites === true && (
+    before?.allowAutomationWrites !== true
+    || before.serverId !== after.serverId
+    || before.folder !== after.folder
+  );
 }
 
 export function validateProjectPath(value: unknown): string {

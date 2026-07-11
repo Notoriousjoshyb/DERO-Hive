@@ -429,14 +429,16 @@ export class McpManager extends EventEmitter {
    * whether that server is trusted. The caller needs the trust bit *before*
    * running the tool, so resolution cannot happen at dispatch time.
    */
-  resolveTool(name: string): { serverId: string; serverName: string; toolName: string; trusted: boolean } | null {
+  resolveTool(name: string, allowedServerIds?: ReadonlySet<string>): { serverId: string; serverName: string; toolName: string; trusted: boolean } | null {
     if (name.startsWith('mcp:')) {
       const [, serverId, ...rest] = name.split(':');
+      if (allowedServerIds && !allowedServerIds.has(serverId)) return null;
       const inst = this.servers.get(serverId);
       if (!inst) return null;
       return { serverId, serverName: this.configName(serverId), toolName: rest.join(':'), trusted: !!inst.trust };
     }
     for (const inst of this.servers.values()) {
+      if (allowedServerIds && !allowedServerIds.has(inst.id)) continue;
       if (inst.tools.some((t) => t.name === name)) {
         return { serverId: inst.id, serverName: this.configName(inst.id), toolName: name, trusted: !!inst.trust };
       }

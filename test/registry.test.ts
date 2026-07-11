@@ -35,7 +35,8 @@ function fakeMcp(trusted: boolean) {
     getAllTools: () => [
       { name: 'dero_get_info', description: '', parameters: {}, source: 'mcp:bundled-dero' }
     ],
-    resolveTool(name: string) {
+    resolveTool(name: string, allowedServerIds?: ReadonlySet<string>) {
+      if (allowedServerIds && !allowedServerIds.has('bundled-dero')) return null;
       if (name.startsWith('mcp:')) {
         const [, serverId, ...rest] = name.split(':');
         return serverId === 'bundled-dero'
@@ -82,6 +83,20 @@ describe('MCP tool routing', () => {
     const result = await makeRegistry(fakeMcp(true)).execute('not_a_tool', {}, ctx);
     expect(result.isError).toBe(true);
     expect(result.content).toMatch(/Unknown tool/);
+  });
+
+  test('filters and enforces a project MCP server profile', async () => {
+    const mcp = fakeMcp(true);
+    const registry = makeRegistry(mcp);
+    expect(registry.listTools(new Set())).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'dero_get_info' })
+    ]));
+    expect(registry.listTools(new Set(['bundled-dero']))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'dero_get_info' })
+    ]));
+    const denied = await registry.execute('dero_get_info', {}, { ...ctx, mcpServerIds: new Set() });
+    expect(denied.isError).toBe(true);
+    expect(mcp.calls).toEqual([]);
   });
 });
 

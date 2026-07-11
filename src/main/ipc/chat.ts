@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel } from '@shared/types';
+import { IPC, normalizeProjectConfig, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel } from '@shared/types';
 import { logger } from '../utils/logger';
 import { getAdapter, listProviders } from '../providers/registry';
 import type { ProviderStreamEvent } from '../providers/base';
@@ -289,9 +289,19 @@ async function runChat(
       // default workspace (Documents\DERO Hive) — never the app's own folder.
       const conv = getDb().prepare('SELECT project_id, system_prompt FROM conversations WHERE id = ?').get(req.conversationId) as { project_id?: string; system_prompt?: string } | undefined;
       let projectPath: string | undefined;
+      let projectMcpServerIds: ReadonlySet<string> | undefined;
       if (conv?.project_id) {
-        const proj = getDb().prepare('SELECT path FROM projects WHERE id = ?').get(conv.project_id) as { path?: string } | undefined;
+        const proj = getDb().prepare('SELECT path, config FROM projects WHERE id = ?').get(conv.project_id) as { path?: string; config?: string } | undefined;
         projectPath = proj?.path;
+        if (proj?.config) {
+          try {
+            const config = normalizeProjectConfig(JSON.parse(proj.config));
+            if (config.mcpServerIds !== undefined) projectMcpServerIds = new Set(config.mcpServerIds);
+          } catch (error) {
+            projectMcpServerIds = new Set();
+            logger.warn('chat', `invalid project MCP profile; MCP tools disabled: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
       }
       const cwd = projectPath || getSetting<string>('workingDirectory') || getDefaultWorkspace();
       if (projectPath) {
@@ -406,7 +416,7 @@ async function runChat(
       // Multi-turn agentic loop. Each round lets the model inspect its tool
       // results and decide the next action. Keep it bounded so a mistaken or
       // repetitive plan cannot run indefinitely.
-      const availableTools = tools.listTools();
+      const availableTools = tools.listTools(projectMcpServerIds);
       const configuredRounds = appSettings?.maxAgenticRounds ?? 20;
       const maxAgenticRounds = Number.isFinite(configuredRounds)
         ? Math.min(50, Math.max(1, Math.floor(configuredRounds)))
@@ -454,7 +464,7 @@ async function runChat(
                 requestPermission: (permission) => {
                   sideEffectOccurred = true;
                   fallbackAllowed = false;
-                  return tools.requestPermission(permission, { cwd, conversationId: req.conversationId });
+                  return tools.requestPermission(permission, { cwd, conversationId: req.conversationId, mcpServerIds: projectMcpServerIds });
                 }
               });
             },
@@ -530,7 +540,7 @@ async function runChat(
         for (const tc of toolCalls) {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.arguments); } catch { /* leave empty */ }
-          const ctx = { cwd, conversationId: req.conversationId };
+          const ctx = { cwd, conversationId: req.conversationId, mcpServerIds: projectMcpServerIds };
           const start = Date.now();
           const result = await tools.execute(tc.name, args, ctx);
           const duration = Date.now() - start;

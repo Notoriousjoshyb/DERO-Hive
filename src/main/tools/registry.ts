@@ -7,6 +7,7 @@ import { McpManager } from '../mcp/manager';
 export interface ToolContext {
   cwd: string;
   conversationId: string;
+  mcpServerIds?: ReadonlySet<string>;
 }
 
 export interface ToolResult {
@@ -43,9 +44,11 @@ export class ToolRegistry extends EventEmitter {
     }
   }
 
-  listTools(): ToolDefinition[] {
+  listTools(allowedServerIds?: ReadonlySet<string>): ToolDefinition[] {
     const builtin = BUILTIN_TOOLS;
-    const mcp = this.mcpManager?.getAllTools() || [];
+    const mcp = (this.mcpManager?.getAllTools() || []).filter((tool) =>
+      !allowedServerIds || allowedServerIds.has(tool.source.slice('mcp:'.length))
+    );
     return [...builtin, ...mcp];
   }
 
@@ -53,7 +56,7 @@ export class ToolRegistry extends EventEmitter {
     // MCP — models call MCP tools by their raw advertised name, so resolve the
     // owning server up front. It is needed before the permission check, because
     // whether the tool needs approval depends on that server's trust flag.
-    const mcp = this.executors.has(name) ? null : (this.mcpManager?.resolveTool(name) ?? null);
+    const mcp = this.executors.has(name) ? null : (this.mcpManager?.resolveTool(name, ctx.mcpServerIds) ?? null);
 
     // Check permissions
     const rule = this.matchRule(name, args);

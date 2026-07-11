@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { runMigrations } from '../src/main/db/client';
-import { rowToProject } from '../src/main/ipc/projects';
+import { needsKnowledgeWriteConsent, rowToProject } from '../src/main/ipc/projects';
 import { normalizeProjectConfig } from '../src/shared/types';
 import { createTestDbFromSchema } from './helpers/sqlite';
 
@@ -42,5 +42,19 @@ describe('project config persistence', () => {
       mcpServerIds: ['dero', 'obsidian'],
       knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/DERO', allowAutomationWrites: true }
     });
+  });
+
+  test('requires fresh native consent when an automatic vault scope is enabled or changed', () => {
+    const allowed = normalizeProjectConfig({
+      knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/DERO', allowAutomationWrites: true }
+    });
+    expect(needsKnowledgeWriteConsent({}, allowed)).toBe(true);
+    expect(needsKnowledgeWriteConsent(allowed, allowed)).toBe(false);
+    expect(needsKnowledgeWriteConsent(allowed, normalizeProjectConfig({
+      knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/Other', allowAutomationWrites: true }
+    }))).toBe(true);
+    expect(needsKnowledgeWriteConsent(allowed, normalizeProjectConfig({
+      knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/DERO', allowAutomationWrites: false }
+    }))).toBe(false);
   });
 });
