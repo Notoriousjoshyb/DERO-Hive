@@ -25,9 +25,20 @@ While connected:
 
 The bridge listens only on `127.0.0.1` for the lifetime of the app. Every route checks the loopback host, paired extension origin, and bearer credential. Use **Reset browser pairing** in Hive Companion to revoke the saved credential and generate a new one-time code.
 
+## Save to project
+
+The project save button, shown as **Save to My Project** for a project named “My Project,” stores the current page, selection, or tabs receipt without starting a chat:
+
+1. In DERO Hive, open a Project Cockpit or a conversation attached to a project. The open cockpit takes precedence; otherwise the current conversation's project is active.
+2. Link that project to an Obsidian server and vault folder, then approve **Allow automation writes** in the project's settings.
+3. Capture the desired context in the side panel and click its **Save to…** button.
+
+The extension reports **Saved** after Hive writes a new note under the project's `Inbox/Raw/`. If Obsidian is offline, it reports **Queued — vault offline** and keeps the capture in Hive's local outbox; Hive retries while running, and **Retry queued** in the Project Cockpit triggers it immediately. With no active project, the button is disabled and reads **No active project**. The sensitive-site guard still applies before anything can be saved.
+
 ## Features
 
 - Page / drag-to-snip selection / open-tabs context scopes with a transparent "What Hive sees" receipt
+- One-click save of the current receipt to the active project's Obsidian raw inbox
 - Browser sessions with rename, delete, and **Clear chat**
 - Quick commands (Summarize, Explain, Actions, Rewrite) and Ctrl+Enter to send
 - Seven themes (Hive, Forest, Midnight, Ember, Mono, Cyberpunk, Light)

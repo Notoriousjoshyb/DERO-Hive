@@ -13,7 +13,9 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - Composer agents (persona presets, built-in + custom), a prompt library inserted via `#` with `{{clipboard}}`/`{{date}}` variables, and fuzzy `/` skill + `@` file autocomplete.
 - Inline Mermaid diagrams and KaTeX math in chat; token & estimated-cost usage dashboard; native desktop notifications when responses finish in the background.
 - Built-in file, shell, Git, artifact, voice, and permission workflows. Keyboard shortcuts cheatsheet on `?`.
-- MCP server support with a curated Discover catalog, bundled DERO MCP resources, and DERO-focused skills.
+- MCP server support with per-project assignments, a curated Discover catalog, bundled DERO MCP resources, and DERO-focused skills.
+- Optional Obsidian project knowledge with folder-scoped capture, morning digests, and weekly synthesis.
+- A native five-role Swarm: three specialists, one verifier, and one synthesizer.
 - Appearance engine: themes, accent colour override, and custom CSS injection.
 - Browser Companion extension (Chrome/Edge side panel) that sends page context to DERO Hive and streams replies live back into the browser. See below.
 - Optional, process-isolated Hologram, PureWolf, and Hermes integration status. See [`INTEGRATIONS.md`](INTEGRATIONS.md).
@@ -82,11 +84,48 @@ Codex normally stores its reusable credentials in the operating-system credentia
 While the desktop app is running, the extension pairs automatically with a loopback-only bridge on `127.0.0.1:43120` (ephemeral token, rotated each app start). It can then:
 
 - Capture the active page, a drag-to-snip region, or the open-tab list as transparent, untrusted context.
+- Save the current context receipt to the active project's Obsidian `Inbox/Raw/` folder.
 - Stream replies token-by-token into the side panel (SSE) with collapsed model thinking, tool-activity chips, and Markdown rendering.
 - Sync the selected provider/model with the app in both directions.
 - Dictate prompts through the app's bundled local Whisper — fully offline.
 
 Extension requests always run as a single agent and never move focus away from the browser. Full details in [`browser-extension/README.md`](browser-extension/README.md).
+
+## Obsidian project knowledge
+
+Obsidian is optional. DERO Hive coordinates its MCP servers; Obsidian, the DERO server, and a code-graph server never need to call one another directly.
+
+### Connect a vault
+
+1. In Obsidian, install and enable the **Local REST API** community plugin and copy its API key.
+2. In DERO Hive, open **Settings → Discover → Obsidian**. Use the plugin's loopback MCP endpoint: `https://127.0.0.1:27124/mcp/` after trusting its local certificate, or its loopback-only HTTP endpoint, `http://127.0.0.1:27123/mcp/`.
+3. Paste the Obsidian API key into **Bearer token**, keep the server enabled, save, and approve the connection. Leave **Trust tools** off unless you deliberately want all tools from that server to skip normal approval prompts.
+4. Open **Settings → Projects**, edit a project, and choose the server plus a vault-relative folder such as `Projects/My Project` under **Obsidian knowledge**. Check the server under **Project MCP servers** too if project chats should call its MCP tools directly.
+5. To use capture and synthesis, enable **Allow automation writes**, save the project, and approve the native folder-scoped consent dialog. The consent permits create, append, and patch operations only inside that folder; it does not permit deletes, moves, Obsidian commands, or writes elsewhere. Changing the server or folder asks again.
+
+Open the project's cockpit and click **Initialize vault** once. Hive creates `Project.md`, `Decisions.md`, `Open Questions.md`, and the `Inbox/Raw`, `Daily`, `Weekly`, and `Evidence` folders without replacing files that already exist.
+
+### Fixed automations
+
+The Project Cockpit supports two project jobs. Each requires the standing vault-write approval and an explicit provider and model:
+
+- **Morning digest** — at the selected local time, reads up to 50 new notes from `Inbox/Raw/` within fixed input limits, leaves the raw files unchanged, and writes or updates `Daily/YYYY-MM-DD.md`.
+- **Weekly synthesis** — on the selected local weekday and time, reads the latest seven dated daily notes plus `Decisions.md` and `Open Questions.md`, then writes `Weekly/YYYY-Www.md`.
+
+For each job, choose its provider/model and time (plus weekday for weekly), enable it, and click **Save**. Use **Run now** to test it and **Open note** to open its latest output in Obsidian.
+
+The scheduler runs inside Hive. If Hive was closed at the due time, the job catches up once the next time Hive runs; stable run markers prevent duplicate output. Synthesis calls use the selected model without tools. Notes included in a job are sent to that provider, so choose a local provider when the content must stay on the machine.
+
+## DERO research and Swarm
+
+For a cross-source investigation:
+
+1. Create or edit a **DERO** project and assign its Obsidian server, the bundled DERO MCP server, and any code server the chat should use.
+2. In a project chat, invoke `/dero-research`. The skill asks Hive to compare vault notes, DERO chain/docs evidence, and code evidence, then returns a source-linked handoff with verified facts, conflicts, open questions, and sources.
+3. Review that handoff, open **Swarm** from the composer, select **Research**, and launch it with the same question and evidence. Research mode is read-only: Core solution, Validation, and Safety & integration work in parallel, followed by a Verifier and a Synthesizer.
+4. Review the synthesized result before approving any targeted Obsidian patch.
+
+[GitNexus](https://github.com/abhigyanpatwari/GitNexus) is an optional local code-graph server in **Settings → Discover**. Its registry entry uses `npx -y gitnexus@1.6.9 mcp`; run `npx gitnexus@1.6.9 analyze` inside each repository first, then assign the server to the project. GitNexus uses the PolyForm Noncommercial license, so review its terms or configure a compatible fork before use. It is not required for Obsidian, the DERO server, or Swarm.
 
 ## Thinking controls
 
