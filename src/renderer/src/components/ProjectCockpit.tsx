@@ -35,7 +35,7 @@ type ActivityItem =
 export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Element {
   const project = useAppStore((state) => state.projects.find((item) => item.id === projectId));
   const conversations = useAppStore((state) => state.conversations);
-  const swarmRuns = useAppStore((state) => Object.values(state.swarmRuns));
+  const swarmRunsById = useAppStore((state) => state.swarmRuns);
   const mcpStatuses = useAppStore((state) => state.mcpStatuses);
   const providers = useAppStore((state) => state.providers);
   const selectedProviderId = useAppStore((state) => state.selectedProviderId);
@@ -84,10 +84,10 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   );
   const conversationIds = useMemo(() => new Set(projectConversations.map((item) => item.id)), [projectConversations]);
   const projectSwarms = useMemo(
-    () => swarmRuns
+    () => Object.values(swarmRunsById)
       .filter((run) => run.projectId === projectId || (!!run.conversationId && conversationIds.has(run.conversationId)))
       .sort((a, b) => b.updatedAt - a.updatedAt),
-    [swarmRuns, projectId, conversationIds]
+    [swarmRunsById, projectId, conversationIds]
   );
 
   const activity = useMemo<ActivityItem[]>(() => [
