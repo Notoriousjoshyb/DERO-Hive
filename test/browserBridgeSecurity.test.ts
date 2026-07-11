@@ -59,4 +59,32 @@ describe('Browser Companion bridge security', () => {
     expect(persisted).toEqual({ key: 'browserBridgePairing', value: null });
     bridge.dispose();
   });
+
+  test('accepts an origin-less authenticated extension GET after strict origin pairing', async () => {
+    const bridge = new BrowserBridge(() => null);
+    const origin = `chrome-extension://${'a'.repeat(32)}`;
+    try {
+      const status = await bridge.setEnabled(true);
+      const pair = await fetch('http://127.0.0.1:43120/v1/pair', {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: status.pairingCode })
+      });
+      const { token } = await pair.json() as { token: string };
+      expect(pair.status).toBe(200);
+
+      const health = await fetch('http://127.0.0.1:43120/health', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(health.status).toBe(200);
+
+      const hostileOrigin = await fetch('http://127.0.0.1:43120/health', {
+        headers: { Origin: 'https://example.com', Authorization: `Bearer ${token}` }
+      });
+      expect(hostileOrigin.status).toBe(403);
+    } finally {
+      await bridge.stop();
+      bridge.dispose();
+    }
+  });
 });

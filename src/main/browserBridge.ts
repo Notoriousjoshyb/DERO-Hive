@@ -153,17 +153,22 @@ export class BrowserBridge {
     const url = new URL(request.url || '/', `http://127.0.0.1:${PORT}`);
     const origin = allowedExtensionOrigin(request.headers.origin);
     const pairingRoute = url.pathname === '/v1/pair';
-    if (!origin) { json(response, 403, { error: 'Invalid origin' }); return; }
+    // Chrome may omit Origin on extension GETs covered by host_permissions.
+    // Pairing still requires a real extension origin; authenticated requests
+    // may omit it because the bearer token is already bound to that origin.
+    if (request.headers.origin !== undefined && !origin) { json(response, 403, { error: 'Invalid origin' }); return; }
+    if (pairingRoute && !origin) { json(response, 403, { error: 'Invalid origin' }); return; }
 
     if (request.method === 'OPTIONS') {
-      if (!pairingRoute && origin !== this.pairedOrigin) { json(response, 403, { error: 'Not paired' }); return; }
-      setCors(response, origin);
+      if (!pairingRoute && (!this.pairedOrigin || (origin && origin !== this.pairedOrigin))) { json(response, 403, { error: 'Not paired' }); return; }
+      setCors(response, origin || this.pairedOrigin);
       response.writeHead(204);
       response.end();
       return;
     }
 
     if (pairingRoute) {
+      if (!origin) { json(response, 403, { error: 'Invalid origin' }); return; }
       setCors(response, origin);
       if (request.method !== 'POST') { json(response, 405, { error: 'Pairing requires POST' }); return; }
       void readBody(request, 2048).then((body) => {
@@ -182,8 +187,8 @@ export class BrowserBridge {
       return;
     }
 
-    if (origin !== this.pairedOrigin) { json(response, 403, { error: 'Extension origin is not paired' }); return; }
-    setCors(response, origin);
+    if (!this.pairedOrigin || (origin && origin !== this.pairedOrigin)) { json(response, 403, { error: 'Extension origin is not paired' }); return; }
+    setCors(response, origin || this.pairedOrigin);
     const bearer = readBearer(request.headers.authorization);
     if (!bearer || !clientTokenMatches(bearer, this.tokenHash)) { json(response, 401, { error: 'Not paired' }); return; }
 

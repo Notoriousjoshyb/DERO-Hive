@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { SwarmRun, SwarmTask } from '@shared/types';
 import { useAppStore } from '../stores/app';
 
 const ACTIVE = new Set(['queued', 'running', 'verifying', 'synthesizing']);
 
 export function SwarmActivity({ conversationId }: { conversationId?: string }): JSX.Element | null {
-  const runs = useAppStore((state) => Object.values(state.swarmRuns));
-  const run = runs
+  const runs = useAppStore((state) => state.swarmRuns);
+  const run = useMemo(() => Object.values(runs)
     .filter((item) => item.conversationId === conversationId)
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0], [conversationId, runs]);
   const [openTask, setOpenTask] = useState<SwarmTask | null>(null);
   const [busy, setBusy] = useState(false);
 
