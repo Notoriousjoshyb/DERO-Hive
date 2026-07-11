@@ -619,16 +619,22 @@ describe('SwarmManager research pipeline', () => {
         '-C', repo, 'update-ref', 'refs/heads/main', ready.integrationHead!, ready.baseHead!
       ]);
 
-      let fail!: (run: import('../src/shared/types').SwarmRun) => void;
-      const failedPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { fail = resolve; });
+      let pause!: (run: import('../src/shared/types').SwarmRun) => void;
+      const pausedPromise = new Promise<import('../src/shared/types').SwarmRun>((resolve) => { pause = resolve; });
       const recovering = new SwarmManager((run) => {
-        if (run.id === ready.id && run.status === 'failed') fail(run);
+        if (run.id === ready.id && run.status === 'applying' && run.error?.includes('recovery paused')) pause(run);
       });
-      const failed = await failedPromise;
-      expect(recovering.get(ready.id)?.status).toBe('failed');
-      expect(failed.error).toMatch(/active executable Git attributes.*filter=swarmtest/);
+      const paused = await pausedPromise;
+      expect(recovering.get(ready.id)?.status).toBe('applying');
+      expect(paused.error).toMatch(/active executable Git attributes.*filter=swarmtest/);
       expect(existsSync(marker)).toBe(false);
       expect(existsSync(join(repo, 'victim.txt'))).toBe(false);
+
+      execFileSync('git', ['-C', repo, 'config', '--unset-all', 'filter.swarmtest.smudge']);
+      const applied = await recovering.apply(ready.id);
+      expect(applied.status).toBe('applied');
+      expect(existsSync(join(repo, 'victim.txt'))).toBe(true);
+      expect(existsSync(marker)).toBe(false);
     } finally {
       state.incomingDriverAttack = false;
       if (previousMarker === undefined) delete process.env.SWARM_INCOMING_MARKER;

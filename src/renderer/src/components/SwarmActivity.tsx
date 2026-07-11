@@ -46,6 +46,7 @@ export function SwarmActivity({ conversationId }: { conversationId?: string }): 
           {ACTIVE.has(run.status) && <Action label="Abort" disabled={busy} onClick={() => void command('abort')} />}
           {['interrupted', 'failed', 'aborted'].includes(run.status) && <Action label="Resume" disabled={busy} onClick={() => void command('resume')} />}
           {run.status === 'awaiting_apply' && <Action label="Apply" disabled={busy} onClick={() => void command('apply')} primary />}
+          {run.status === 'applying' && <Action label="Retry Apply" disabled={busy} onClick={() => void command('apply')} primary />}
         </div>
       </div>
 
@@ -70,6 +71,9 @@ export function SwarmActivity({ conversationId }: { conversationId?: string }): 
       {run.error && <div className="mt-2 rounded-lg border border-danger/30 bg-danger/10 p-2 text-xs text-danger">{run.error}</div>}
       {run.mode === 'build' && run.status === 'awaiting_apply' && (
         <p className="mt-2 text-[10px] text-warn">Changes remain on {run.integrationBranch}. Apply is refused if your branch, HEAD, or working tree changed.</p>
+      )}
+      {run.mode === 'build' && run.status === 'applying' && (
+        <p className="mt-2 text-[10px] text-warn">Apply is incomplete. Retry Apply resumes the persisted operation without moving the branch twice.</p>
       )}
 
       {openTask && <TaskDetails task={openTask} run={run} onClose={() => setOpenTask(null)} />}

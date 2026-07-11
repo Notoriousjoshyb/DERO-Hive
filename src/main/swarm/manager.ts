@@ -202,7 +202,16 @@ export class SwarmManager {
 
   async apply(id: string): Promise<SwarmRun> {
     const run = this.requireRun(id);
-    if (run.mode !== 'build' || run.status !== 'awaiting_apply') throw new Error('Only a finished build swarm can be applied');
+    if (run.mode !== 'build') throw new Error('Only a finished build swarm can be applied');
+    if (run.status === 'applying') {
+      try {
+        return await this.reconcileApplyingRun(id);
+      } catch (error) {
+        await this.persistApplyRecoveryError(id, error);
+        throw error;
+      }
+    }
+    if (run.status !== 'awaiting_apply') throw new Error('Only a finished build swarm can be applied');
     if (!run.integrationHead) throw new Error('Apply refused: reviewed integration commit is missing');
     await this.verifyBaseSnapshot(run);
     await ensureWorktree(run.repoRoot!, run.integrationPath!, run.integrationBranch!, run.integrationHead);
@@ -219,7 +228,12 @@ export class SwarmManager {
       this.emit(id);
       return this.requireRun(id);
     } catch (error) {
-      await this.reconcileApplyingRun(id);
+      try {
+        await this.reconcileApplyingRun(id);
+      } catch (recoveryError) {
+        await this.persistApplyRecoveryError(id, recoveryError);
+        throw recoveryError;
+      }
       throw error;
     }
   }
@@ -482,13 +496,26 @@ export class SwarmManager {
       try {
         await this.reconcileApplyingRun(id);
       } catch (error) {
-        const run = this.get(id);
-        if (run?.status === 'applying') {
-          this.setRun(id, 'failed', run.result, `Apply recovery stopped: ${errorMessage(error)}`, 'applying');
-          this.emit(id);
-        }
+        await this.persistApplyRecoveryError(id, error);
       }
     }
+  }
+
+  private async persistApplyRecoveryError(id: string, error: unknown): Promise<void> {
+    const run = this.get(id);
+    if (run?.status !== 'applying') return;
+    let terminal = !run.repoRoot || !run.baseBranch || !run.baseHead || !run.integrationHead;
+    if (!terminal) {
+      try {
+        const baseRef = await git(run.repoRoot!, 'rev-parse', '--verify', `refs/heads/${run.baseBranch!}`);
+        terminal = baseRef !== run.baseHead && baseRef !== run.integrationHead;
+      } catch {
+        terminal = false;
+      }
+    }
+    const message = `Apply recovery ${terminal ? 'stopped' : 'paused'}: ${errorMessage(error)}`;
+    this.setRun(id, terminal ? 'failed' : 'applying', run.result, message, 'applying');
+    this.emit(id);
   }
 
   private async reconcileApplyingRun(id: string): Promise<SwarmRun> {
@@ -499,7 +526,6 @@ export class SwarmManager {
     }
     const baseRef = await git(run.repoRoot, 'rev-parse', '--verify', `refs/heads/${run.baseBranch}`);
     if (baseRef === run.baseHead) {
-      await assertCleanRepository(run.repoRoot);
       this.setRun(id, 'awaiting_apply', run.result, undefined, 'applying');
       this.emit(id);
       return this.requireRun(id);
