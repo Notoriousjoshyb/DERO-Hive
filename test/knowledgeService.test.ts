@@ -11,14 +11,16 @@ const ALL_TOOLS = ['vault_list', 'vault_read', 'search_simple', 'vault_write', '
 
 function manager(toolNames = ALL_TOOLS) {
   let failWrite = false;
+  let connected = true;
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   return {
     calls,
     setFailWrite(value: boolean) { failWrite = value; },
-    getInstance: () => ({
+    setConnected(value: boolean) { connected = value; },
+    getInstance: () => connected ? ({
       status: 'connected',
       tools: toolNames.map((name) => ({ name, description: '', parameters: {}, source: 'mcp:obsidian' }))
-    }),
+    }) : undefined,
     async callTool(_serverId: string, name: string, args: Record<string, unknown>) {
       calls.push({ name, args });
       if (name === 'vault_write' && failWrite) {
@@ -92,5 +94,16 @@ describe('KnowledgeService', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM knowledge_outbox').get()).toEqual({ count: 0 });
     expect(mcp.calls.at(-1)?.name).toBe('vault_write');
     expect(mcp.calls.at(-1)?.args.path).toMatch(/^Hive\/Project\/Inbox\/Raw\//);
+  });
+
+  test('queues an approved capture while Obsidian is offline', async () => {
+    const mcp = manager();
+    mcp.setConnected(false);
+    const service = new KnowledgeService(mcp as never);
+
+    const captured = await service.capture({ projectId: 'p', content: 'offline thought' }, { automated: true });
+    expect(captured.queued).toBe(true);
+    expect(mcp.calls).toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM knowledge_outbox').get()).toEqual({ count: 1 });
   });
 });

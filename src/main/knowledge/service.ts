@@ -195,8 +195,12 @@ export class KnowledgeService {
   }
 
   async capture(input: KnowledgeCaptureRequest, options: KnowledgeWriteOptions = {}): Promise<KnowledgeCaptureResult> {
-    const context = this.context(input.projectId);
-    this.assertAutomation(context, options);
+    const project = this.project(input.projectId);
+    const knowledge = project.config.knowledge;
+    if (!knowledge) throw new Error('Project knowledge is not configured');
+    if (options.automated && !knowledge.allowAutomationWrites) {
+      throw new Error('Automated knowledge writes are disabled for this project');
+    }
     const content = requiredText(input.content, 'Capture content', MAX_CONTENT);
     const timestamp = new Date().toISOString();
     const path = `Inbox/Raw/${timestamp.replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}.md`;
@@ -208,6 +212,7 @@ export class KnowledgeService {
       '---', '', content, ''
     ].join('\n');
     try {
+      const context = this.context(input.projectId);
       await this.call(context, 'write', { path: scopedPath(context.folder, path), content: body });
       return { path, queued: false };
     } catch (error) {
