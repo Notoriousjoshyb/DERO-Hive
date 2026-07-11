@@ -64,6 +64,9 @@ describe('project config persistence', () => {
     expect(revokesKnowledgeWriteConsent(allowed, normalizeProjectConfig({
       knowledge: { provider: 'obsidian', serverId: 'obsidian', folder: 'Hive/DERO', allowAutomationWrites: false }
     }))).toBe(true);
+    const unlinked = normalizeProjectConfig({ ...allowed, knowledge: undefined });
+    expect(unlinked).not.toHaveProperty('knowledge');
+    expect(revokesKnowledgeWriteConsent(allowed, unlinked)).toBe(true);
     expect(revokesKnowledgeWriteConsent({}, allowed)).toBe(false);
   });
 });

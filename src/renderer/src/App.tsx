@@ -127,7 +127,7 @@ export default function App(): JSX.Element {
       <TitleBar />
       <div className="relative flex flex-1 overflow-hidden">
         {sidebarOpen && <Sidebar />}
-        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : projectCockpitId ? <ProjectCockpit projectId={projectCockpitId} /> : <ChatView />}
+        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : projectCockpitId ? <ProjectCockpit key={projectCockpitId} projectId={projectCockpitId} /> : <ChatView />}
         {visionOpen && <VisionPanel />}
         {companionOpen && <HiveCompanionPanel />}
         <RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} />

@@ -4,6 +4,7 @@ import type {
   KnowledgeAutomationKind,
   KnowledgeAutomationSaveRequest,
   KnowledgeAutomationStatus,
+  KnowledgeCapability,
   KnowledgeStatus,
   SimulatorStatus,
   SwarmRun
@@ -49,9 +50,22 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const [simulatorBusy, setSimulatorBusy] = useState(false);
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null);
-  const [automations, setAutomations] = useState<KnowledgeAutomationStatus[]>([]);
+  const [knowledgeError, setKnowledgeError] = useState('');
+  const [automations, setAutomations] = useState<KnowledgeAutomationStatus[] | null>(null);
+  const [automationError, setAutomationError] = useState('');
   const [vaultAction, setVaultAction] = useState('');
   const [vaultNotice, setVaultNotice] = useState('');
+
+  const knowledgeConfig = project?.config?.knowledge;
+  const vaultConfigured = !!knowledgeConfig?.serverId && !!knowledgeConfig.folder;
+  const vaultServer = mcpStatuses.find((server) => server.id === knowledgeConfig?.serverId);
+  const vaultConnectionKey = [
+    knowledgeConfig?.serverId || '',
+    knowledgeConfig?.folder || '',
+    vaultServer?.connected ? 'connected' : 'offline',
+    vaultServer?.error || '',
+    vaultServer?.tools.map((tool) => tool.name).sort().join(',') || ''
+  ].join('|');
 
   const automationModels = useMemo<AutomationModelOption[]>(() => providers
     .filter((provider) => provider.enabled)
@@ -126,21 +140,47 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
 
   useEffect(() => {
     let cancelled = false;
-    setKnowledge(null);
-    setAutomations([]);
     void window.hive.simulatorStatus().then((status) => { if (!cancelled) setSimulator(status); }).catch(() => {});
     void window.hive.integrationList().then((statuses) => { if (!cancelled) setIntegrations(statuses); }).catch(() => {});
-    void window.hive.knowledgeStatus?.(projectId).then((status) => { if (!cancelled) setKnowledge(status); }).catch(() => {});
-    void window.hive.knowledgeAutomationStatus(projectId).then((statuses) => { if (!cancelled) setAutomations(statuses); }).catch(() => {});
     const offSimulator = window.hive.onSimulatorStatus((status) => setSimulator(status));
     const offIntegrations = window.hive.onIntegrationChanged((status) => {
       setIntegrations((current) => [...current.filter((item) => item.id !== status.id), status]);
     });
-    const automationRefresh = window.setInterval(() => {
-      void window.hive.knowledgeAutomationStatus(projectId).then((statuses) => { if (!cancelled) setAutomations(statuses); }).catch(() => {});
-    }, 60_000);
-    return () => { cancelled = true; window.clearInterval(automationRefresh); offSimulator(); offIntegrations(); };
+    return () => { cancelled = true; offSimulator(); offIntegrations(); };
   }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setKnowledge(null);
+    setKnowledgeError('');
+    if (!vaultConfigured) return () => { cancelled = true; };
+    void window.hive.knowledgeStatus(projectId).then((status) => {
+      if (!cancelled) setKnowledge(status);
+    }).catch((error) => {
+      if (!cancelled) setKnowledgeError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, [projectId, vaultConfigured, vaultConnectionKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAutomations(null);
+    setAutomationError('');
+    if (!vaultConfigured) {
+      setAutomations([]);
+      return () => { cancelled = true; };
+    }
+    const refresh = (): void => {
+      void window.hive.knowledgeAutomationStatus(projectId).then((statuses) => {
+        if (!cancelled) { setAutomations(statuses); setAutomationError(''); }
+      }).catch((error) => {
+        if (!cancelled) setAutomationError(error instanceof Error ? error.message : String(error));
+      });
+    };
+    refresh();
+    const automationRefresh = window.setInterval(refresh, 60_000);
+    return () => { cancelled = true; window.clearInterval(automationRefresh); };
+  }, [projectId, vaultConfigured]);
 
   if (!project) {
     return (
@@ -157,13 +197,26 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   const kind = project.config?.kind || 'general';
   const assignedMcp = mcpStatuses.filter((server) => project.config?.mcpServerIds?.includes(server.id));
   const connectedMcp = assignedMcp.filter((server) => server.connected).length;
-  const vaultServer = mcpStatuses.find((server) => server.id === project.config?.knowledge?.serverId);
-  const vaultConfigured = !!project.config?.knowledge?.serverId && !!project.config?.knowledge?.folder;
-  const vaultState = knowledge
-    ? !knowledge.configured ? 'unconfigured' : !knowledge.connected ? 'offline' : knowledge.missing.length ? 'error' : 'ready'
-    : vaultConfigured ? (vaultServer?.connected ? 'ready' : 'offline') : 'unconfigured';
+  const vaultState = !vaultConfigured
+    ? 'unconfigured'
+    : knowledgeError
+      ? 'error'
+      : !knowledge
+        ? 'loading'
+        : !knowledge.configured
+          ? 'unconfigured'
+          : !knowledge.connected
+            ? 'offline'
+            : knowledge.missing.length
+              ? 'limited'
+              : 'ready';
   const automationApproved = vaultConfigured && !!project.config?.knowledge?.allowAutomationWrites;
-  const automationReady = automationApproved && vaultState === 'ready';
+  const hasCapabilities = (...required: KnowledgeCapability[]): boolean =>
+    !!knowledge?.connected && required.every((capability) => knowledge.capabilities.includes(capability));
+  const canBootstrap = automationApproved && hasCapabilities('read', 'write');
+  const canRetryCaptures = automationApproved && hasCapabilities('write');
+  const canRunAutomation = automationApproved && hasCapabilities('list', 'read', 'write', 'append');
+  const canOpenAutomation = hasCapabilities('open');
 
   const enterProjectChat = async (title = 'New chat'): Promise<string> => {
     const existing = projectConversations[0];
@@ -212,11 +265,13 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
       window.hive.knowledgeAutomationStatus(projectId)
     ]);
     setKnowledge(status);
+    setKnowledgeError('');
     setAutomations(schedules);
+    setAutomationError('');
   };
 
   const initializeVault = async (): Promise<void> => {
-    if (!automationReady || vaultAction) return;
+    if (!canBootstrap || vaultAction) return;
     setVaultAction('bootstrap');
     setVaultNotice('');
     try {
@@ -233,7 +288,7 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   };
 
   const retryQueuedCaptures = async (): Promise<void> => {
-    if (!automationReady || vaultAction) return;
+    if (!canRetryCaptures || vaultAction) return;
     setVaultAction('outbox');
     setVaultNotice('');
     try {
@@ -248,30 +303,34 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
     }
   };
 
-  const saveAutomation = async (input: KnowledgeAutomationSaveRequest): Promise<void> => {
-    if (!automationApproved || vaultAction) return;
+  const saveAutomation = async (input: KnowledgeAutomationSaveRequest): Promise<boolean> => {
+    if (!automationApproved || vaultAction) return false;
     setVaultAction(`save:${input.kind}`);
     setVaultNotice('');
     try {
       await window.hive.knowledgeAutomationSave(input);
       setVaultNotice(`${automationLabel(input.kind)} schedule saved.`);
       await refreshVault();
+      return true;
     } catch (error) {
       setVaultNotice(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       setVaultAction('');
     }
   };
 
   const runAutomation = async (kind: KnowledgeAutomationKind): Promise<void> => {
-    if (!automationReady || vaultAction) return;
+    if (!canRunAutomation || vaultAction) return;
     setVaultAction(`run:${kind}`);
     setVaultNotice('');
     try {
       const result = await window.hive.knowledgeAutomationRunNow(projectId, kind);
       setVaultNotice(result.status === 'completed'
         ? `${automationLabel(kind)} written to ${result.path}.`
-        : `${automationLabel(kind)} already exists for ${result.runKey}.`);
+        : result.path
+          ? `${automationLabel(kind)} already exists at ${result.path}.`
+          : `${automationLabel(kind)} is already running.`);
       await refreshVault();
     } catch (error) {
       setVaultNotice(error instanceof Error ? error.message : String(error));
@@ -281,7 +340,7 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
   };
 
   const openAutomation = async (automation: KnowledgeAutomationStatus): Promise<void> => {
-    if (vaultState !== 'ready' || !automation.lastRunKey) return;
+    if (!canOpenAutomation || !automation.lastRunKey || !automation.lastRunAt || automation.error) return;
     const path = automation.kind === 'morning-digest'
       ? `Daily/${automation.lastRunKey}.md`
       : `Weekly/${automation.lastRunKey}.md`;
@@ -320,7 +379,7 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
             <div className="absolute left-[12.5%] right-[12.5%] top-[30px] hidden border-t border-border sm:block" aria-hidden="true" />
             <EvidenceNode label="Git" value={git.state === 'ready' ? git.branch || 'detached' : git.state === 'loading' ? 'checking' : 'not linked'} tone={git.state === 'ready' ? (git.changes ? 'warn' : 'good') : 'muted'} />
             <EvidenceNode label="Working set" value={`${projectConversations.length} thread${projectConversations.length === 1 ? '' : 's'}`} tone={projectConversations.length ? 'good' : 'muted'} />
-            <EvidenceNode label="Vault" value={vaultState === 'ready' ? 'linked' : vaultState.replaceAll('_', ' ')} tone={vaultState === 'ready' ? 'good' : vaultState === 'error' || vaultState === 'offline' ? 'warn' : 'muted'} />
+            <EvidenceNode label="Vault" value={vaultState === 'ready' ? 'linked' : vaultState.replaceAll('_', ' ')} tone={vaultState === 'ready' ? 'good' : vaultState === 'error' || vaultState === 'offline' || vaultState === 'limited' ? 'warn' : 'muted'} />
             <EvidenceNode label="Project MCP" value={`${connectedMcp}/${assignedMcp.length} online`} tone={assignedMcp.length && connectedMcp === assignedMcp.length ? 'good' : assignedMcp.length ? 'warn' : 'muted'} />
           </div>
 
@@ -395,23 +454,23 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
 
               <BoardPanel eyebrow="Knowledge" title="Obsidian vault" action={<button onClick={openProjectSettings} className="text-[10px] text-fg-subtle hover:text-accent">Configure</button>}>
                 <div className="flex items-start gap-3">
-                  <StatusMark tone={vaultState === 'ready' ? 'good' : vaultState === 'offline' || vaultState === 'error' ? 'warn' : 'muted'} />
+                  <StatusMark tone={vaultState === 'ready' ? 'good' : vaultState === 'offline' || vaultState === 'error' || vaultState === 'limited' ? 'warn' : 'muted'} />
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-fg">{vaultState === 'ready' ? 'Vault ready' : vaultState === 'offline' ? 'Server offline' : vaultState === 'error' ? 'Vault error' : 'Vault not linked'}</p>
+                    <p className="text-xs font-medium text-fg">{vaultState === 'ready' ? 'Vault ready' : vaultState === 'loading' ? 'Checking vault' : vaultState === 'offline' ? 'Server offline' : vaultState === 'limited' ? 'Limited capabilities' : vaultState === 'error' ? 'Vault error' : 'Vault not linked'}</p>
                     <p className="mt-1 truncate font-mono text-[10px] text-fg-subtle">{project.config?.knowledge?.folder || 'Choose a server and folder'}</p>
-                    {knowledge?.error && <p className="mt-1 text-[10px] text-danger">{knowledge.error}</p>}
+                    {(knowledgeError || knowledge?.error) && <p className="mt-1 text-[10px] text-danger">{knowledgeError || knowledge?.error}</p>}
                   </div>
                 </div>
                 {vaultConfigured && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       onClick={() => void initializeVault()}
-                      disabled={!automationReady || !!vaultAction}
+                      disabled={!canBootstrap || !!vaultAction}
                       className="rounded-md border border-border bg-bg-input px-2 py-1 text-[10px] font-medium text-fg-muted hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
                     >{vaultAction === 'bootstrap' ? 'Initializing…' : 'Initialize vault'}</button>
                     <button
                       onClick={() => void retryQueuedCaptures()}
-                      disabled={!automationReady || !!vaultAction}
+                      disabled={!canRetryCaptures || !!vaultAction}
                       className="rounded-md border border-border bg-bg-input px-2 py-1 text-[10px] font-medium text-fg-muted hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
                     >{vaultAction === 'outbox' ? 'Retrying…' : 'Retry queued'}</button>
                   </div>
@@ -425,7 +484,8 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
               <BoardPanel eyebrow="Vault rhythm" title="Daily & weekly jobs">
                 {!vaultConfigured ? <PanelNote>Link an Obsidian folder to this project first.</PanelNote> : (
                   <div className="space-y-3">
-                    {(['morning-digest', 'weekly-synthesis'] as const).map((kind) => (
+                    {automationError && <p className="text-xs leading-relaxed text-danger" role="alert">{automationError}</p>}
+                    {automations === null ? (automationError ? null : <PanelNote>Loading vault jobs…</PanelNote>) : (['morning-digest', 'weekly-synthesis'] as const).map((kind) => (
                       <VaultAutomationRow
                         key={kind}
                         projectId={projectId}
@@ -434,8 +494,8 @@ export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Elemen
                         models={automationModels}
                         defaultModel={selectedAutomationModel}
                         canSave={automationApproved}
-                        canRun={automationReady}
-                        canOpen={vaultState === 'ready'}
+                        canRun={canRunAutomation}
+                        canOpen={canOpenAutomation}
                         busy={!!vaultAction}
                         onSave={saveAutomation}
                         onRun={runAutomation}
@@ -493,7 +553,7 @@ function VaultAutomationRow({
   canRun: boolean;
   canOpen: boolean;
   busy: boolean;
-  onSave: (input: KnowledgeAutomationSaveRequest) => Promise<void>;
+  onSave: (input: KnowledgeAutomationSaveRequest) => Promise<boolean>;
   onRun: (kind: KnowledgeAutomationKind) => Promise<void>;
   onOpen: (automation: KnowledgeAutomationStatus) => Promise<void>;
 }): JSX.Element {
@@ -504,8 +564,15 @@ function VaultAutomationRow({
   const [modelValue, setModelValue] = useState(status
     ? JSON.stringify([status.providerId, status.model])
     : defaultModel?.value || '');
+  const [dirty, setDirty] = useState(false);
+  const label = automationLabel(kind);
+  const titleId = `vault-automation-${kind}`;
+  const errorId = `${titleId}-error`;
+  const statusModelValue = status ? JSON.stringify([status.providerId, status.model]) : '';
+  const statusModelUnavailable = !!status && !models.some((model) => model.value === statusModelValue);
 
   useEffect(() => {
+    if (dirty) return;
     if (status) {
       setEnabled(status.enabled);
       setTime(formatAutomationTime(status.localHour, status.localMinute));
@@ -514,13 +581,16 @@ function VaultAutomationRow({
     } else if (defaultModel) {
       setModelValue((current) => current || defaultModel.value);
     }
-  }, [defaultModel, status]);
+  }, [canSave, defaultModel, dirty, status]);
 
   const save = async (): Promise<void> => {
-    const selected = models.find((model) => model.value === modelValue);
+    const selected = models.find((model) => model.value === modelValue)
+      || (!enabled && status && modelValue === statusModelValue
+        ? { providerId: status.providerId, model: status.model }
+        : undefined);
     const match = /^(\d{2}):(\d{2})$/.exec(time);
     if (!selected || !match) return;
-    await onSave({
+    const saved = await onSave({
       projectId,
       kind,
       enabled,
@@ -530,19 +600,26 @@ function VaultAutomationRow({
       providerId: selected.providerId,
       model: selected.model
     });
+    if (saved) setDirty(false);
   };
 
   return (
-    <div className="rounded-lg border border-border bg-bg-input/50 p-3">
+    <div
+      role="group"
+      aria-labelledby={titleId}
+      aria-describedby={status?.error ? errorId : undefined}
+      aria-busy={busy || status?.running}
+      className="rounded-lg border border-border bg-bg-input/50 p-3"
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-xs font-medium text-fg">{automationLabel(kind)}</div>
+          <div id={titleId} className="text-xs font-medium text-fg">{label}</div>
           <div className="mt-0.5 text-[9px] text-fg-subtle">
             {status?.running ? 'Running now' : status?.lastRunAt ? `Last run ${relativeTime(status.lastRunAt)}` : 'Not run yet'}
           </div>
         </div>
         <label className="flex items-center gap-1.5 text-[10px] text-fg-muted">
-          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={!canSave || busy} className="accent-accent" />
+          <input aria-label={`${label} enabled`} type="checkbox" checked={enabled} onChange={(event) => { setEnabled(event.target.checked); setDirty(true); }} disabled={!canSave || busy} className="accent-accent" />
           Enabled
         </label>
       </div>
@@ -552,7 +629,7 @@ function VaultAutomationRow({
           <select
             aria-label="Weekly synthesis weekday"
             value={weekday}
-            onChange={(event) => setWeekday(Number(event.target.value))}
+            onChange={(event) => { setWeekday(Number(event.target.value)); setDirty(true); }}
             disabled={!canSave || busy}
             className="min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
           >
@@ -560,31 +637,32 @@ function VaultAutomationRow({
           </select>
         )}
         <input
-          aria-label={`${automationLabel(kind)} local time`}
+          aria-label={`${label} local time`}
           type="time"
           value={time}
-          onChange={(event) => setTime(event.target.value)}
+          onChange={(event) => { setTime(event.target.value); setDirty(true); }}
           disabled={!canSave || busy}
           className="min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
         />
       </div>
 
       <select
-        aria-label={`${automationLabel(kind)} model`}
+        aria-label={`${label} model`}
         value={modelValue}
-        onChange={(event) => setModelValue(event.target.value)}
-        disabled={!canSave || busy || models.length === 0}
+        onChange={(event) => { setModelValue(event.target.value); setDirty(true); }}
+        disabled={!canSave || busy || (models.length === 0 && !statusModelUnavailable)}
         className="mt-2 w-full min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
       >
-        {models.length === 0 && <option value="">No enabled model</option>}
+        {models.length === 0 && !statusModelUnavailable && <option value="">No enabled model</option>}
+        {statusModelUnavailable && <option value={statusModelValue}>{status?.providerId} — {status?.model} (unavailable)</option>}
         {models.map((model) => <option key={model.value} value={model.value}>{model.label}</option>)}
       </select>
 
-      {status?.error && <p className="mt-2 text-[9px] leading-relaxed text-danger">{status.error}</p>}
+      {status?.error && <p id={errorId} className="mt-2 text-[9px] leading-relaxed text-danger">{status.error}</p>}
       <div className="mt-2 flex flex-wrap gap-2">
-        <button onClick={() => void save()} disabled={!canSave || busy || !models.some((model) => model.value === modelValue) || !/^\d{2}:\d{2}$/.test(time)} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Save</button>
-        <button onClick={() => void onRun(kind)} disabled={!canRun || busy || !status} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Run now</button>
-        {status?.lastRunKey && <button onClick={() => void onOpen(status)} disabled={!canOpen || busy} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Open note</button>}
+        <button aria-label={`Save ${label} schedule`} onClick={() => void save()} disabled={!canSave || busy || !(models.some((model) => model.value === modelValue) || (!enabled && statusModelUnavailable && modelValue === statusModelValue)) || !/^\d{2}:\d{2}$/.test(time)} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Save</button>
+        <button aria-label={`Run ${label} now`} onClick={() => void onRun(kind)} disabled={!canRun || busy || !status || status.running} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Run now</button>
+        {status?.lastRunKey && status.lastRunAt && !status.error && <button aria-label={`Open ${label} note`} onClick={() => void onOpen(status)} disabled={!canOpen || busy} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Open note</button>}
       </div>
     </div>
   );

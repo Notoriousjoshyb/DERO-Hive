@@ -65,6 +65,7 @@ export function ProjectsPanel(): JSX.Element {
 
   const updateKnowledge = (patch: Partial<NonNullable<NonNullable<Project['config']>['knowledge']>>): void => {
     if (!editing) return;
+    if (patch.serverId === '') { updateConfig({ knowledge: undefined }); return; }
     const current = editing.config?.knowledge || { provider: 'obsidian' as const, serverId: '', folder: '' };
     updateConfig({ knowledge: { ...current, ...patch } });
   };
@@ -183,6 +184,7 @@ export function ProjectsPanel(): JSX.Element {
                 id="project-vault-folder"
                 value={editing.config?.knowledge?.folder || ''}
                 onChange={(event) => updateKnowledge({ folder: event.target.value })}
+                disabled={!editing.config?.knowledge?.serverId}
                 className="input mt-1 w-full font-mono text-xs"
                 placeholder="projects/my-project"
               />
@@ -192,6 +194,7 @@ export function ProjectsPanel(): JSX.Element {
                 type="checkbox"
                 checked={editing.config?.knowledge?.allowAutomationWrites === true}
                 onChange={(event) => updateKnowledge({ allowAutomationWrites: event.target.checked })}
+                disabled={!editing.config?.knowledge?.serverId}
                 className="mt-0.5 accent-accent"
               />
               <span>Allow automation writes after the normal approval step.</span>
