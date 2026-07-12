@@ -6,6 +6,9 @@ export function ProjectsPanel(): JSX.Element {
   const projects = useAppStore((s) => s.projects);
   const saveProject = useAppStore((s) => s.saveProject);
   const deleteProject = useAppStore((s) => s.deleteProject);
+  const mcpStatuses = useAppStore((s) => s.mcpStatuses);
+  const openProjectCockpit = useAppStore((s) => s.openProjectCockpit);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const [editing, setEditing] = useState<Project | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -55,6 +58,20 @@ export function ProjectsPanel(): JSX.Element {
   const handleBrowse = async (): Promise<void> => {
     const dir = await window.hive.fsPickDirectory();
     if (dir && editing) setEditing({ ...editing, path: dir });
+  };
+
+  const updateKnowledge = (patch: Partial<NonNullable<NonNullable<Project['config']>['knowledge']>>): void => {
+    if (!editing) return;
+    const updateConfig = (knowledge: NonNullable<Project['config']>['knowledge']): void =>
+      setEditing({ ...editing, config: { ...editing.config, knowledge } });
+    if (patch.serverId === '') { updateConfig(undefined); return; }
+    const current = editing.config?.knowledge || { provider: 'obsidian' as const, serverId: '', folder: '' };
+    updateConfig({ ...current, ...patch });
+  };
+
+  const openCockpit = (id: string): void => {
+    setSettingsOpen(false);
+    openProjectCockpit(id);
   };
 
   return (
@@ -113,6 +130,45 @@ export function ProjectsPanel(): JSX.Element {
               <button onClick={handleBrowse} className="btn-secondary">Browse…</button>
             </div>
           </div>
+
+          <fieldset className="rounded-lg border border-border p-3 space-y-3">
+            <legend className="px-1 text-sm font-medium text-fg">Obsidian knowledge</legend>
+            <div>
+              <label className="text-sm text-fg-subtle">Vault MCP server</label>
+              <select
+                value={editing.config?.knowledge?.serverId || ''}
+                onChange={(e) => updateKnowledge({ serverId: e.target.value })}
+                className="input w-full mt-1"
+              >
+                <option value="">Not linked</option>
+                {mcpStatuses.map((server) => (
+                  <option key={server.id} value={server.id}>{server.name}{server.connected ? '' : ' (offline)'}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-fg-subtle">Vault folder (relative to the vault root)</label>
+              <input
+                type="text"
+                value={editing.config?.knowledge?.folder || ''}
+                onChange={(e) => updateKnowledge({ folder: e.target.value })}
+                disabled={!editing.config?.knowledge?.serverId}
+                className="input w-full mt-1 font-mono text-xs disabled:opacity-50"
+                placeholder="Projects/My Project"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-fg-subtle">
+              <input
+                type="checkbox"
+                checked={editing.config?.knowledge?.allowAutomationWrites === true}
+                onChange={(e) => updateKnowledge({ allowAutomationWrites: e.target.checked })}
+                disabled={!editing.config?.knowledge?.serverId}
+                className="accent-accent"
+              />
+              Allow automatic writes (captures, daily digest, weekly synthesis)
+            </label>
+          </fieldset>
+
           {formError && (
             <div className="text-sm text-danger">{formError}</div>
           )}
@@ -134,6 +190,7 @@ export function ProjectsPanel(): JSX.Element {
               <div className="text-xs text-fg-subtle truncate font-mono">{p.path}</div>
             </div>
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
+              <button onClick={() => openCockpit(p.id)} className="px-2 py-1 text-xs rounded hover:bg-bg-elev">Cockpit</button>
               <button onClick={() => handleEdit(p)} className="px-2 py-1 text-xs rounded hover:bg-bg-elev">Edit</button>
               <button onClick={() => void handleDelete(p.id)} className="px-2 py-1 text-xs rounded hover:bg-bg-elev text-danger">Delete</button>
             </div>

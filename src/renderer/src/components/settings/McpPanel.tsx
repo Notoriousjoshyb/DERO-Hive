@@ -74,7 +74,7 @@ export function McpPanel(): JSX.Element {
           <p className="text-xs text-fg-muted mt-1">Model Context Protocol — give the model access to external tools, data, and prompts.</p>
         </div>
         <button
-          onClick={() => setEditing({ id: `mcp-${Date.now()}`, name: '', enabled: true, command: '', args: [], env: {} })}
+          onClick={() => setEditing({ id: `mcp-${Date.now()}`, name: '', enabled: true, transport: 'stdio', command: '', args: [], env: {} })}
           className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium shadow-elev-sm transition"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M6 2v8M2 6h8" /></svg>
@@ -133,6 +133,7 @@ export function McpPanel(): JSX.Element {
           id: `mcp-${Date.now()}`,
           name: entry.name,
           enabled: true,
+          transport: 'stdio',
           command: entry.command,
           args: [...entry.args],
           env: { ...(entry.env || {}) }
@@ -193,10 +194,15 @@ function DiscoverSection({ installedNames, onAdd }: {
   );
 }
 
-function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: () => void; onSaved: () => void }): JSX.Element {
+export function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: () => void; onSaved: () => void }): JSX.Element {
   const [c, setC] = useState<McpServerConfig>(cfg);
-  const [envText, setEnvText] = useState(Object.entries(c.env || {}).map(([k, v]) => `${k}=${v}`).join('\n'));
+  const [envText, setEnvText] = useState(
+    Object.entries(c.env || {}).map(([k, v]) => `${k}=${v}`).join('\n')
+      || (c.envKeys || []).map((key) => `${key}=`).join('\n')
+  );
   const [argsText, setArgsText] = useState((c.args || []).join(' '));
+  const [bearerToken, setBearerToken] = useState('');
+  const isHttp = c.transport === 'http';
 
   const save = async (): Promise<void> => {
     const env: Record<string, string> = {};
@@ -205,11 +211,11 @@ function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: (
       if (k) env[k.trim()] = rest.join('=').trim();
     });
     const args = argsText.split(/\s+/).filter(Boolean);
-    await window.hive.mcpSave({ ...c, env, args });
+    await window.hive.mcpSave({ ...c, env, args, ...(bearerToken ? { bearerToken } : {}) });
     onSaved();
   };
 
-  const canSave = c.name.trim().length > 0 && c.command.trim().length > 0;
+  const canSave = c.name.trim().length > 0 && (isHttp ? (c.url || '').trim().length > 0 : (c.command || '').trim().length > 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
@@ -224,13 +230,51 @@ function McpEditor({ cfg, onClose, onSaved }: { cfg: McpServerConfig; onClose: (
           <Field label="Name">
             <input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} placeholder="e.g. Filesystem" className="settings-input w-full" autoFocus />
           </Field>
-          <Field label="Command">
-            <input value={c.command} onChange={(e) => setC({ ...c, command: e.target.value })} placeholder="npx, python, node…" className="settings-input w-full font-mono text-xs" />
+          <Field label="Transport">
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-bg/70 p-1">
+              {(['stdio', 'http'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setC({ ...c, transport: t })}
+                  className={`rounded-md px-2 py-1.5 text-xs font-medium transition ${(c.transport ?? 'stdio') === t ? 'bg-accent text-white shadow-sm' : 'text-fg-muted hover:bg-bg-elev hover:text-fg'}`}
+                >
+                  {t === 'stdio' ? 'Local command' : 'Remote (HTTP)'}
+                </button>
+              ))}
+            </div>
           </Field>
-          <Field label="Arguments (space separated)" hint="e.g. -y @modelcontextprotocol/server-filesystem C:\\Users\\you\\projects">
-            <input value={argsText} onChange={(e) => setArgsText(e.target.value)} placeholder="-y @modelcontextprotocol/server-filesystem …" className="settings-input w-full font-mono text-xs" />
-          </Field>
-          <Field label="Environment (KEY=VALUE per line)" hint="Useful for API keys, PYTHONPATH, etc.">
+          {isHttp ? (
+            <>
+              <Field label="Server URL" hint="Loopback (127.0.0.1/localhost) may use http://; anything else requires https://">
+                <input value={c.url || ''} onChange={(e) => setC({ ...c, url: e.target.value })} placeholder="https://example.com/mcp" className="settings-input w-full font-mono text-xs" />
+              </Field>
+              <Field label="Bearer token" hint={c.hasBearerToken ? 'A token is already saved — leave blank to keep it.' : 'Optional; sent as Authorization: Bearer <token>'}>
+                <input
+                  type="password"
+                  value={bearerToken}
+                  onChange={(e) => { setBearerToken(e.target.value); setC({ ...c, clearBearerToken: false }); }}
+                  placeholder={c.hasBearerToken ? '••••••••' : 'token'}
+                  className="settings-input w-full font-mono text-xs"
+                />
+                {c.hasBearerToken && (
+                  <button type="button" onClick={() => setC({ ...c, clearBearerToken: true })} className="mt-1 text-[10px] font-medium text-danger hover:underline">
+                    {c.clearBearerToken ? 'Token will be cleared on save' : 'Clear saved token'}
+                  </button>
+                )}
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field label="Command">
+                <input value={c.command || ''} onChange={(e) => setC({ ...c, command: e.target.value })} placeholder="npx, python, node…" className="settings-input w-full font-mono text-xs" />
+              </Field>
+              <Field label="Arguments (space separated)" hint="e.g. -y @modelcontextprotocol/server-filesystem C:\\Users\\you\\projects">
+                <input value={argsText} onChange={(e) => setArgsText(e.target.value)} placeholder="-y @modelcontextprotocol/server-filesystem …" className="settings-input w-full font-mono text-xs" />
+              </Field>
+            </>
+          )}
+          <Field label="Environment (KEY=VALUE per line)" hint="Useful for API keys, PYTHONPATH, etc. Stored encrypted; leave a value blank to keep the saved one.">
             <textarea value={envText} onChange={(e) => setEnvText(e.target.value)} rows={4} placeholder="API_KEY=…" className="settings-input w-full font-mono text-xs resize-y" />
           </Field>
           <div className="flex items-center justify-between py-1">

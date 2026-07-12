@@ -2,29 +2,37 @@ import { useState } from 'react';
 import { GeneralPanel } from './GeneralPanel';
 import { ProvidersPanel } from './ProvidersPanel';
 import { McpPanel } from './McpPanel';
+import { DiscoverPanel } from './DiscoverPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { ToolsPanel } from './ToolsPanel';
 import { ProjectsPanel } from './ProjectsPanel';
 import { PromptsPanel } from './PromptsPanel';
+import { useAppStore } from '../../stores/app';
 
 interface Props {
   onClose: () => void;
 }
 
-type Tab = 'general' | 'providers' | 'mcp' | 'skills' | 'prompts' | 'tools' | 'projects';
+type Tab = 'general' | 'providers' | 'mcp' | 'discover' | 'skills' | 'prompts' | 'tools' | 'projects';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'providers', label: 'Providers' },
   { id: 'projects', label: 'Projects' },
   { id: 'mcp', label: 'MCP Servers' },
+  { id: 'discover', label: 'Discover' },
   { id: 'skills', label: 'Skills' },
   { id: 'prompts', label: 'Prompts' },
   { id: 'tools', label: 'Tools & Permissions' }
 ];
 
+function isTab(value: unknown): value is Tab {
+  return typeof value === 'string' && TABS.some((t) => t.id === value);
+}
+
 export function SettingsModal({ onClose }: Props): JSX.Element {
-  const [tab, setTab] = useState<Tab>('general');
+  const initialTab = useAppStore((s) => s.settingsInitialTab);
+  const [tab, setTab] = useState<Tab>(isTab(initialTab) ? initialTab : 'general');
 
   return (
     <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-6 animate-fade-in" onClick={onClose}>
@@ -66,6 +74,7 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
             {tab === 'providers' && <ProvidersPanel />}
             {tab === 'projects' && <ProjectsPanel />}
             {tab === 'mcp' && <McpPanel />}
+            {tab === 'discover' && <DiscoverPanel />}
             {tab === 'skills' && <SkillsPanel />}
             {tab === 'prompts' && <PromptsPanel />}
             {tab === 'tools' && <ToolsPanel />}

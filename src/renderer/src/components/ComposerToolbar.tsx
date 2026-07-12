@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/app';
-import type { ProviderModel } from '@shared/types';
+import type { ProviderModel, ToolApprovalMode } from '@shared/types';
 import { thinkingOptionsFor, usesDefaultThinkingOptions } from '@shared/thinkingCapabilities';
 import { BUILTIN_AGENTS, resolveAgent } from '@shared/agents';
 import { VoiceInput } from './VoiceInput';
@@ -93,14 +93,15 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   }, []);
 
   const cyclePermMode = async (): Promise<void> => {
-    const order: Array<'always' | 'project' | 'never'> = ['always', 'project', 'never'];
+    const order: ToolApprovalMode[] = ['always', 'session', 'project', 'never'];
     const cur = settings.toolApprovalMode || 'always';
     const next = order[(order.indexOf(cur) + 1) % order.length];
     await useAppStore.getState().updateSettings({ toolApprovalMode: next });
   };
 
   const permLabel = settings.toolApprovalMode === 'never' ? 'No approval'
-    : settings.toolApprovalMode === 'project' ? 'Ask once/session'
+    : settings.toolApprovalMode === 'project' ? 'Ask once/project'
+    : settings.toolApprovalMode === 'session' ? 'Ask once/conversation'
     : 'Always ask';
 
   const loadCodexThinking = async (): Promise<void> => {
@@ -155,13 +156,13 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
           {permMenuOpen && (
             <div className="absolute bottom-full left-0 mb-1 menu-panel overflow-hidden min-w-52 z-50">
               <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Tool approval</div>
-              {(['always', 'project', 'never'] as const).map((mode) => (
+              {(['always', 'session', 'project', 'never'] as const).map((mode) => (
                 <button
                   key={mode}
                   onClick={async () => { await useAppStore.getState().updateSettings({ toolApprovalMode: mode }); closeAll(); }}
                   className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-bg-input ${settings.toolApprovalMode === mode ? 'text-accent' : 'text-fg'}`}
                 >
-                  <span>{mode === 'always' ? 'Always ask' : mode === 'project' ? 'Ask once per session' : 'Never ask (trust all)'}</span>
+                  <span>{mode === 'always' ? 'Always ask' : mode === 'session' ? 'Ask once per conversation' : mode === 'project' ? 'Ask once per project' : 'Never ask (trust all)'}</span>
                   {settings.toolApprovalMode === mode && <CheckMark />}
                 </button>
               ))}

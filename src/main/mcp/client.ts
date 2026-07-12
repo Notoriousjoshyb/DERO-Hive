@@ -1,11 +1,11 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolDefinition } from '@shared/types';
 
 export interface McpServerInstance {
   id: string;
   client: Client;
-  transport: StdioClientTransport;
+  transport: Transport;
   status: 'connecting' | 'connected' | 'error' | 'disconnected';
   error?: string;
   /** Mirrors McpServerConfig.trust — tools from an untrusted server need approval. */

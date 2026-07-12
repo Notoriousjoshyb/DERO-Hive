@@ -1,4 +1,4 @@
-import type { ToolDefinition, PermissionRule } from '@shared/types';
+import { normalizeToolApprovalMode, type ToolApprovalMode, type ToolDefinition, type PermissionRule } from '@shared/types';
 import { EventEmitter } from 'node:events';
 import { getDb, getSetting } from '../db/client';
 import { BUILTIN_TOOLS, builtinExecutors } from './builtin';
@@ -22,13 +22,19 @@ export interface PermissionRequest {
   toolName: string;
   args: Record<string, unknown>;
   description?: string;
+  conversationId?: string;
 }
 
 type Decision = 'allow' | 'deny';
 
 export class ToolRegistry extends EventEmitter {
   private executors = new Map<string, ToolExecutor>();
-  private pendingRequests = new Map<string, { resolve: (d: Decision) => void; rule: PermissionRule }>();
+  private pendingRequests = new Map<string, {
+    resolve: (d: Decision) => void;
+    grantKey?: string;
+    explicitAsk: boolean;
+  }>();
+  private scopedAllow = new Set<string>();
 
   constructor(private mcpManager: McpManager | null) {
     super();
@@ -56,10 +62,14 @@ export class ToolRegistry extends EventEmitter {
     }
     // An explicit `ask` rule always prompts. With no rule, sensitive built-ins
     // prompt, and so does any tool from an MCP server the user has not trusted.
-    const needsApproval = rule?.action === 'ask'
-      || (!rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted)));
-    if (needsApproval) {
-      const allowed = await this.requestPermission({ requestId: cryptoRandom(), toolName: name, args });
+    const implicitRisk = !rule && (this.requiresApproval(name) || (mcp !== null && !mcp.trusted));
+    if (rule?.action === 'ask' || implicitRisk) {
+      const allowed = await this.authorize({
+        requestId: cryptoRandom(),
+        toolName: name,
+        args,
+        description: mcp?.serverName ? `MCP server: ${mcp.serverName}` : undefined
+      }, ctx, rule?.action === 'ask');
       if (!allowed) return { content: `User denied: ${name}`, isError: true };
     }
 
@@ -76,7 +86,11 @@ export class ToolRegistry extends EventEmitter {
         const content = Array.isArray(result.content)
           ? (result.content as Array<{ type: string; text?: string }>).map((c) => c.text || JSON.stringify(c)).join('\n')
           : String(result.content);
-        return { content, isError: result.isError };
+        return {
+          content,
+          isError: result.isError,
+          meta: { source: `mcp:${mcp.serverId}`, serverName: mcp.serverName }
+        };
       } catch (err) {
         return { content: `MCP tool error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
       }
@@ -135,27 +149,54 @@ export class ToolRegistry extends EventEmitter {
   decidePermission(requestId: string, decision: Decision): void {
     const p = this.pendingRequests.get(requestId);
     if (p) {
+      if (decision === 'allow' && !p.explicitAsk && p.grantKey) this.scopedAllow.add(p.grantKey);
       p.resolve(decision);
       this.pendingRequests.delete(requestId);
     }
   }
 
   private requiresApproval(name: string): boolean {
-    // Honor toolApprovalMode from settings: 'never' → no prompts at all, 'always' → ask for sensitive tools
-    const mode = (getSetting<{ toolApprovalMode?: 'always' | 'project' | 'never' }>('appSettings') || {}).toolApprovalMode || 'always';
-    if (mode === 'never') return false;
-    // Shell commands and writes always ask in 'always' mode unless rule overrides
+    // 'always'/'session'/'project' all ask for sensitive built-ins; 'never' never does.
+    // The scope of what "remembering" a decision means is handled in authorize().
+    if (this.approvalMode() === 'never') return false;
     return ['run_shell', 'write_file', 'edit_file'].includes(name);
   }
 
-  async requestPermission(req: PermissionRequest): Promise<boolean> {
-    this.emit('request', req);
+  /** Provider-native permission callbacks enter the same main-process gate. */
+  async requestPermission(req: PermissionRequest, ctx?: ToolContext): Promise<boolean> {
+    if (!ctx) return false;
+    const rule = this.matchRule(req.toolName, req.args);
+    if (rule?.action === 'deny') return false;
+    if (rule?.action === 'allow') return true;
+    return this.authorize(req, ctx, rule?.action === 'ask');
+  }
+
+  private approvalMode(): ToolApprovalMode {
+    return normalizeToolApprovalMode(
+      (getSetting<{ toolApprovalMode?: unknown }>('appSettings') || {}).toolApprovalMode
+    );
+  }
+
+  private approvalKey(mode: ToolApprovalMode, ctx: ToolContext, toolName: string): string | undefined {
+    if (mode === 'session') return `session\0${ctx.conversationId}\0${toolName}`;
+    if (mode === 'project') return `project\0${ctx.cwd}\0${toolName}`;
+    return undefined;
+  }
+
+  private async authorize(req: PermissionRequest, ctx: ToolContext, explicitAsk: boolean): Promise<boolean> {
+    const mode = this.approvalMode();
+    const grantKey = this.approvalKey(mode, ctx, req.toolName);
+    if (!explicitAsk && (mode === 'never' || (grantKey && this.scopedAllow.has(grantKey)))) return true;
+
+    const request = { ...req, conversationId: ctx.conversationId };
     return new Promise<boolean>((resolve) => {
       const wrap = (allow: boolean): void => resolve(allow);
       this.pendingRequests.set(req.requestId, {
         resolve: ((d: Decision) => wrap(d === 'allow')) as (d: Decision) => void,
-        rule: { id: req.requestId, toolName: req.toolName, action: 'ask' }
+        grantKey,
+        explicitAsk
       });
+      this.emit('request', request);
       // Auto-deny after 2 minutes
       setTimeout(() => {
         if (this.pendingRequests.has(req.requestId)) {

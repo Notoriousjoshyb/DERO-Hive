@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { IPC, type AppSettings } from '@shared/types';
+import { IPC, normalizeToolApprovalMode, type AppSettings } from '@shared/types';
 import { getSetting, setSetting } from '../db/client';
 
 const DEFAULTS: AppSettings = {
@@ -34,13 +34,22 @@ const DEFAULTS: AppSettings = {
 
 export function registerSettingsHandlers(): void {
   ipcMain.handle(IPC.SETTINGS_GET, () => {
-    return { ...DEFAULTS, ...(getSetting<AppSettings>('appSettings') || {}) };
+    return normalizeSettings(getSetting<AppSettings>('appSettings'));
   });
 
   ipcMain.handle(IPC.SETTINGS_SET, (_e, partial: Partial<AppSettings>) => {
-    const cur = { ...DEFAULTS, ...(getSetting<AppSettings>('appSettings') || {}) };
-    const next = { ...cur, ...partial };
+    const cur = normalizeSettings(getSetting<AppSettings>('appSettings'));
+    const next = normalizeSettings({ ...cur, ...partial });
     setSetting('appSettings', next);
     return next;
   });
+}
+
+function normalizeSettings(value?: Partial<AppSettings>): AppSettings {
+  const saved = { ...(value || {}) } as Partial<AppSettings> & { toolApprovalMode?: unknown };
+  return {
+    ...DEFAULTS,
+    ...saved,
+    toolApprovalMode: normalizeToolApprovalMode(saved.toolApprovalMode)
+  };
 }

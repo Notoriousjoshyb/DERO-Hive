@@ -2,11 +2,20 @@
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface StoredAttachment {
+  id: string;
+  type: 'image' | 'audio' | 'pdf' | 'file';
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } }
   | { type: 'input_audio'; input_audio: { data: string; format: 'wav' | 'mp3' } }
-  | { type: 'file'; file: { filename: string; data: string; mimeType: string } };
+  | { type: 'file'; file: { filename: string; data: string; mimeType: string } }
+  | { type: 'attachment_ref'; attachment: StoredAttachment };
 
 export interface Message {
   id: string;
@@ -75,7 +84,7 @@ export interface ChatRequest {
   /** Optional per-request cap used by orchestrators such as Swarm. */
   maxAgenticRounds?: number;
   planMode?: boolean;
-  toolApprovalModeOverride?: 'always' | 'project' | 'never';
+  toolApprovalModeOverride?: ToolApprovalMode;
   attachments?: { type: 'image' | 'audio' | 'pdf' | 'file'; filename: string; mimeType: string; data: string }[];
   /** When regenerating from an edited message, skip persisting the last user message again. */
   skipUserPersist?: boolean;
@@ -144,17 +153,28 @@ export interface ProviderConfig {
   modelsFetchedAt?: number;
 }
 
+export interface ProviderFallback {
+  providerId: string;
+  model: string;
+}
+
 // MCP server config (matches Claude Desktop format)
 export interface McpServerConfig {
   id: string;
   name: string;
   enabled: boolean;
-  command: string;
+  transport?: 'stdio' | 'http'; // defaults to 'stdio' when absent
+  command?: string; // required for stdio transport
+  url?: string; // required for http transport
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, string>; // write-only; values are never returned to the renderer
+  envKeys?: string[]; // read-only; names of env vars currently stored
   cwd?: string;
   timeoutMs?: number;
   trust?: boolean; // skip tool confirmations
+  bearerToken?: string; // write-only, http transport only
+  clearBearerToken?: boolean;
+  hasBearerToken?: boolean; // read-only
 }
 
 export interface McpServerStatus {
@@ -187,7 +207,26 @@ export interface Skill {
   enabled: boolean;
   builtin?: boolean;
   category?: string;
+  /** Present for skills synced from a bundled or drop-in SKILL.md folder. */
+  sourceDir?: string;
 }
+
+export interface SkillImportPreview {
+  sourceDir: string;
+  name: string;
+  description: string;
+  slashCommand: string;
+  prompt: string;
+  warnings: string[];
+}
+
+export type SkillImportPickResult =
+  | { ok: true; preview: SkillImportPreview }
+  | { ok: false; cancelled?: boolean; error?: string };
+
+export type SkillImportResult =
+  | { ok: true; skill: Skill }
+  | { ok: false; error: string };
 
 // Reusable prompt template (Prompt Library). Inserted via the "#" composer
 // trigger; {{clipboard}} and {{date}} interpolate at insert time.
@@ -206,8 +245,172 @@ export interface Project {
   icon: string;
   color?: string;
   path: string;
+  config?: ProjectConfig;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ProjectConfig {
+  kind?: 'general' | 'dero';
+  knowledge?: {
+    provider: 'obsidian';
+    serverId: string;
+    folder: string;
+    allowAutomationWrites?: boolean;
+  };
+  mcpServerIds?: string[];
+}
+
+export type KnowledgeCapability = 'list' | 'read' | 'search' | 'write' | 'append' | 'patch' | 'open';
+
+export interface KnowledgeStatus {
+  projectId: string;
+  configured: boolean;
+  connected: boolean;
+  serverId?: string;
+  folder?: string;
+  capabilities: KnowledgeCapability[];
+  missing: KnowledgeCapability[];
+  error?: string;
+}
+
+export interface KnowledgeListEntry { name: string; directory: boolean }
+export interface KnowledgeListResult { path: string; entries: KnowledgeListEntry[] }
+export interface KnowledgeReadResult { path: string; content: string }
+export interface KnowledgeSearchHit { path: string; score?: number; matches: unknown[] }
+export interface KnowledgeBootstrapResult { created: string[]; existing: string[] }
+export interface KnowledgeWriteResult { path: string }
+export interface KnowledgeCaptureResult { path: string; queued: boolean; outboxId?: string; error?: string }
+export interface KnowledgeRetryResult { retried: number; delivered: number; failed: number }
+
+export interface KnowledgeCaptureRequest { projectId: string; content: string; source?: string; title?: string }
+export interface KnowledgeAppendRequest { projectId: string; path: string; content: string }
+export interface KnowledgePatchRequest {
+  projectId: string;
+  path: string;
+  targetType: 'heading' | 'block' | 'frontmatter';
+  target: string;
+  operation: 'replace' | 'prepend' | 'append';
+  content: string;
+  contentType?: 'text/markdown' | 'application/json';
+  createTargetIfMissing?: boolean;
+  rejectIfContentPreexists?: boolean;
+}
+export interface KnowledgeOpenRequest { projectId: string; path: string; newLeaf?: boolean }
+
+export type KnowledgeAutomationKind = 'morning-digest' | 'weekly-synthesis';
+export interface KnowledgeAutomation {
+  projectId: string;
+  kind: KnowledgeAutomationKind;
+  enabled: boolean;
+  localHour: number;
+  localMinute: number;
+  weeklyWeekday?: number; // 0=Sunday ... 6=Saturday
+  providerId: string;
+  model: string;
+  lastRunKey?: string;
+  lastRunAt?: number;
+  error?: string;
+}
+export type KnowledgeAutomationSaveRequest = Omit<KnowledgeAutomation, 'lastRunKey' | 'lastRunAt' | 'error'>;
+export interface KnowledgeAutomationStatus extends KnowledgeAutomation {
+  running: boolean;
+  due: boolean;
+  currentRunKey: string;
+}
+export interface KnowledgeAutomationRunResult {
+  projectId: string;
+  kind: KnowledgeAutomationKind;
+  runKey: string;
+  status: 'completed' | 'skipped';
+  path?: string;
+}
+
+export interface BrowserBridgeActiveProject {
+  id: string;
+  name: string;
+}
+
+export interface BrowserBridgeStatus {
+  enabled: boolean;
+  port: number;
+  pairingCode?: string;
+  paired: boolean;
+}
+
+export interface McpRegistryEntry {
+  id: string;
+  name: string;
+  description: string;
+  repo: string;
+  license: string;
+  runtime: 'node' | 'python' | 'http';
+  install:
+    | { transport?: 'stdio'; command: string; args: string[] }
+    | { transport: 'http'; url: string };
+  requiresConfig?: string;
+  category: string;
+  local: boolean;
+  windows: boolean;
+  stars?: number;
+  verified?: string;
+  tags?: string[];
+}
+
+export interface McpRegistry {
+  version: number;
+  updatedAt: string;
+  description?: string;
+  notes?: string[];
+  servers: McpRegistryEntry[];
+}
+
+export function normalizeKnowledgePath(value: unknown, allowEmpty = false): string {
+  if (typeof value !== 'string' || value.includes('\0')) throw new Error('Knowledge path must be a string');
+  const raw = value.trim().replace(/\\/g, '/');
+  if (!raw) {
+    if (allowEmpty) return '';
+    throw new Error('Knowledge path is required');
+  }
+  if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) throw new Error('Knowledge path must be vault-relative');
+  const parts = raw.split('/').filter(Boolean);
+  if (parts.some((part) => part === '.' || part === '..')) throw new Error('Knowledge path cannot traverse outside the project folder');
+  return parts.join('/');
+}
+
+export function normalizeProjectConfig(value: unknown): ProjectConfig {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Project config must be an object');
+  const input = value as Record<string, unknown>;
+  const config: ProjectConfig = {};
+  if (input.kind !== undefined) {
+    if (input.kind !== 'general' && input.kind !== 'dero') throw new Error('Invalid project kind');
+    config.kind = input.kind;
+  }
+  if (input.mcpServerIds !== undefined) {
+    if (!Array.isArray(input.mcpServerIds) || input.mcpServerIds.some((id) => typeof id !== 'string' || !id.trim())) {
+      throw new Error('Project MCP server ids must be non-empty strings');
+    }
+    config.mcpServerIds = [...new Set(input.mcpServerIds.map((id) => (id as string).trim()))];
+  }
+  if (input.knowledge !== undefined) {
+    if (typeof input.knowledge !== 'object' || input.knowledge === null || Array.isArray(input.knowledge)) {
+      throw new Error('Project knowledge config must be an object');
+    }
+    const knowledge = input.knowledge as Record<string, unknown>;
+    if (knowledge.provider !== 'obsidian') throw new Error('Only Obsidian project knowledge is supported');
+    if (typeof knowledge.serverId !== 'string' || !knowledge.serverId.trim()) throw new Error('Knowledge MCP server id is required');
+    if (knowledge.allowAutomationWrites !== undefined && typeof knowledge.allowAutomationWrites !== 'boolean') {
+      throw new Error('allowAutomationWrites must be a boolean');
+    }
+    config.knowledge = {
+      provider: 'obsidian',
+      serverId: knowledge.serverId.trim(),
+      folder: normalizeKnowledgePath(knowledge.folder),
+      ...(knowledge.allowAutomationWrites === undefined ? {} : { allowAutomationWrites: knowledge.allowAutomationWrites })
+    };
+  }
+  return config;
 }
 
 export interface Conversation {
@@ -239,6 +442,12 @@ export interface PermissionRule {
   projectPath?: string;
 }
 
+export type ToolApprovalMode = 'always' | 'session' | 'project' | 'never';
+
+export function normalizeToolApprovalMode(value: unknown): ToolApprovalMode {
+  return value === 'session' || value === 'project' || value === 'never' ? value : 'always';
+}
+
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system';
   fontSize: 'small' | 'medium' | 'large';
@@ -254,11 +463,13 @@ export interface AppSettings {
   autoTitle: boolean;
   defaultProviderId?: string;
   defaultModelId?: string;
+  /** Fallback providers/models tried in order if the primary selection errors before producing any output. */
+  providerFallbackChain?: ProviderFallback[];
   favouriteModels?: string[]; // entries are "providerId:modelId"
   maxConcurrentToolCalls: number;
   /** Maximum model → tools → model cycles for one submitted task (1–50). */
   maxAgenticRounds: number;
-  toolApprovalMode: 'always' | 'project' | 'never';
+  toolApprovalMode: ToolApprovalMode;
   workingDirectory?: string;
   codeFolder?: string; // last folder opened in the Code tab explorer (persists across sessions)
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
@@ -295,15 +506,7 @@ export interface AppSettings {
   monthlyTokenBudget?: number; // 0 = off
 }
 
-export interface Attachment {
-  id: string;
-  type: 'image' | 'audio' | 'pdf' | 'file';
-  filename: string;
-  mimeType: string;
-  size: number;
-  // base64 data
-  data: string;
-}
+export type Attachment = StoredAttachment;
 
 export interface Artifact {
   id: string;
@@ -388,11 +591,16 @@ export const IPC = {
   MCP_DISCONNECT: 'mcp:disconnect',
   MCP_STATUS: 'mcp:status',
   MCP_CHANGED: 'mcp:changed', // event
+  MCP_REGISTRY: 'mcp:registry',
 
   // Skills
   SKILL_LIST: 'skill:list',
   SKILL_SAVE: 'skill:save',
   SKILL_DELETE: 'skill:delete',
+  SKILL_RESCAN: 'skill:rescan',
+  SKILL_OPEN_DIR: 'skill:openDir',
+  SKILL_IMPORT_PICK: 'skill:importPick',
+  SKILL_IMPORT: 'skill:import',
 
   // Prompt library
   PROMPT_LIST: 'prompt:list',
@@ -403,6 +611,25 @@ export const IPC = {
   PROJECT_LIST: 'project:list',
   PROJECT_SAVE: 'project:save',
   PROJECT_DELETE: 'project:delete',
+
+  // Project knowledge (Obsidian is canonical)
+  KNOWLEDGE_STATUS: 'knowledge:status',
+  KNOWLEDGE_LIST: 'knowledge:list',
+  KNOWLEDGE_READ: 'knowledge:read',
+  KNOWLEDGE_SEARCH: 'knowledge:search',
+  KNOWLEDGE_BOOTSTRAP: 'knowledge:bootstrap',
+  KNOWLEDGE_CAPTURE: 'knowledge:capture',
+  KNOWLEDGE_APPEND: 'knowledge:append',
+  KNOWLEDGE_PATCH: 'knowledge:patch',
+  KNOWLEDGE_OPEN: 'knowledge:open',
+  KNOWLEDGE_RETRY_OUTBOX: 'knowledge:retry-outbox',
+
+  // Fixed vault automations
+  KNOWLEDGE_AUTOMATION_LIST: 'knowledge-automation:list',
+  KNOWLEDGE_AUTOMATION_SAVE: 'knowledge-automation:save',
+  KNOWLEDGE_AUTOMATION_DELETE: 'knowledge-automation:delete',
+  KNOWLEDGE_AUTOMATION_RUN_NOW: 'knowledge-automation:run-now',
+  KNOWLEDGE_AUTOMATION_STATUS: 'knowledge-automation:status',
 
   // Tools
   TOOL_LIST: 'tool:list',
@@ -429,6 +656,7 @@ export const IPC = {
 
   // Attachments
   ATTACH_FROM_FILE: 'attach:fromFile',
+  ATTACH_FROM_BYTES: 'attach:fromBytes',
 
   // Artifacts (Vision workspace)
   ARTIFACT_SAVE: 'artifact:save',
@@ -446,6 +674,7 @@ export const IPC = {
   BROWSER_BRIDGE_STATUS: 'browserBridge:status',
   BROWSER_BRIDGE_BIND: 'browserBridge:bind',
   BROWSER_BRIDGE_SELECTION: 'browserBridge:selection',
+  BROWSER_BRIDGE_REVOKE_PAIRING: 'browserBridge:revokePairing',
   UPDATE_CHECK: 'update:check',
   UPDATE_INSTALL: 'update:install',
 

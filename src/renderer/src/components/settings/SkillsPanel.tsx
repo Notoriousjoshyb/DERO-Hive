@@ -1,12 +1,24 @@
 import { useState } from 'react';
 import { useAppStore } from '../../stores/app';
-import type { Skill } from '@shared/types';
+import type { Skill, SkillImportPreview } from '@shared/types';
 
 export function SkillsPanel(): JSX.Element {
   const skills = useAppStore((s) => s.skills);
   const saveSkill = async (s: Skill): Promise<void> => { await window.hive.skillSave(s); void useAppStore.getState().loadSkills(); };
   const deleteSkill = async (id: string): Promise<void> => { await window.hive.skillDelete(id); void useAppStore.getState().loadSkills(); };
   const [editing, setEditing] = useState<Skill | null>(null);
+  const [importPreview, setImportPreview] = useState<SkillImportPreview | null>(null);
+  const [importError, setImportError] = useState('');
+
+  const pickSkillFolder = async (): Promise<void> => {
+    setImportError('');
+    const result = await window.hive.skillImportPick();
+    if (!result.ok) {
+      if (!result.cancelled) setImportError(result.error || 'Could not read that folder.');
+      return;
+    }
+    setImportPreview(result.preview);
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -15,11 +27,18 @@ export function SkillsPanel(): JSX.Element {
           <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Skills</h3>
           <p className="text-xs text-fg-muted mt-1">Reusable prompt templates invoked with slash commands.</p>
         </div>
-        <button onClick={() => setEditing({
-          id: `skill-${Date.now()}`, name: '', description: '',
-          slashCommand: '/', prompt: '', enabled: true, category: 'custom'
-        })} className="btn-primary">+ New skill</button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => void window.hive.skillOpenDir()} className="btn-secondary">Open skills folder</button>
+          <button onClick={() => void window.hive.skillRescan().then(() => useAppStore.getState().loadSkills())} className="btn-secondary">Rescan</button>
+          <button onClick={() => void pickSkillFolder()} className="btn-secondary">Import folder…</button>
+          <button onClick={() => setEditing({
+            id: `skill-${Date.now()}`, name: '', description: '',
+            slashCommand: '/', prompt: '', enabled: true, category: 'custom'
+          })} className="btn-primary">+ New skill</button>
+        </div>
       </div>
+
+      {importError && <div className="text-xs text-danger bg-danger/10 border border-danger/25 rounded-lg px-3 py-2">{importError}</div>}
 
       <div className="space-y-2">
         {skills.map((s) => (
@@ -30,6 +49,7 @@ export function SkillsPanel(): JSX.Element {
                   <span className="font-mono text-accent text-sm">{s.slashCommand}</span>
                   <span className="font-medium">{s.name}</span>
                   {s.builtin && <span className="text-[10px] uppercase text-fg-subtle">built-in</span>}
+                  {s.sourceDir && <span className="text-[10px] uppercase text-fg-subtle">file-synced</span>}
                   {!s.enabled && <span className="text-[10px] uppercase text-danger">disabled</span>}
                 </div>
                 <div className="text-xs text-fg-muted mt-0.5">{s.description}</div>
@@ -48,6 +68,19 @@ export function SkillsPanel(): JSX.Element {
       </div>
 
       {editing && <SkillEditor skill={editing} onClose={() => setEditing(null)} onSave={async (s) => { await saveSkill(s); setEditing(null); }} />}
+
+      {importPreview && (
+        <SkillImportDialog
+          preview={importPreview}
+          onClose={() => setImportPreview(null)}
+          onImport={async () => {
+            const result = await window.hive.skillImport(importPreview.sourceDir);
+            if (!result.ok) { setImportError(result.error); setImportPreview(null); return; }
+            setImportPreview(null);
+            void useAppStore.getState().loadSkills();
+          }}
+        />
+      )}
 
       <style>{`
         .btn-primary { background: #d97757; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; }
@@ -84,6 +117,40 @@ function SkillEditor({ skill, onClose, onSave }: { skill: Skill; onClose: () => 
         .btn-secondary { background: #333230; border: 1px solid #3a3936; color: #faf9f5; padding: 5px 12px; border-radius: 6px; font-size: 12px; }
         .btn-primary { background: #d97757; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; }
       `}</style>
+    </div>
+  );
+}
+
+function SkillImportDialog({ preview, onClose, onImport }: { preview: SkillImportPreview; onClose: () => void; onImport: () => Promise<void> }): JSX.Element {
+  const [importing, setImporting] = useState(false);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-bg-elev border border-border rounded-xl shadow-2xl max-w-lg w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-semibold">Import skill</h3>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-accent text-sm">{preview.slashCommand}</span>
+          <span className="font-medium">{preview.name}</span>
+        </div>
+        <p className="text-xs text-fg-muted">{preview.description}</p>
+        {preview.warnings.length > 0 && (
+          <div className="space-y-1">
+            {preview.warnings.map((w) => (
+              <div key={w} className="text-[11px] text-warn bg-warn/10 border border-warn/25 rounded-md px-2 py-1">⚠ {w}</div>
+            ))}
+          </div>
+        )}
+        <pre className="text-[10px] text-fg-subtle bg-bg border border-border rounded-lg p-2 max-h-40 overflow-y-auto whitespace-pre-wrap">{preview.prompt.slice(0, 1000)}</pre>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button
+            disabled={importing}
+            onClick={() => { setImporting(true); void onImport(); }}
+            className="btn-primary disabled:opacity-50"
+          >
+            {importing ? 'Importing…' : 'Import'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

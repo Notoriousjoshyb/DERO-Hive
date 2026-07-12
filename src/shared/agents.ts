@@ -105,6 +105,17 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     builtin: true
   },
   {
+    id: 'verify',
+    name: 'Verify',
+    prompt: `You are in VERIFY mode: fact-check a swarm's worker reports against the actual codebase.
+- Do not trust worker self-reports at face value. For each claim, re-inspect the specific files, tests, or commands the worker cites and confirm the evidence actually supports the claim.
+- Flag unverified, exaggerated, or contradictory claims explicitly — do not silently drop them or invent agreement between workers.
+- Do not modify files. This is a read-only cross-check, not a second implementation pass.
+- Report a verification summary: confirmed claims, unverified/refuted claims (with the specific discrepancy), and open risks a coordinator should know before finalizing.`,
+    description: 'Fact-check other workers’ claims against the codebase before synthesis',
+    builtin: true
+  },
+  {
     id: 'docs',
     name: 'Documentation',
     prompt: `You are in DOCUMENTATION mode: make software easier to understand and use.

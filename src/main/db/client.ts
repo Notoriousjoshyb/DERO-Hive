@@ -84,7 +84,9 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   enabled INTEGER DEFAULT 1,
+  transport TEXT NOT NULL DEFAULT 'stdio',
   command TEXT NOT NULL,
+  url TEXT,
   args TEXT,
   env TEXT,
   cwd TEXT,
@@ -102,6 +104,7 @@ CREATE TABLE IF NOT EXISTS skills (
   enabled INTEGER DEFAULT 1,
   builtin INTEGER DEFAULT 0,
   category TEXT,
+  source_dir TEXT,
   updated_at INTEGER NOT NULL
 );
 
@@ -111,8 +114,38 @@ CREATE TABLE IF NOT EXISTS projects (
   icon TEXT DEFAULT '📁',
   color TEXT,
   path TEXT NOT NULL,
+  config TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_outbox (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  server_id TEXT NOT NULL,
+  folder TEXT NOT NULL,
+  path TEXT NOT NULL,
+  content TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_project ON knowledge_outbox(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS knowledge_automations (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('morning-digest', 'weekly-synthesis')),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  local_hour INTEGER NOT NULL,
+  local_minute INTEGER NOT NULL,
+  weekly_weekday INTEGER,
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  last_run_key TEXT,
+  last_run_at INTEGER,
+  last_error TEXT,
+  PRIMARY KEY(project_id, kind)
 );
 
 CREATE TABLE IF NOT EXISTS permissions (
@@ -146,9 +179,48 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_conv ON artifacts(conversation_id);
+
+CREATE TABLE IF NOT EXISTS swarm_runs (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  project_id TEXT,
+  prompt TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  worker_count INTEGER NOT NULL,
+  repo_root TEXT,
+  base_branch TEXT,
+  base_head TEXT,
+  integration_branch TEXT,
+  integration_path TEXT,
+  integration_head TEXT,
+  result TEXT,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_runs_updated ON swarm_runs(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS swarm_tasks (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL,
+  task_index INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  output TEXT,
+  error TEXT,
+  worktree_path TEXT,
+  branch_name TEXT,
+  started_at INTEGER,
+  completed_at INTEGER,
+  UNIQUE(run_id, phase, task_index)
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
 `;
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 11;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -220,6 +292,119 @@ const MIGRATIONS: Migration[] = [
         database.exec(`ALTER TABLE messages ADD COLUMN bookmarked INTEGER DEFAULT 0`);
       }
       database.exec(`CREATE INDEX IF NOT EXISTS idx_msg_bookmarked ON messages(bookmarked) WHERE bookmarked = 1`);
+    }
+  },
+  {
+    version: 7,
+    description: 'Add HTTP transport fields to MCP servers',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(mcp_servers)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('transport')) database.exec(`ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'`);
+      if (!columns.has('url')) database.exec(`ALTER TABLE mcp_servers ADD COLUMN url TEXT`);
+    }
+  },
+  {
+    version: 8,
+    description: 'Add skills.source_dir for file-synced skills',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(skills)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('source_dir')) database.exec(`ALTER TABLE skills ADD COLUMN source_dir TEXT`);
+    }
+  },
+  {
+    version: 9,
+    description: 'Add project config and knowledge capture outbox',
+    up: (database) => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      if (!columns.has('config')) database.exec(`ALTER TABLE projects ADD COLUMN config TEXT NOT NULL DEFAULT '{}'`);
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS knowledge_outbox (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          server_id TEXT NOT NULL,
+          folder TEXT NOT NULL,
+          path TEXT NOT NULL,
+          content TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_project ON knowledge_outbox(project_id, created_at);
+      `);
+    }
+  },
+  {
+    version: 10,
+    description: 'Add project knowledge vault automations',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS knowledge_automations (
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK(kind IN ('morning-digest', 'weekly-synthesis')),
+          enabled INTEGER NOT NULL DEFAULT 0,
+          local_hour INTEGER NOT NULL,
+          local_minute INTEGER NOT NULL,
+          weekly_weekday INTEGER,
+          provider_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          last_run_key TEXT,
+          last_run_at INTEGER,
+          last_error TEXT,
+          PRIMARY KEY(project_id, kind)
+        );
+      `);
+    }
+  },
+  {
+    version: 11,
+    description: 'Add native swarm runs and tasks',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS swarm_runs (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          project_id TEXT,
+          prompt TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          status TEXT NOT NULL,
+          provider_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          worker_count INTEGER NOT NULL,
+          repo_root TEXT,
+          base_branch TEXT,
+          base_head TEXT,
+          integration_branch TEXT,
+          integration_path TEXT,
+          integration_head TEXT,
+          result TEXT,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_swarm_runs_updated ON swarm_runs(updated_at DESC);
+        CREATE TABLE IF NOT EXISTS swarm_tasks (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+          phase TEXT NOT NULL,
+          task_index INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          output TEXT,
+          error TEXT,
+          worktree_path TEXT,
+          branch_name TEXT,
+          started_at INTEGER,
+          completed_at INTEGER,
+          UNIQUE(run_id, phase, task_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
+      `);
     }
   }
 ];

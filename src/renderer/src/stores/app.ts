@@ -163,10 +163,6 @@ interface AppState {
   pendingPermissions: PendingPermission[];
   addPendingPermission: (p: PendingPermission) => void;
   removePendingPermission: (requestId: string) => void;
-  // Session-only "don't ask again" — auto-allows tool calls until the app
-  // restarts, without touching the persisted toolApprovalMode setting.
-  sessionAutoAllowTools: boolean;
-  setSessionAutoAllowTools: (v: boolean) => void;
 
   // MCP
   mcpStatuses: McpServerStatus[];
@@ -217,6 +213,7 @@ interface AppState {
   visionOpen: boolean;
   companionOpen: boolean;
   settingsOpen: boolean;
+  settingsInitialTab?: string;
   rightSidebarOpen: boolean;
   codeTabOpen: boolean;
   toggleSidebar: () => void;
@@ -228,6 +225,12 @@ interface AppState {
   toggleCodeTab: () => void;
   visionTabOpen: boolean;
   toggleVisionTab: () => void;
+
+  // Project cockpit
+  projectCockpitId: string | null;
+  openProjectCockpit: (projectId: string) => void;
+  closeProjectCockpit: () => void;
+  openProjectSettings: () => void;
 
   // Keyboard shortcuts cheatsheet overlay (toggled with "?")
   shortcutsOpen: boolean;
@@ -568,8 +571,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   addPendingPermission: (p) => set((s) => ({ pendingPermissions: [...s.pendingPermissions, p] })),
   removePendingPermission: (requestId) =>
     set((s) => ({ pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== requestId) })),
-  sessionAutoAllowTools: false,
-  setSessionAutoAllowTools: (v) => set({ sessionAutoAllowTools: v }),
 
   mcpStatuses: [],
   loadMcpStatuses: async () => {
@@ -674,7 +675,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen, companionOpen: s.visionOpen ? s.companionOpen : false })),
   setVisionOpen: (open) => set({ visionOpen: open, companionOpen: open ? false : get().companionOpen }),
   toggleCompanion: () => set((s) => ({ companionOpen: !s.companionOpen, visionOpen: s.companionOpen ? s.visionOpen : false })),
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsOpen: (open) => set({ settingsOpen: open, ...(open ? {} : { settingsInitialTab: undefined }) }),
+
+  projectCockpitId: null,
+  openProjectCockpit: (projectId) => set({ projectCockpitId: projectId, codeTabOpen: false, visionTabOpen: false }),
+  closeProjectCockpit: () => set({ projectCockpitId: null }),
+  openProjectSettings: () => set({ settingsOpen: true, settingsInitialTab: 'projects' }),
 
   artifactsChangedAt: 0,
   lastStreamFinishedAt: 0,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/app';
-import type { WhisperStatus, AppSettings } from '@shared/types';
+import type { WhisperStatus, AppSettings, ToolApprovalMode, ProviderConfig, ProviderFallback } from '@shared/types';
 
 interface AudioDevice {
   deviceId: string;
@@ -269,12 +269,20 @@ export function GeneralPanel(): JSX.Element {
             <option value={50}>50 rounds</option>
           </select>
         </Field>
-        <Field label="Tool approval">
-          <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as 'always' | 'project' | 'never' })} className="input">
+        <Field label="Tool approval" hint="Always/never apply to every call. Session and project modes ask once per tool, then remember the decision for the rest of that scope.">
+          <select value={settings.toolApprovalMode} onChange={(e) => updateSettings({ toolApprovalMode: e.target.value as ToolApprovalMode })} className="input">
             <option value="always">Always ask</option>
-            <option value="project">Ask per project</option>
+            <option value="session">Ask once per conversation</option>
+            <option value="project">Ask once per project</option>
             <option value="never">Never ask</option>
           </select>
+        </Field>
+        <Field label="Provider fallback chain" hint="If the selected provider errors before producing any output, Hive tries these next, in order.">
+          <FallbackChainEditor
+            chain={settings.providerFallbackChain || []}
+            providers={providers}
+            onChange={(chain) => updateSettings({ providerFallbackChain: chain })}
+          />
         </Field>
         <Field label="Spellcheck" hint="Use the browser/OS spellchecker on the composer input.">
           <input type="checkbox" checked={settings.spellcheckEnabled !== false} onChange={(e) => updateSettings({ spellcheckEnabled: e.target.checked })} className="accent-accent w-4 h-4" />
@@ -547,6 +555,74 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle mb-3">{title}</h3>
       <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function FallbackChainEditor({ chain, providers, onChange }: {
+  chain: ProviderFallback[];
+  providers: ProviderConfig[];
+  onChange: (chain: ProviderFallback[]) => void;
+}): JSX.Element {
+  const enabled = providers.filter((p) => p.enabled && p.models.length > 0);
+  const modelName = (entry: ProviderFallback): string => {
+    const provider = enabled.find((p) => p.id === entry.providerId);
+    return provider ? `${provider.name} · ${provider.models.find((m) => m.id === entry.model)?.name || entry.model}` : `${entry.providerId} · ${entry.model} (unavailable)`;
+  };
+  const move = (index: number, delta: number): void => {
+    const next = [...chain];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  const remove = (index: number): void => onChange(chain.filter((_, i) => i !== index));
+  const add = (): void => {
+    const first = enabled[0];
+    const model = first?.models[0];
+    if (!first || !model) return;
+    onChange([...chain, { providerId: first.id, model: model.id }]);
+  };
+  const update = (index: number, patch: Partial<ProviderFallback>): void => {
+    onChange(chain.map((entry, i) => i === index ? { ...entry, ...patch } : entry));
+  };
+
+  return (
+    <div className="space-y-1.5 w-64">
+      {chain.length === 0 && <div className="text-xs text-fg-subtle">No fallback configured.</div>}
+      {chain.map((entry, index) => {
+        const provider = enabled.find((p) => p.id === entry.providerId);
+        return (
+          <div key={index} className="flex items-center gap-1">
+            <select
+              value={entry.providerId}
+              onChange={(e) => {
+                const nextProvider = enabled.find((p) => p.id === e.target.value);
+                update(index, { providerId: e.target.value, model: nextProvider?.models[0]?.id || '' });
+              }}
+              className="input text-xs flex-1 min-w-0"
+            >
+              {enabled.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <select
+              value={entry.model}
+              onChange={(e) => update(index, { model: e.target.value })}
+              className="input text-xs flex-1 min-w-0"
+            >
+              {(provider?.models || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <button onClick={() => move(index, -1)} disabled={index === 0} className="text-fg-subtle hover:text-fg disabled:opacity-30" title="Move up">↑</button>
+            <button onClick={() => move(index, 1)} disabled={index === chain.length - 1} className="text-fg-subtle hover:text-fg disabled:opacity-30" title="Move down">↓</button>
+            <button onClick={() => remove(index)} className="text-fg-subtle hover:text-danger" title="Remove">×</button>
+          </div>
+        );
+      })}
+      <button onClick={add} disabled={enabled.length === 0} className="text-xs text-accent hover:underline disabled:opacity-40 disabled:no-underline">+ Add fallback</button>
+      {chain.length > 0 && (
+        <div className="text-[10px] text-fg-subtle pt-0.5">
+          {chain.map(modelName).join(' → ')}
+        </div>
+      )}
     </div>
   );
 }

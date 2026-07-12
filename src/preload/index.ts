@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type BrowserBridgeActiveProject, type BrowserBridgeStatus } from '../shared/types';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -58,6 +58,7 @@ const api = {
   mcpConnect: (id: string) => ipcRenderer.invoke(IPC.MCP_CONNECT, id),
   mcpDisconnect: (id: string) => ipcRenderer.invoke(IPC.MCP_DISCONNECT, id),
   mcpStatus: () => ipcRenderer.invoke(IPC.MCP_STATUS),
+  mcpRegistry: () => ipcRenderer.invoke(IPC.MCP_REGISTRY),
   onMcpChanged: (cb: (statuses: McpServerStatus[]) => void) => {
     const l = (_: IpcRendererEvent, d: McpServerStatus[]) => cb(d);
     ipcRenderer.on(IPC.MCP_CHANGED, l);
@@ -68,6 +69,10 @@ const api = {
   skillList: () => ipcRenderer.invoke(IPC.SKILL_LIST),
   skillSave: (s: Skill) => ipcRenderer.invoke(IPC.SKILL_SAVE, s),
   skillDelete: (id: string) => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
+  skillRescan: () => ipcRenderer.invoke(IPC.SKILL_RESCAN),
+  skillOpenDir: () => ipcRenderer.invoke(IPC.SKILL_OPEN_DIR),
+  skillImportPick: () => ipcRenderer.invoke(IPC.SKILL_IMPORT_PICK),
+  skillImport: (sourceDir: string) => ipcRenderer.invoke(IPC.SKILL_IMPORT, sourceDir),
 
   // Prompt library
   promptList: () => ipcRenderer.invoke(IPC.PROMPT_LIST),
@@ -78,6 +83,22 @@ const api = {
   projectList: () => ipcRenderer.invoke(IPC.PROJECT_LIST),
   projectSave: (p: Project) => ipcRenderer.invoke(IPC.PROJECT_SAVE, p),
   projectDelete: (id: string) => ipcRenderer.invoke(IPC.PROJECT_DELETE, id),
+
+  // Project knowledge (Obsidian vault)
+  knowledgeStatus: (projectId: string) => ipcRenderer.invoke(IPC.KNOWLEDGE_STATUS, projectId),
+  knowledgeList: (input: { projectId: string; path?: string }) => ipcRenderer.invoke(IPC.KNOWLEDGE_LIST, input),
+  knowledgeRead: (input: { projectId: string; path: string }) => ipcRenderer.invoke(IPC.KNOWLEDGE_READ, input),
+  knowledgeSearch: (input: { projectId: string; query: string; limit?: number; contextLength?: number }) => ipcRenderer.invoke(IPC.KNOWLEDGE_SEARCH, input),
+  knowledgeBootstrap: (projectId: string) => ipcRenderer.invoke(IPC.KNOWLEDGE_BOOTSTRAP, projectId),
+  knowledgeCapture: (input: { projectId: string; content: string; source?: string; title?: string }) => ipcRenderer.invoke(IPC.KNOWLEDGE_CAPTURE, input),
+  knowledgeAppend: (input: { projectId: string; path: string; content: string }) => ipcRenderer.invoke(IPC.KNOWLEDGE_APPEND, input),
+  knowledgeOpen: (input: { projectId: string; path: string; newLeaf?: boolean }) => ipcRenderer.invoke(IPC.KNOWLEDGE_OPEN, input),
+  knowledgeRetryOutbox: (projectId?: string) => ipcRenderer.invoke(IPC.KNOWLEDGE_RETRY_OUTBOX, projectId),
+  knowledgeAutomationList: (projectId?: string) => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_LIST, projectId),
+  knowledgeAutomationSave: (input: unknown) => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_SAVE, input),
+  knowledgeAutomationDelete: (input: { projectId: string; kind: 'morning-digest' | 'weekly-synthesis' }) => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_DELETE, input),
+  knowledgeAutomationRunNow: (projectId: string, kind: 'morning-digest' | 'weekly-synthesis') => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_RUN_NOW, { projectId, kind }),
+  knowledgeAutomationStatus: (projectId?: string) => ipcRenderer.invoke(IPC.KNOWLEDGE_AUTOMATION_STATUS, projectId),
 
   // Tools
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),
@@ -118,6 +139,7 @@ const api = {
 
   // Attachments
   attachFromFile: () => ipcRenderer.invoke(IPC.ATTACH_FROM_FILE),
+  attachFromBytes: (a: { data: string; filename: string; mimeType: string }) => ipcRenderer.invoke(IPC.ATTACH_FROM_BYTES, a),
 
   // Artifacts
   artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) =>
@@ -134,15 +156,16 @@ const api = {
   version: () => ipcRenderer.invoke(IPC.APP_VERSION),
   updateCheck: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => ipcRenderer.invoke(IPC.UPDATE_INSTALL, a),
-  browserBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SET_ENABLED, enabled) as Promise<{ enabled: boolean; port: number; pairingCode?: string }>,
-  browserBridgeStatus: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_STATUS) as Promise<{ enabled: boolean; port: number; pairingCode?: string }>,
+  browserBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SET_ENABLED, enabled) as Promise<BrowserBridgeStatus>,
+  browserBridgeStatus: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_STATUS) as Promise<BrowserBridgeStatus>,
+  browserBridgeRevokePairing: () => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_REVOKE_PAIRING) as Promise<BrowserBridgeStatus>,
   browserBridgeBind: (requestId: string, conversationId: string) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_BIND, requestId, conversationId) as Promise<{ ok: boolean }>,
   onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => {
     const l = (_: IpcRendererEvent, data: { detail: string; requestId?: string; providerId?: string; model?: string }) => cb(data);
     ipcRenderer.on('browser-bridge:context', l);
     return () => ipcRenderer.off('browser-bridge:context', l);
   },
-  browserBridgeReportSelection: (providerId?: string, model?: string) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SELECTION, providerId, model) as Promise<{ ok: boolean }>,
+  browserBridgeReportSelection: (providerId?: string, model?: string, activeProject?: BrowserBridgeActiveProject) => ipcRenderer.invoke(IPC.BROWSER_BRIDGE_SELECTION, providerId, model, activeProject) as Promise<{ ok: boolean }>,
   onBrowserBridgeSelectModel: (cb: (data: { providerId: string; model: string }) => void) => {
     const l = (_: IpcRendererEvent, data: { providerId: string; model: string }) => cb(data);
     ipcRenderer.on('browser-bridge:select-model', l);

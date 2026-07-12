@@ -1,0 +1,616 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type {
+  KnowledgeAutomationKind,
+  KnowledgeAutomationSaveRequest,
+  KnowledgeAutomationStatus,
+  KnowledgeCapability,
+  KnowledgeStatus
+} from '@shared/types';
+import { useAppStore } from '../stores/app';
+
+interface GitEvidence {
+  state: 'loading' | 'ready' | 'missing' | 'error';
+  branch?: string;
+  changes?: number;
+  commit?: string;
+  subject?: string;
+  error?: string;
+}
+
+interface AutomationModelOption {
+  value: string;
+  providerId: string;
+  model: string;
+  label: string;
+}
+
+export function ProjectCockpit({ projectId }: { projectId: string }): JSX.Element {
+  const project = useAppStore((state) => state.projects.find((item) => item.id === projectId));
+  const conversations = useAppStore((state) => state.conversations);
+  const mcpStatuses = useAppStore((state) => state.mcpStatuses);
+  const providers = useAppStore((state) => state.providers);
+  const selectedProviderId = useAppStore((state) => state.selectedProviderId);
+  const selectedModel = useAppStore((state) => state.selectedModel);
+  const selectConversation = useAppStore((state) => state.selectConversation);
+  const createConversation = useAppStore((state) => state.createConversation);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+  const closeCockpit = useAppStore((state) => state.closeProjectCockpit);
+  const openProjectSettings = useAppStore((state) => state.openProjectSettings);
+  const [git, setGit] = useState<GitEvidence>({ state: 'loading' });
+  const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null);
+  const [knowledgeError, setKnowledgeError] = useState('');
+  const [automations, setAutomations] = useState<KnowledgeAutomationStatus[] | null>(null);
+  const [automationError, setAutomationError] = useState('');
+  const [vaultAction, setVaultAction] = useState('');
+  const [vaultNotice, setVaultNotice] = useState('');
+
+  const knowledgeConfig = project?.config?.knowledge;
+  const vaultConfigured = !!knowledgeConfig?.serverId && !!knowledgeConfig.folder;
+  const vaultServer = mcpStatuses.find((server) => server.id === knowledgeConfig?.serverId);
+  const vaultConnectionKey = [
+    knowledgeConfig?.serverId || '',
+    knowledgeConfig?.folder || '',
+    vaultServer?.connected ? 'connected' : 'offline',
+    vaultServer?.error || '',
+    vaultServer?.tools.map((tool) => tool.name).sort().join(',') || ''
+  ].join('|');
+
+  const automationModels = useMemo<AutomationModelOption[]>(() => providers
+    .filter((provider) => provider.enabled)
+    .flatMap((provider) => provider.models.map((model) => ({
+      value: JSON.stringify([provider.id, model.id]),
+      providerId: provider.id,
+      model: model.id,
+      label: `${provider.name} — ${model.name}`
+    }))), [providers]);
+  const selectedAutomationModel = automationModels.find((option) =>
+    option.providerId === selectedProviderId && option.model === selectedModel) || automationModels[0];
+
+  const projectConversations = useMemo(
+    () => conversations.filter((item) => item.projectId === projectId && !item.archived).sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations, projectId]
+  );
+
+  const refreshGit = useCallback(async (): Promise<void> => {
+    if (!project) return;
+    setGit({ state: 'loading' });
+    try {
+      const [status, branch, log] = await Promise.all([
+        window.hive.shellRun('git status --porcelain', { cwd: project.path }),
+        window.hive.shellRun('git branch --show-current', { cwd: project.path }),
+        window.hive.shellRun('git log -1 --oneline', { cwd: project.path })
+      ]);
+      if (!status.ok) {
+        setGit({ state: 'missing', error: status.error || status.stderr || 'Not a Git repository' });
+        return;
+      }
+      const latest = log.stdout.trim();
+      const separator = latest.indexOf(' ');
+      const changes = status.stdout.trim() ? status.stdout.trim().split(/\r?\n/).length : 0;
+      setGit({
+        state: 'ready',
+        branch: branch.stdout.trim() || 'detached',
+        changes,
+        commit: separator > 0 ? latest.slice(0, separator) : latest,
+        subject: separator > 0 ? latest.slice(separator + 1) : undefined
+      });
+    } catch (error) {
+      setGit({ state: 'error', error: error instanceof Error ? error.message : String(error) });
+    }
+  }, [project]);
+
+  useEffect(() => { void refreshGit(); }, [refreshGit]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setKnowledge(null);
+    setKnowledgeError('');
+    if (!vaultConfigured) return () => { cancelled = true; };
+    void window.hive.knowledgeStatus(projectId).then((status) => {
+      if (!cancelled) setKnowledge(status);
+    }).catch((error) => {
+      if (!cancelled) setKnowledgeError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, [projectId, vaultConfigured, vaultConnectionKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAutomations(null);
+    setAutomationError('');
+    if (!vaultConfigured) {
+      setAutomations([]);
+      return () => { cancelled = true; };
+    }
+    const refresh = (): void => {
+      void window.hive.knowledgeAutomationStatus(projectId).then((statuses) => {
+        if (!cancelled) { setAutomations(statuses); setAutomationError(''); }
+      }).catch((error) => {
+        if (!cancelled) setAutomationError(error instanceof Error ? error.message : String(error));
+      });
+    };
+    refresh();
+    const automationRefresh = window.setInterval(refresh, 60_000);
+    return () => { cancelled = true; window.clearInterval(automationRefresh); };
+  }, [projectId, vaultConfigured]);
+
+  if (!project) {
+    return (
+      <main className="flex flex-1 items-center justify-center bg-bg p-6">
+        <div className="max-w-sm text-center">
+          <p className="text-sm font-medium text-fg">Project not found</p>
+          <p className="mt-1 text-xs text-fg-subtle">It may have been removed from Hive.</p>
+          <button onClick={closeCockpit} className="mt-4 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white">Back to chat</button>
+        </div>
+      </main>
+    );
+  }
+
+  const vaultState = !vaultConfigured
+    ? 'unconfigured'
+    : knowledgeError
+      ? 'error'
+      : !knowledge
+        ? 'loading'
+        : !knowledge.configured
+          ? 'unconfigured'
+          : !knowledge.connected
+            ? 'offline'
+            : knowledge.missing.length
+              ? 'limited'
+              : 'ready';
+  const automationApproved = vaultConfigured && !!project.config?.knowledge?.allowAutomationWrites;
+  const hasCapabilities = (...required: KnowledgeCapability[]): boolean =>
+    !!knowledge?.connected && required.every((capability) => knowledge.capabilities.includes(capability));
+  const canBootstrap = automationApproved && hasCapabilities('read', 'write');
+  const canRetryCaptures = automationApproved && hasCapabilities('write');
+  const canRunAutomation = automationApproved && hasCapabilities('list', 'read', 'write', 'append');
+  const canOpenAutomation = hasCapabilities('open');
+
+  const newChat = async (): Promise<void> => {
+    await createConversation({ title: 'New chat', projectId });
+  };
+
+  const openCode = async (): Promise<void> => {
+    await updateSettings({ codeFolder: project.path });
+    const state = useAppStore.getState();
+    if (!state.codeTabOpen) state.toggleCodeTab();
+  };
+
+  const refreshVault = async (): Promise<void> => {
+    const [status, schedules] = await Promise.all([
+      window.hive.knowledgeStatus(projectId),
+      window.hive.knowledgeAutomationStatus(projectId)
+    ]);
+    setKnowledge(status);
+    setKnowledgeError('');
+    setAutomations(schedules);
+    setAutomationError('');
+  };
+
+  const initializeVault = async (): Promise<void> => {
+    if (!canBootstrap || vaultAction) return;
+    setVaultAction('bootstrap');
+    setVaultNotice('');
+    try {
+      const result = await window.hive.knowledgeBootstrap(projectId);
+      setVaultNotice(result.created.length
+        ? `Created ${result.created.length} vault file${result.created.length === 1 ? '' : 's'}.`
+        : 'Vault structure is already initialized.');
+      await refreshVault();
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const retryQueuedCaptures = async (): Promise<void> => {
+    if (!canRetryCaptures || vaultAction) return;
+    setVaultAction('outbox');
+    setVaultNotice('');
+    try {
+      const result = await window.hive.knowledgeRetryOutbox(projectId);
+      setVaultNotice(result.retried === 0
+        ? 'No queued captures.'
+        : `Delivered ${result.delivered}/${result.retried} queued capture${result.retried === 1 ? '' : 's'}${result.failed ? `; ${result.failed} still queued` : ''}.`);
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const saveAutomation = async (input: KnowledgeAutomationSaveRequest): Promise<boolean> => {
+    if (!automationApproved || vaultAction) return false;
+    setVaultAction(`save:${input.kind}`);
+    setVaultNotice('');
+    try {
+      await window.hive.knowledgeAutomationSave(input);
+      setVaultNotice(`${automationLabel(input.kind)} schedule saved.`);
+      await refreshVault();
+      return true;
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const runAutomation = async (kind: KnowledgeAutomationKind): Promise<void> => {
+    if (!canRunAutomation || vaultAction) return;
+    setVaultAction(`run:${kind}`);
+    setVaultNotice('');
+    try {
+      const result = await window.hive.knowledgeAutomationRunNow(projectId, kind);
+      setVaultNotice(result.status === 'completed'
+        ? `${automationLabel(kind)} written to ${result.path}.`
+        : result.path
+          ? `${automationLabel(kind)} already exists at ${result.path}.`
+          : `${automationLabel(kind)} is already running.`);
+      await refreshVault();
+    } catch (error) {
+      setVaultNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultAction('');
+    }
+  };
+
+  const openAutomation = async (automation: KnowledgeAutomationStatus): Promise<void> => {
+    if (!canOpenAutomation || !automation.lastRunKey || !automation.lastRunAt || automation.error) return;
+    const path = automation.kind === 'morning-digest'
+      ? `Daily/${automation.lastRunKey}.md`
+      : `Weekly/${automation.lastRunKey}.md`;
+    try { await window.hive.knowledgeOpen({ projectId, path, newLeaf: true }); }
+    catch (error) { setVaultNotice(error instanceof Error ? error.message : String(error)); }
+  };
+
+  return (
+    <main className="min-w-0 flex-1 overflow-y-auto bg-bg" aria-labelledby="project-cockpit-title">
+      <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8">
+        <header className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <button onClick={closeCockpit} className="mb-3 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.16em] text-fg-subtle hover:text-accent">
+              <span aria-hidden="true">←</span> Chat workspace
+            </button>
+            <div className="flex items-start gap-3">
+              <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-bg-elev text-xl shadow-elev-sm">{project.icon || '📁'}</span>
+              <div className="min-w-0">
+                <h1 id="project-cockpit-title" className="truncate text-2xl font-semibold tracking-tight text-fg">{project.name}</h1>
+                <p className="mt-1 truncate font-mono text-[11px] text-fg-subtle" title={project.path}>{project.path}</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton label="New chat" onClick={() => void newChat()} primary />
+            <ActionButton label="Open code" onClick={() => void openCode()} />
+          </div>
+        </header>
+
+        <section className="overflow-hidden rounded-xl border border-border bg-bg-elev shadow-elev-sm" aria-label="Project evidence board">
+          <div className="relative grid gap-0 px-4 py-4 sm:grid-cols-3 sm:px-6">
+            <div className="absolute left-[16.5%] right-[16.5%] top-[30px] hidden border-t border-border sm:block" aria-hidden="true" />
+            <EvidenceNode label="Git" value={git.state === 'ready' ? git.branch || 'detached' : git.state === 'loading' ? 'checking' : 'not linked'} tone={git.state === 'ready' ? (git.changes ? 'warn' : 'good') : 'muted'} />
+            <EvidenceNode label="Working set" value={`${projectConversations.length} thread${projectConversations.length === 1 ? '' : 's'}`} tone={projectConversations.length ? 'good' : 'muted'} />
+            <EvidenceNode label="Vault" value={vaultState === 'ready' ? 'linked' : vaultState.replaceAll('_', ' ')} tone={vaultState === 'ready' ? 'good' : vaultState === 'error' || vaultState === 'offline' || vaultState === 'limited' ? 'warn' : 'muted'} />
+          </div>
+
+          <div className="grid border-t border-border lg:grid-cols-[minmax(0,1.65fr)_minmax(18rem,0.85fr)]">
+            <div className="min-w-0 lg:border-r lg:border-border">
+              <section className="px-4 py-5 sm:px-6" aria-labelledby="working-set-title">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-fg-subtle">Recent activity</div>
+                    <h2 id="working-set-title" className="mt-0.5 text-sm font-semibold text-fg">Working set</h2>
+                  </div>
+                  <span className="font-mono text-[10px] text-fg-subtle">{projectConversations.length.toString().padStart(2, '0')} threads</span>
+                </div>
+                {projectConversations.length === 0 ? (
+                  <div className="border-l-2 border-border py-4 pl-4">
+                    <p className="text-xs font-medium text-fg">No project chats yet</p>
+                    <p className="mt-1 text-xs text-fg-subtle">Start a chat to create the first record.</p>
+                  </div>
+                ) : (
+                  <ol className="divide-y divide-border border-y border-border">
+                    {projectConversations.slice(0, 8).map((conversation) => (
+                      <li key={conversation.id}>
+                        <button
+                          onClick={() => void selectConversation(conversation.id)}
+                          className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-1 py-3 text-left hover:bg-bg-input/60"
+                        >
+                          <span className="h-2 w-2 rounded-sm border border-border-strong bg-bg-elev" />
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-medium text-fg">{conversation.title}</span>
+                            <span className="mt-0.5 block truncate text-[10px] text-fg-subtle">{conversation.messageCount} messages{conversation.preview ? ` · ${conversation.preview}` : ''}</span>
+                          </span>
+                          <span className="font-mono text-[9px] text-fg-subtle">{relativeTime(conversation.updatedAt)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            </div>
+
+            <aside className="min-w-0 divide-y divide-border" aria-label="Project health">
+              <BoardPanel eyebrow="Repository" title="Git identity" action={<button onClick={() => void refreshGit()} className="text-[10px] text-fg-subtle hover:text-accent">Refresh</button>}>
+                {git.state === 'loading' ? <PanelNote>Reading repository…</PanelNote> : git.state === 'ready' ? (
+                  <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
+                    <dt className="text-fg-subtle">Branch</dt><dd className="truncate font-mono text-fg">{git.branch}</dd>
+                    <dt className="text-fg-subtle">Worktree</dt><dd className={git.changes ? 'text-warn' : 'text-success'}>{git.changes ? `${git.changes} changed` : 'Clean'}</dd>
+                    <dt className="text-fg-subtle">Commit</dt><dd className="min-w-0"><span className="font-mono text-accent">{git.commit || '—'}</span><span className="ml-2 text-fg-muted">{git.subject}</span></dd>
+                  </dl>
+                ) : <PanelNote>{git.error || 'This folder is not a Git repository.'}</PanelNote>}
+              </BoardPanel>
+
+              <BoardPanel eyebrow="Knowledge" title="Obsidian vault" action={<button onClick={openProjectSettings} className="text-[10px] text-fg-subtle hover:text-accent">Configure</button>}>
+                <div className="flex items-start gap-3">
+                  <StatusMark tone={vaultState === 'ready' ? 'good' : vaultState === 'offline' || vaultState === 'error' || vaultState === 'limited' ? 'warn' : 'muted'} />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-fg">{vaultState === 'ready' ? 'Vault ready' : vaultState === 'loading' ? 'Checking vault' : vaultState === 'offline' ? 'Server offline' : vaultState === 'limited' ? 'Limited capabilities' : vaultState === 'error' ? 'Vault error' : 'Vault not linked'}</p>
+                    <p className="mt-1 truncate font-mono text-[10px] text-fg-subtle">{project.config?.knowledge?.folder || 'Choose a server and folder'}</p>
+                    {(knowledgeError || knowledge?.error) && <p className="mt-1 text-[10px] text-danger">{knowledgeError || knowledge?.error}</p>}
+                  </div>
+                </div>
+                {vaultConfigured && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void initializeVault()}
+                      disabled={!canBootstrap || !!vaultAction}
+                      className="rounded-md border border-border bg-bg-input px-2 py-1 text-[10px] font-medium text-fg-muted hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    >{vaultAction === 'bootstrap' ? 'Initializing…' : 'Initialize vault'}</button>
+                    <button
+                      onClick={() => void retryQueuedCaptures()}
+                      disabled={!canRetryCaptures || !!vaultAction}
+                      className="rounded-md border border-border bg-bg-input px-2 py-1 text-[10px] font-medium text-fg-muted hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    >{vaultAction === 'outbox' ? 'Retrying…' : 'Retry queued'}</button>
+                  </div>
+                )}
+                {vaultConfigured && !automationApproved && (
+                  <p className="mt-3 text-[10px] leading-relaxed text-warn">Approve scoped automatic writes in project settings to initialize the folder, save browser captures, or run vault jobs.</p>
+                )}
+                {vaultNotice && <p className="mt-3 text-[10px] leading-relaxed text-fg-subtle" role="status">{vaultNotice}</p>}
+              </BoardPanel>
+
+              <BoardPanel eyebrow="Vault rhythm" title="Daily & weekly jobs">
+                {!vaultConfigured ? <PanelNote>Link an Obsidian folder to this project first.</PanelNote> : (
+                  <div className="space-y-3">
+                    {automationError && <p className="text-xs leading-relaxed text-danger" role="alert">{automationError}</p>}
+                    {automations === null ? (automationError ? null : <PanelNote>Loading vault jobs…</PanelNote>) : (['morning-digest', 'weekly-synthesis'] as const).map((kind) => (
+                      <VaultAutomationRow
+                        key={kind}
+                        projectId={projectId}
+                        kind={kind}
+                        status={automations.find((automation) => automation.kind === kind)}
+                        models={automationModels}
+                        defaultModel={selectedAutomationModel}
+                        canSave={automationApproved}
+                        canRun={canRunAutomation}
+                        canOpen={canOpenAutomation}
+                        busy={!!vaultAction}
+                        onSave={saveAutomation}
+                        onRun={runAutomation}
+                        onOpen={openAutomation}
+                      />
+                    ))}
+                  </div>
+                )}
+              </BoardPanel>
+
+              <BoardPanel eyebrow="Profile" title="Project controls">
+                <p className="text-xs leading-relaxed text-fg-muted">Vault routing and other project options live in project settings.</p>
+                <button onClick={openProjectSettings} className="mt-3 rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-xs font-medium text-fg hover:border-accent/50 hover:text-accent">Edit project settings</button>
+              </BoardPanel>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function VaultAutomationRow({
+  projectId,
+  kind,
+  status,
+  models,
+  defaultModel,
+  canSave,
+  canRun,
+  canOpen,
+  busy,
+  onSave,
+  onRun,
+  onOpen
+}: {
+  projectId: string;
+  kind: KnowledgeAutomationKind;
+  status?: KnowledgeAutomationStatus;
+  models: AutomationModelOption[];
+  defaultModel?: AutomationModelOption;
+  canSave: boolean;
+  canRun: boolean;
+  canOpen: boolean;
+  busy: boolean;
+  onSave: (input: KnowledgeAutomationSaveRequest) => Promise<boolean>;
+  onRun: (kind: KnowledgeAutomationKind) => Promise<void>;
+  onOpen: (automation: KnowledgeAutomationStatus) => Promise<void>;
+}): JSX.Element {
+  const weekly = kind === 'weekly-synthesis';
+  const [enabled, setEnabled] = useState(status?.enabled ?? false);
+  const [time, setTime] = useState(formatAutomationTime(status?.localHour ?? (weekly ? 8 : 7), status?.localMinute ?? 0));
+  const [weekday, setWeekday] = useState(status?.weeklyWeekday ?? 0);
+  const [modelValue, setModelValue] = useState(status
+    ? JSON.stringify([status.providerId, status.model])
+    : defaultModel?.value || '');
+  const [dirty, setDirty] = useState(false);
+  const label = automationLabel(kind);
+  const titleId = `vault-automation-${kind}`;
+  const errorId = `${titleId}-error`;
+  const statusModelValue = status ? JSON.stringify([status.providerId, status.model]) : '';
+  const statusModelUnavailable = !!status && !models.some((model) => model.value === statusModelValue);
+
+  useEffect(() => {
+    if (dirty) return;
+    if (status) {
+      setEnabled(status.enabled);
+      setTime(formatAutomationTime(status.localHour, status.localMinute));
+      setWeekday(status.weeklyWeekday ?? 0);
+      setModelValue(JSON.stringify([status.providerId, status.model]));
+    } else if (defaultModel) {
+      setModelValue((current) => current || defaultModel.value);
+    }
+  }, [canSave, defaultModel, dirty, status]);
+
+  const save = async (): Promise<void> => {
+    const selected = models.find((model) => model.value === modelValue)
+      || (!enabled && status && modelValue === statusModelValue
+        ? { providerId: status.providerId, model: status.model }
+        : undefined);
+    const match = /^(\d{2}):(\d{2})$/.exec(time);
+    if (!selected || !match) return;
+    const saved = await onSave({
+      projectId,
+      kind,
+      enabled,
+      localHour: Number(match[1]),
+      localMinute: Number(match[2]),
+      ...(weekly ? { weeklyWeekday: weekday } : {}),
+      providerId: selected.providerId,
+      model: selected.model
+    });
+    if (saved) setDirty(false);
+  };
+
+  return (
+    <div
+      role="group"
+      aria-labelledby={titleId}
+      aria-describedby={status?.error ? errorId : undefined}
+      aria-busy={busy || status?.running}
+      className="rounded-lg border border-border bg-bg-input/50 p-3"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div id={titleId} className="text-xs font-medium text-fg">{label}</div>
+          <div className="mt-0.5 text-[9px] text-fg-subtle">
+            {status?.running ? 'Running now' : status?.lastRunAt ? `Last run ${relativeTime(status.lastRunAt)}` : 'Not run yet'}
+          </div>
+        </div>
+        <label className="flex items-center gap-1.5 text-[10px] text-fg-muted">
+          <input aria-label={`${label} enabled`} type="checkbox" checked={enabled} onChange={(event) => { setEnabled(event.target.checked); setDirty(true); }} disabled={!canSave || busy} className="accent-accent" />
+          Enabled
+        </label>
+      </div>
+
+      <div className={`mt-2 grid gap-2 ${weekly ? 'grid-cols-[6.5rem_1fr]' : 'grid-cols-1'}`}>
+        {weekly && (
+          <select
+            aria-label="Weekly synthesis weekday"
+            value={weekday}
+            onChange={(event) => { setWeekday(Number(event.target.value)); setDirty(true); }}
+            disabled={!canSave || busy}
+            className="min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
+          >
+            {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, index) => <option key={day} value={index}>{day}</option>)}
+          </select>
+        )}
+        <input
+          aria-label={`${label} local time`}
+          type="time"
+          value={time}
+          onChange={(event) => { setTime(event.target.value); setDirty(true); }}
+          disabled={!canSave || busy}
+          className="min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
+        />
+      </div>
+
+      <select
+        aria-label={`${label} model`}
+        value={modelValue}
+        onChange={(event) => { setModelValue(event.target.value); setDirty(true); }}
+        disabled={!canSave || busy || (models.length === 0 && !statusModelUnavailable)}
+        className="mt-2 w-full min-w-0 rounded-md border border-border bg-bg-elev px-2 py-1 text-[10px] text-fg outline-none focus:border-accent disabled:opacity-40"
+      >
+        {models.length === 0 && !statusModelUnavailable && <option value="">No enabled model</option>}
+        {statusModelUnavailable && <option value={statusModelValue}>{status?.providerId} — {status?.model} (unavailable)</option>}
+        {models.map((model) => <option key={model.value} value={model.value}>{model.label}</option>)}
+      </select>
+
+      {status?.error && <p id={errorId} className="mt-2 text-[9px] leading-relaxed text-danger">{status.error}</p>}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button aria-label={`Save ${label} schedule`} onClick={() => void save()} disabled={!canSave || busy || !(models.some((model) => model.value === modelValue) || (!enabled && statusModelUnavailable && modelValue === statusModelValue)) || !/^\d{2}:\d{2}$/.test(time)} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Save</button>
+        <button aria-label={`Run ${label} now`} onClick={() => void onRun(kind)} disabled={!canRun || busy || !status || status.running} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Run now</button>
+        {status?.lastRunKey && status.lastRunAt && !status.error && <button aria-label={`Open ${label} note`} onClick={() => void onOpen(status)} disabled={!canOpen || busy} className="text-[10px] font-medium text-fg-muted hover:text-accent disabled:opacity-40">Open note</button>}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceNode({ label, value, tone }: { label: string; value: string; tone: 'good' | 'warn' | 'muted' }): JSX.Element {
+  return (
+    <div className="relative z-10 flex items-center gap-3 border-b border-border py-2 last:border-0 sm:block sm:border-0 sm:py-0 sm:text-center">
+      <StatusMark tone={tone} large />
+      <div className="mt-0 sm:mt-2">
+        <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-fg-subtle">{label}</div>
+        <div className="mt-0.5 truncate text-xs font-medium text-fg">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function StatusMark({ tone, large = false }: { tone: 'good' | 'warn' | 'muted'; large?: boolean }): JSX.Element {
+  const color = tone === 'good' ? 'border-success bg-success' : tone === 'warn' ? 'border-warn bg-warn' : 'border-border-strong bg-bg-elev';
+  return <span aria-hidden="true" className={`inline-block flex-shrink-0 rounded-sm border-2 ${color} ${large ? 'h-3 w-3 shadow-[0_0_0_4px_var(--bg-elev)]' : 'mt-0.5 h-2.5 w-2.5'}`} />;
+}
+
+function BoardPanel({ eyebrow, title, action, children }: { eyebrow: string; title: string; action?: React.ReactNode; children: React.ReactNode }): JSX.Element {
+  return (
+    <section className="px-4 py-4 sm:px-5">
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <div>
+          <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-fg-subtle">{eyebrow}</div>
+          <h2 className="mt-0.5 text-sm font-semibold text-fg">{title}</h2>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function PanelNote({ children }: { children: React.ReactNode }): JSX.Element {
+  return <p className="text-xs leading-relaxed text-fg-subtle">{children}</p>;
+}
+
+function ActionButton({ label, onClick, primary = false, disabled = false }: { label: string; onClick: () => void; primary?: boolean; disabled?: boolean }): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-md px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${primary ? 'bg-accent text-white hover:bg-accent-hover' : 'border border-border bg-bg-elev text-fg-muted hover:border-accent/50 hover:text-fg'}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function automationLabel(kind: KnowledgeAutomationKind): string {
+  return kind === 'morning-digest' ? 'Morning digest' : 'Weekly synthesis';
+}
+
+function formatAutomationTime(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function relativeTime(timestamp: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return 'now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return days < 30 ? `${days}d` : new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}

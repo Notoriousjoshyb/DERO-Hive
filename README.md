@@ -13,9 +13,13 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - Composer agents (persona presets, built-in + custom), a prompt library inserted via `#` with `{{clipboard}}`/`{{date}}` variables, and fuzzy `/` skill + `@` file autocomplete.
 - Inline Mermaid diagrams and KaTeX math in chat; token & estimated-cost usage dashboard; native desktop notifications when responses finish in the background.
 - Built-in file, shell, Git, artifact, voice, and permission workflows. Keyboard shortcuts cheatsheet on `?`.
-- MCP server support with a curated Discover catalog, bundled DERO MCP resources, and DERO-focused skills.
+- MCP server support over stdio or remote HTTP, with encrypted server credentials, a curated Discover catalog for one-click installs, bundled DERO MCP resources, and DERO-focused skills you can also import from any local `SKILL.md` folder.
+- Tool approval modes — always, never, or scoped to the current conversation/project so you're asked once per tool instead of every call.
+- Provider fallback chains: configure backup provider/model pairs that Hive tries automatically if the primary one errors before producing output.
+- Swarm: run specialists in parallel on a task, followed by an automatic Verify pass that fact-checks their reports against the codebase before a Synthesizer produces the final answer.
+- Optional per-project knowledge vault: capture notes into an Obsidian vault (via MCP), with consent-gated automatic writes, scheduled daily digests and weekly syntheses, and an offline retry queue.
 - Appearance engine: themes, accent colour override, and custom CSS injection.
-- Browser Companion extension (Chrome/Edge side panel) that sends page context to DERO Hive and streams replies live back into the browser. See below.
+- Browser Companion extension (Chrome/Edge side panel) that sends page context to DERO Hive, streams replies live back into the browser, and can save captured context straight into a project's knowledge vault. See below.
 
 ## Requirements
 
@@ -78,11 +82,12 @@ Codex normally stores its reusable credentials in the operating-system credentia
 
 `browser-extension/` contains a Manifest V3 side-panel extension for Chrome/Edge. Load it via `chrome://extensions` → Developer mode → **Load unpacked**, then open it with the toolbar icon or **Alt+H**.
 
-While the desktop app is running, the extension pairs automatically with a loopback-only bridge on `127.0.0.1:43120` (ephemeral token, rotated each app start). It can then:
+While the desktop app is running, it exposes a loopback-only bridge on `127.0.0.1:43120` restricted to extension origins. Pairing requires a one-time code: DERO Hive's Hive Companion panel shows a short code, which you enter once in the extension's settings to exchange for a bound, hashed credential (revocable from the Hive Companion panel). Once paired, the extension can:
 
 - Capture the active page, a drag-to-snip region, or the open-tab list as transparent, untrusted context.
 - Stream replies token-by-token into the side panel (SSE) with collapsed model thinking, tool-activity chips, and Markdown rendering.
 - Sync the selected provider/model with the app in both directions.
+- Save captured page context into the active project's knowledge vault, when one is configured.
 - Dictate prompts through the app's bundled local Whisper — fully offline.
 
 Extension requests always run as a single agent and never move focus away from the browser. Full details in [`browser-extension/README.md`](browser-extension/README.md).
@@ -95,20 +100,23 @@ Different providers expose reasoning differently. DERO Hive only sends provider-
 
 ## Security model
 
-- API secrets remain in the Electron main process and use Electron safe storage where available.
-- File and shell IPC paths are restricted to the workspace or configured project directories.
-- Codex ACP actions are routed through the existing allow/deny permission dialog.
+- API secrets, MCP server environment variables, and MCP bearer tokens remain in the Electron main process, encrypted at rest via Electron safe storage where available.
+- File and shell IPC paths are restricted to the workspace or configured project directories; path containment checks resolve symlinks so a link inside the workspace can't point an operation outside it.
+- Codex ACP actions and MCP tool calls are routed through the same allow/deny permission dialog, with always/never/session/project approval scopes.
+- The Browser Companion bridge only accepts requests from a paired extension origin bound to a hashed, one-time-code-verified credential — not any webpage that happens to reach `127.0.0.1`.
 - The in-app update action opens the canonical GitHub release page; it does not download or execute unverified installers.
 
 ## Project layout
 
 ```text
 src/main/                 Electron main process, IPC, providers, tools, and services
+src/main/knowledge/       Project knowledge vault service and digest/synthesis scheduler
 src/preload/              Context-isolated renderer API
 src/renderer/src/         React user interface and Zustand state
 src/shared/               Shared types, presets, model metadata, capabilities
 browser-extension/        Chrome/Edge side-panel Browser Companion (unpacked MV3 extension)
 resources/mcp/            Bundled DERO MCP server source and assets
+resources/mcp-registry.json  Curated seed registry for the MCP Discover tab
 resources/skills/         Bundled DERO development skills
 scripts/                  Resource setup and Codex ACP patch scripts
 ```

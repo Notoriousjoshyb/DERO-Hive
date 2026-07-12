@@ -105,7 +105,7 @@ export function estimateAttachmentsTokens(attachments: Attachment[]): number {
     // Vision models charge by tile/detail: low ~85 tokens, high ~170 per image.
     if (a.type === 'image') total += 170;
     else if (a.type === 'audio') total += 200;
-    else if (a.type === 'file') total += Math.ceil((a.data?.length || 0) / 4);
+    else if (a.type === 'file') total += Math.ceil((a.size || 0) / 4);
   }
   return total;
 }

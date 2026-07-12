@@ -24,13 +24,17 @@ export function HiveCompanionPanel(): JSX.Element {
   const [notes, setNotes] = useState<ContextNote[]>([]);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ title: '', url: '', text: '' });
-  const [bridge, setBridge] = useState<{ enabled: boolean; port: number; pairingCode?: string }>({ enabled: false, port: 43120 });
+  const [bridge, setBridge] = useState<{ enabled: boolean; port: number; pairingCode?: string; paired: boolean }>({ enabled: false, port: 43120, paired: false });
 
   useEffect(() => {
     let active = true;
     void window.hive.browserBridgeSetEnabled(true).then((status) => { if (active) setBridge(status); });
     return () => { active = false; };
   }, []);
+
+  const revokePairing = (): void => {
+    void window.hive.browserBridgeRevokePairing().then(setBridge);
+  };
 
   const chatExcerpt = useMemo(() => messages.slice(-4).map((message) => {
     const content = typeof message.content === 'string'
@@ -84,11 +88,20 @@ export function HiveCompanionPanel(): JSX.Element {
           <div className="flex items-center justify-between gap-2">
             <div>
               <h3 className="text-xs font-semibold text-fg">Browser Companion bridge</h3>
-              <p className="mt-0.5 text-[10px] text-fg-subtle">{bridge.enabled ? 'Local-only bridge is ready' : 'Starting local-only bridge…'}</p>
+              <p className="mt-0.5 text-[10px] text-fg-subtle">{bridge.enabled ? (bridge.paired ? 'Extension paired' : 'Waiting for the extension to pair') : 'Starting local-only bridge…'}</p>
             </div>
             <span className={`h-2 w-2 rounded-full ${bridge.enabled ? 'bg-success' : 'bg-warn animate-pulse'}`} />
           </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">The DERO Hive Browser Companion connects automatically whenever the app is running.</p>
+          {bridge.pairingCode && !bridge.paired && (
+            <div className="mt-2 rounded-lg border border-border bg-bg/70 p-2">
+              <p className="text-[10px] text-fg-subtle">Enter this code in the Browser Companion extension to pair it:</p>
+              <p className="mt-1 text-center font-mono text-sm font-semibold tracking-widest text-fg">{bridge.pairingCode}</p>
+            </div>
+          )}
+          {bridge.paired && (
+            <button onClick={revokePairing} className="mt-2 text-[10px] font-medium text-danger hover:underline">Unpair extension</button>
+          )}
+          <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">The DERO Hive Browser Companion connects locally once paired with a one-time code.</p>
         </section>
 
         <section className="rounded-xl border border-accent/25 bg-accent-soft/30 p-3">

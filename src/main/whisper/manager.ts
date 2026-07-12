@@ -50,7 +50,10 @@ export class WhisperManager {
 
   private resolveModelPath(model: string | undefined): string | null {
     const name = model || this.listModels()[0];
-    if (!name) return null;
+    // Model names cross the renderer/main boundary. Only accept a filename
+    // actually discovered in one of the model directories; joining an
+    // arbitrary value here otherwise permits ../ path traversal.
+    if (!name || !this.listModels().includes(name)) return null;
     for (const dir of this.modelDirs()) {
       const p = join(dir, name);
       if (existsSync(p)) return p;
@@ -199,6 +202,16 @@ export class WhisperManager {
    * Starts the server on demand if it isn't up yet.
    */
   async transcribe(wavBase64: string, model?: string): Promise<{ text: string } | { error: string }> {
+    const maxWavBytes = 30 * 1024 * 1024;
+    if (typeof wavBase64 !== 'string' || wavBase64.length > Math.ceil(maxWavBytes / 3) * 4 + 4) {
+      return { error: 'Audio is too large (max 30 MB)' };
+    }
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(wavBase64) || wavBase64.length % 4 === 1) {
+      return { error: 'Invalid base64 audio data' };
+    }
+    const bytes = Buffer.from(wavBase64, 'base64');
+    if (bytes.length > maxWavBytes) return { error: 'Audio is too large (max 30 MB)' };
+
     if (!this.proc || !this.port) {
       await this.start(model);
     }
@@ -211,9 +224,8 @@ export class WhisperManager {
     try { mkdirSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
     const wavPath = join(tmpDir, `rec-${Date.now()}.wav`);
     try {
-      writeFileSync(wavPath, Buffer.from(wavBase64, 'base64'));
+      writeFileSync(wavPath, bytes);
       const form = new FormData();
-      const bytes = Buffer.from(wavBase64, 'base64');
       form.append('file', new Blob([bytes], { type: 'audio/wav' }), 'audio.wav');
       form.append('response_format', 'json');
       form.append('temperature', '0.0');

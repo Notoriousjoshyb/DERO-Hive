@@ -3,6 +3,7 @@ import { IPC, type Conversation, type Message } from '@shared/types';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client';
 import { closeConversationSessions } from '../providers/registry';
+import { deleteStoredAttachments, serializedAttachmentIds } from '../utils/attachments';
 
 export function registerConvHandlers(): void {
   ipcMain.handle(IPC.CONV_LIST, (_e, opts?: { archived?: boolean; projectPath?: string }) => {
@@ -66,17 +67,29 @@ export function registerConvHandlers(): void {
 
   ipcMain.handle(IPC.CONV_DELETE, async (_e, id: string) => {
     await closeConversationSessions(id);
-    getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id);
-    getDb().prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
-    getDb().prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(id);
+    const db = getDb();
+    const removed = db.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(id) as Array<{ content: string }>;
+    const candidateIds = removed.flatMap((row) => serializedAttachmentIds(row.content));
+    db.prepare('DELETE FROM conversations WHERE id = ?').run(id);
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+    db.prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(id);
+
+    // A full content scan is fine at local-chat scale; add an attachment
+    // table only if profiling proves this scan is material.
+    const referenced = new Set(
+      (db.prepare("SELECT content FROM messages WHERE content LIKE '%attachment_ref%'").all() as Array<{ content: string }>)
+        .flatMap((row) => serializedAttachmentIds(row.content))
+    );
+    await deleteStoredAttachments(candidateIds.filter((attachmentId) => !referenced.has(attachmentId)));
     return { ok: true };
   });
 
-  ipcMain.handle(IPC.CONV_REVERT, (_e, { conversationId, messageId }: { conversationId: string; messageId: string }) => {
-    const messages = getDb().prepare('SELECT id, sort_order FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC').all(conversationId) as Array<{ id: string; sort_order: number }>;
+  ipcMain.handle(IPC.CONV_REVERT, async (_e, { conversationId, messageId }: { conversationId: string; messageId: string }) => {
+    const messages = getDb().prepare('SELECT id, sort_order, content FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC').all(conversationId) as Array<{ id: string; sort_order: number; content: string }>;
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return { ok: false, error: 'message not found' };
     const keepIds = messages.slice(0, idx + 1).map((m) => m.id);
+    const removedAttachmentIds = messages.slice(idx + 1).flatMap((m) => serializedAttachmentIds(m.content));
     const placeholders = keepIds.map(() => '?').join(',');
     const db = getDb();
     db.transaction(() => {
@@ -84,6 +97,7 @@ export function registerConvHandlers(): void {
       db.prepare('DELETE FROM messages_fts WHERE conversation_id = ? AND message_id NOT IN (' + placeholders + ')').run(conversationId, ...keepIds);
       db.prepare('UPDATE conversations SET updated_at = ?, message_count = ? WHERE id = ?').run(Date.now(), keepIds.length, conversationId);
     })();
+    await deleteUnreferencedAttachments(removedAttachmentIds);
     return { ok: true, keptCount: keepIds.length };
   });
 
@@ -93,52 +107,63 @@ export function registerConvHandlers(): void {
 
     const messages = getDb().prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC').all(conversationId) as Array<Record<string, unknown>>;
 
-    let startIndex = 0;
+    let endIndex = messages.length - 1;
     if (messageId) {
       const idx = messages.findIndex((m) => m.id === messageId);
-      if (idx >= 0) startIndex = idx;
+      if (idx < 0) return null;
+      endIndex = idx;
     }
 
     const newConvId = randomUUID();
     const now = Date.now();
-    getDb().prepare(`
+    const db = getDb();
+    const insertConv = db.prepare(`
       INSERT INTO conversations (id, title, created_at, updated_at, provider_id, model, system_prompt, project_id, parent_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      newConvId,
-      `Fork: ${conv.title}`,
-      now, now,
-      conv.provider_id,
-      conv.model,
-      conv.system_prompt,
-      conv.project_id,
-      conversationId
-    );
+    `);
 
-    const insertMsg = getDb().prepare(`
+    const insertMsg = db.prepare(`
       INSERT INTO messages (id, conversation_id, role, content, reasoning, tool_calls, tool_call_id, name, model, provider, usage, error, created_at, sort_order)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-
-    for (let i = startIndex; i < messages.length; i++) {
-      const m = messages[i];
-      insertMsg.run(
-        randomUUID(),
+    const insertFts = db.prepare(`
+      INSERT INTO messages_fts (rowid, content, conversation_id, message_id)
+      VALUES (last_insert_rowid(), ?, ?, ?)
+    `);
+    db.transaction(() => {
+      insertConv.run(
         newConvId,
-        m.role,
-        m.content,
-        m.reasoning || null,
-        m.tool_calls || null,
-        m.tool_call_id || null,
-        m.name || null,
-        m.model || null,
-        m.provider || null,
-        m.usage || null,
-        m.error || null,
-        now + (i - startIndex),
-        i - startIndex
+        `Fork: ${conv.title}`,
+        now, now,
+        conv.provider_id,
+        conv.model,
+        conv.system_prompt,
+        conv.project_id,
+        conversationId
       );
-    }
+      for (let i = 0; i <= endIndex; i++) {
+        const m = messages[i];
+        const newMessageId = randomUUID();
+        insertMsg.run(
+          newMessageId,
+          newConvId,
+          m.role,
+          m.content,
+          m.reasoning || null,
+          m.tool_calls || null,
+          m.tool_call_id || null,
+          m.name || null,
+          m.model || null,
+          m.provider || null,
+          m.usage || null,
+          m.error || null,
+          now + i,
+          i
+        );
+        if (typeof m.content === 'string') insertFts.run(m.content, newConvId, newMessageId);
+      }
+      db.prepare('UPDATE conversations SET message_count = ? WHERE id = ?').run(endIndex + 1, newConvId);
+    })();
 
     return { id: newConvId };
   });
@@ -148,7 +173,7 @@ export function registerConvHandlers(): void {
     return { ok: true };
   });
 
-  ipcMain.handle(IPC.MSG_UPDATE, (_e, { messageId, content }: { messageId: string; content: string }) => {
+  ipcMain.handle(IPC.MSG_UPDATE, async (_e, { messageId, content }: { messageId: string; content: string }) => {
     const msg = getDb().prepare('SELECT conversation_id, content FROM messages WHERE id = ?').get(messageId) as { conversation_id: string; content: string } | undefined;
     if (!msg) return { ok: false, error: 'message not found' };
     const contentText = typeof content === 'string' ? content : JSON.stringify(content);
@@ -158,6 +183,7 @@ export function registerConvHandlers(): void {
     getDb().prepare('INSERT INTO messages_fts (rowid, content, conversation_id, message_id) VALUES ((SELECT rowid FROM messages WHERE id = ?), ?, ?, ?)')
       .run(messageId, contentText, msg.conversation_id, messageId);
     getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversation_id);
+    await deleteUnreferencedAttachments(serializedAttachmentIds(msg.content));
     return { ok: true };
   });
 
@@ -236,7 +262,7 @@ export function registerConvHandlers(): void {
     }));
   });
 
-  ipcMain.handle(IPC.CONV_COMPACT, (_e, conversationId: string) => {
+  ipcMain.handle(IPC.CONV_COMPACT, async (_e, conversationId: string) => {
     const config = {
       keepRecentMessages: 6,
       truncateToolOutputChars: 4000,
@@ -402,6 +428,10 @@ export function registerConvHandlers(): void {
       `).run(systemMsgs.length + 1 + recent.length, Math.round(afterTokens), now, tokensSaved, Date.now(), conversationId);
     })();
 
+    await deleteUnreferencedAttachments(
+      messages.flatMap((message) => serializedAttachmentIds(message.content as string))
+    );
+
     const compactResult = {
       removedCount: older.length,
       summaryText,
@@ -417,6 +447,15 @@ export function registerConvHandlers(): void {
 
     return compactResult;
   });
+}
+
+async function deleteUnreferencedAttachments(candidateIds: string[]): Promise<void> {
+  if (candidateIds.length === 0) return;
+  const referenced = new Set(
+    (getDb().prepare("SELECT content FROM messages WHERE content LIKE '%attachment_ref%'").all() as Array<{ content: string }>)
+      .flatMap((row) => serializedAttachmentIds(row.content))
+  );
+  await deleteStoredAttachments(candidateIds.filter((id) => !referenced.has(id)));
 }
 
 function rowToConv(row: Record<string, unknown>): Conversation {

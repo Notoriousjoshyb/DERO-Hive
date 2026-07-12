@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../stores/app';
-import type { Attachment } from '@shared/types';
+import type { Attachment, ContentPart } from '@shared/types';
 import { ComposerToolbar } from './ComposerToolbar';
 import { ComposerAutocomplete } from './ComposerAutocomplete';
 import { TokenUsageBar, ContextIndicator } from './TokenUsage';
@@ -183,18 +183,15 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       return;
     }
 
+    const attachmentParts = pendingAttachments.map((a): ContentPart => ({
+      type: 'attachment_ref',
+      attachment: { id: a.id, type: a.type, filename: a.filename, mimeType: a.mimeType, size: a.size }
+    }));
     const userMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
       content: pendingAttachments.length > 0
-        ? [
-            { type: 'text', text: content },
-            ...pendingAttachments.map((a) =>
-              a.type === 'image' ? { type: 'image_url', image_url: { url: `data:${a.mimeType};base64,${a.data}` } } :
-              a.type === 'audio' ? { type: 'input_audio', input_audio: { data: a.data, format: 'mp3' as const } } :
-              { type: 'file', file: { filename: a.filename, data: a.data, mimeType: a.mimeType } }
-            )
-          ]
+        ? [{ type: 'text', text: content } as ContentPart, ...attachmentParts]
         : content,
       createdAt: Date.now()
     };
@@ -293,7 +290,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
     // If the user message had a slash skill or shell command, the displayed
     // message keeps the raw text; the prompt sent to the model is expanded below.
-    const sendContent = skillName || shellMatch ? prompt : userMsg.content;
+    const sendContent = skillName || shellMatch
+      ? attachmentParts.length > 0
+        ? [{ type: 'text', text: prompt } as ContentPart, ...attachmentParts]
+        : prompt
+      : userMsg.content;
     const sendMsg = { ...userMsg, content: sendContent };
     void extractedText;
 
@@ -321,7 +322,6 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
         providerId,
         model,
         messages: messagesToSend,
-        attachments: pendingAttachments.map((a) => ({ type: a.type, filename: a.filename, mimeType: a.mimeType, data: a.data })),
         systemPrompt,
         agentPrompt,
         planMode: composerPlanMode || undefined,
@@ -353,12 +353,11 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       if (files) {
         for (const f of files) {
           addAttachment({
-            id: crypto.randomUUID(),
+            id: f.id,
             type: f.type as Attachment['type'],
             filename: f.filename,
             mimeType: f.mimeType,
-            size: f.data.length,
-            data: f.data
+            size: f.size
           });
         }
       }
@@ -370,6 +369,9 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   };
 
   // OS file drop → attach. Directories arrive with size 0 and no type; skip them.
+  // Bytes are read client-side (drag-and-drop hands us a File, not a path) then
+  // handed to main immediately so the attachment is disk-backed like every
+  // other path, not held as base64 in renderer state.
   const handleFileDrop = async (e: React.DragEvent): Promise<void> => {
     e.preventDefault();
     setFileDropActive(false);
@@ -382,18 +384,8 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       }
       try {
         const data = await fileToBase64(f);
-        const type: Attachment['type'] =
-          f.type.startsWith('image/') ? 'image' :
-          f.type.startsWith('audio/') ? 'audio' :
-          f.type === 'application/pdf' ? 'pdf' : 'file';
-        addAttachment({
-          id: crypto.randomUUID(),
-          type,
-          filename: f.name,
-          mimeType: f.type || 'application/octet-stream',
-          size: f.size,
-          data
-        });
+        const stored = await window.hive.attachFromBytes({ data, filename: f.name, mimeType: f.type || 'application/octet-stream' });
+        addAttachment(stored);
       } catch { /* unreadable file — skip */ }
     }
   };
@@ -476,11 +468,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
                 className={`flex items-center gap-1.5 bg-bg-elev border rounded-lg pl-1.5 pr-1 py-1 text-xs shadow-elev-sm animate-fade-in cursor-grab active:cursor-grabbing ${
                   dragIdx === i ? 'opacity-40 border-accent/60' : 'border-border'
                 }`}>
-                {a.type === 'image' ? (
-                  <img src={`data:${a.mimeType};base64,${a.data}`} alt={a.filename} className="w-7 h-7 object-cover rounded-md" />
-                ) : (
-                  <span className="w-7 h-7 rounded-md bg-accent-soft text-accent flex items-center justify-center text-[9px] font-mono uppercase">{a.type.slice(0, 3)}</span>
-                )}
+                <span className="w-7 h-7 rounded-md bg-accent-soft text-accent flex items-center justify-center text-[9px] font-mono uppercase">{a.type.slice(0, 3)}</span>
                 <span className="text-fg-muted truncate max-w-32">{a.filename}</span>
                 <button
                   onClick={() => removeAttachment(a.id)}

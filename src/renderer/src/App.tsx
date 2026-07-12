@@ -8,6 +8,7 @@ import { VisionTab } from './components/VisionTab';
 import { HiveCompanionPanel } from './components/HiveCompanionPanel';
 import { RightSidebar } from './components/rightsidebar/RightSidebar';
 import { CodeTab } from './components/code/CodeTab';
+import { ProjectCockpit } from './components/ProjectCockpit';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { PermissionDialog } from './components/PermissionDialog';
 import { ShortcutsCheatsheet } from './components/ShortcutsCheatsheet';
@@ -28,6 +29,7 @@ export default function App(): JSX.Element {
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const codeTabOpen = useAppStore((s) => s.codeTabOpen);
   const visionTabOpen = useAppStore((s) => s.visionTabOpen);
+  const projectCockpitId = useAppStore((s) => s.projectCockpitId);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -51,12 +53,20 @@ export default function App(): JSX.Element {
   useEffect(() => { applyTheme(theme); }, [theme]);
   useEffect(() => { applyAppearance(settings); }, [settings]);
 
-  // Keep the browser extension's model picker in sync with the composer.
+  // Keep the browser extension's model picker — and the project it may save
+  // captures into — in sync with the composer. The extension never chooses a
+  // project id; Hive always supplies it (or nothing) from the active chat.
   const selectedProviderId = useAppStore((s) => s.selectedProviderId);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const activeProjectId = useAppStore((s) => s.conversations.find((c) => c.id === s.currentConversationId)?.projectId);
+  const activeProject = useAppStore((s) => s.projects.find((p) => p.id === activeProjectId));
   useEffect(() => {
-    void window.hive.browserBridgeReportSelection(selectedProviderId, selectedModel);
-  }, [selectedProviderId, selectedModel]);
+    void window.hive.browserBridgeReportSelection(
+      selectedProviderId,
+      selectedModel,
+      activeProject ? { id: activeProject.id, name: activeProject.name } : undefined
+    );
+  }, [selectedProviderId, selectedModel, activeProject]);
 
   useEffect(() => {
     void loadSettings();
@@ -106,7 +116,7 @@ export default function App(): JSX.Element {
       <TitleBar />
       <div className="relative flex flex-1 overflow-hidden">
         {sidebarOpen && <Sidebar />}
-        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : <ChatView />}
+        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : projectCockpitId ? <ProjectCockpit key={projectCockpitId} projectId={projectCockpitId} /> : <ChatView />}
         {visionOpen && <VisionPanel />}
         {companionOpen && <HiveCompanionPanel />}
         <RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} />

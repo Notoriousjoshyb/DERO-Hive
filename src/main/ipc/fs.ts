@@ -1,12 +1,13 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { IPC, type Attachment } from '@shared/types';
-import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname, basename, relative, sep, extname } from 'node:path';
 import { resolveWithinAllowed, getWorkspaceRoot } from '../utils/pathPolicy';
+import { storeAttachment } from '../utils/attachments';
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_READ_CHARS = 5_000_000;
 const MAX_DIRECTORY_ENTRIES = 1_000;
 
@@ -132,24 +133,68 @@ export function registerFsHandlers(): void {
     });
     if (r.canceled || r.filePaths.length === 0) return null;
 
-    const out: Attachment[] = [];
+    const selected: string[] = [];
+    let totalBytes = 0;
     for (const filePath of r.filePaths) {
       const info = await stat(filePath);
+      if (!info.isFile()) throw new Error(`Not a file: ${basename(filePath)}`);
       if (info.size > MAX_ATTACHMENT_BYTES) {
         throw new Error(`File too large (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB): ${basename(filePath)}`);
       }
-      const buf = await readFile(filePath);
+      totalBytes += info.size;
+      if (totalBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
+        throw new Error(`Attachments exceed the ${MAX_ATTACHMENTS_TOTAL_BYTES / (1024 * 1024)} MB message limit`);
+      }
+      selected.push(filePath);
+    }
+
+    // Validate the entire batch before persisting any files, otherwise a
+    // rejected later item leaves the already-copied earlier items orphaned.
+    const files = await Promise.all(selected.map(async (filePath) => ({ filePath, buf: await readFile(filePath) })));
+    const actualTotal = files.reduce((sum, { buf }) => sum + buf.length, 0);
+    if (files.some(({ buf }) => buf.length > MAX_ATTACHMENT_BYTES) || actualTotal > MAX_ATTACHMENTS_TOTAL_BYTES) {
+      throw new Error('Attachment sizes changed while they were being read; please select them again');
+    }
+    const out: Attachment[] = [];
+    for (const { filePath, buf } of files) {
       const known = MIME_BY_EXT[extname(filePath).toLowerCase()];
       out.push({
-        id: randomUUID(),
+        id: await storeAttachment(buf),
         type: known?.type ?? 'file',
         filename: basename(filePath),
         mimeType: known?.mime ?? 'application/octet-stream',
-        size: buf.length,
-        data: buf.toString('base64')
+        size: buf.length
       });
     }
     return out;
+  });
+
+  ipcMain.handle(IPC.ATTACH_FROM_BYTES, async (_e, { data, filename, mimeType }: { data: string; filename: string; mimeType: string }) => {
+    if (typeof data !== 'string' || data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) {
+      throw new Error(`File too large (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB)`);
+    }
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data) || data.length % 4 === 1) {
+      throw new Error('Invalid base64 attachment data');
+    }
+    if (typeof filename !== 'string' || !filename.trim() || filename.length > 255) {
+      throw new Error('Invalid attachment filename');
+    }
+    if (typeof mimeType !== 'string' || mimeType.length > 200 || /[\r\n]/.test(mimeType)) {
+      throw new Error('Invalid attachment MIME type');
+    }
+    const buf = Buffer.from(data, 'base64');
+    if (buf.length > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`File too large (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB): ${filename}`);
+    }
+    const known = Object.values(MIME_BY_EXT).find((entry) => entry.mime === mimeType);
+    const attachment: Attachment = {
+      id: await storeAttachment(buf),
+      type: known?.type ?? (mimeType === 'application/pdf' ? 'pdf' : 'file'),
+      filename,
+      mimeType: mimeType || 'application/octet-stream',
+      size: buf.length
+    };
+    return attachment;
   });
 
   ipcMain.handle(IPC.FS_GLOB, async (_e, { root, pattern, limit }: { root?: string; pattern: string; limit?: number }) => {

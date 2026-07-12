@@ -2,16 +2,21 @@ import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderModel } from '@shared/types';
+import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel } from '@shared/types';
 import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
-import { getAdapter } from '../providers/registry';
+import { getAdapter, listProviders } from '../providers/registry';
+import type { ProviderStreamEvent } from '../providers/base';
 import { ToolRegistry } from '../tools/registry';
 import { McpManager } from '../mcp/manager';
 import { getDb } from '../db/client';
 import { getSetting } from '../db/client';
 import { getDefaultWorkspace } from '../utils/paths';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
+import { hydrateAttachmentRefs, validateAttachmentRefs } from '../utils/attachments';
+
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS_TOTAL_BYTES = 25 * 1024 * 1024;
 
 const activeRequests = new Map<string, AbortController>();
 const queuedUserMessages = new Map<string, Message[]>();
@@ -32,7 +37,8 @@ async function* streamWithRetry<T>(
   makeStream: () => AsyncIterable<T>,
   signal: AbortSignal,
   maxRetries = MAX_STREAM_RETRIES,
-  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS
+  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS,
+  retryAllowed: () => boolean = () => true
 ): AsyncGenerator<T> {
   let attempt = 0;
   while (true) {
@@ -46,9 +52,103 @@ async function* streamWithRetry<T>(
       return;
     } catch (err) {
       if (signal.aborted) throw err;
-      if (produced || attempt >= maxRetries) throw err;
+      if (produced || !retryAllowed() || attempt >= maxRetries) throw err;
       attempt++;
       await new Promise((r) => setTimeout(r, baseDelayMs * attempt));
+    }
+  }
+}
+
+export interface ProviderChainResolution {
+  targets: Array<ProviderFallback & { modelDef: ProviderModel }>;
+  unavailable: string[];
+}
+
+// Resolve the primary provider/model plus the user's configured fallback
+// chain into concrete, available (provider enabled, model configured)
+// targets — skipping duplicates and anything no longer configured.
+export function resolveProviderChain(
+  primary: ProviderFallback,
+  fallbackValue: unknown,
+  providers: readonly ProviderConfig[]
+): ProviderChainResolution {
+  const refs: ProviderFallback[] = [primary];
+  if (Array.isArray(fallbackValue)) {
+    for (const value of fallbackValue) {
+      if (!value || typeof value !== 'object') continue;
+      const providerId = (value as { providerId?: unknown }).providerId;
+      const model = (value as { model?: unknown }).model;
+      if (typeof providerId === 'string' && typeof model === 'string') refs.push({ providerId, model });
+    }
+  }
+
+  const available = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
+  const seen = new Set<string>();
+  const targets: ProviderChainResolution['targets'] = [];
+  const unavailable: string[] = [];
+  for (const ref of refs) {
+    const providerId = ref.providerId.trim();
+    const model = ref.model.trim();
+    const key = `${providerId}\0${model}`;
+    if (!providerId || !model || seen.has(key)) continue;
+    seen.add(key);
+    const provider = available.get(providerId);
+    if (!provider) {
+      unavailable.push(`Provider "${providerId}" is not configured or enabled.`);
+      continue;
+    }
+    const modelDef = provider.models.find((item) => item.id === model);
+    if (!modelDef) {
+      unavailable.push(`Model "${model}" is not configured for provider "${provider.name}".`);
+      continue;
+    }
+    targets.push({ providerId, model, modelDef });
+  }
+  return { targets, unavailable };
+}
+
+function commitsProviderOutput(event: ProviderStreamEvent): boolean {
+  return (event.type === 'delta' && Boolean(event.content))
+    || (event.type === 'reasoning' && Boolean(event.reasoning))
+    || (event.type === 'tool_calls' && Boolean(event.toolCalls?.length))
+    || event.type === 'usage';
+}
+
+// Stream from the first target; on failure before any committed output, fall
+// through to the next target in the chain. `fallbackAllowed` lets the caller
+// veto fallback once a side effect (e.g. a tool permission prompt) has fired.
+async function* streamWithFallback<T extends ProviderFallback>(
+  targets: readonly T[],
+  makeStream: (target: T) => AsyncIterable<ProviderStreamEvent>,
+  signal: AbortSignal,
+  fallbackAllowed: () => boolean = () => true,
+  retryAllowed: () => boolean = () => true,
+  maxRetries = MAX_STREAM_RETRIES,
+  baseDelayMs = STREAM_RETRY_BASE_DELAY_MS
+): AsyncGenerator<{ target: T; event: ProviderStreamEvent }> {
+  const failures: string[] = [];
+  for (let index = 0; index < targets.length; index++) {
+    const target = targets[index];
+    let committed = false;
+    try {
+      for await (const event of streamWithRetry(
+        () => makeStream(target), signal, maxRetries, baseDelayMs, retryAllowed
+      )) {
+        if (commitsProviderOutput(event)) committed = true;
+        if (event.type === 'error') throw new Error(event.error || 'Provider stream failed');
+        yield { target, event };
+      }
+      return;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      failures.push(`${target.providerId}/${target.model}: ${error instanceof Error ? error.message : String(error)}`);
+      const hasNext = index + 1 < targets.length;
+      if (committed || !fallbackAllowed() || !hasNext) {
+        if (!committed && fallbackAllowed() && failures.length > 1) {
+          throw new Error(`Provider fallback chain exhausted: ${failures.join(' | ')}`, { cause: error });
+        }
+        throw error;
+      }
     }
   }
 }
@@ -131,6 +231,9 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
 
   ipcMain.handle(IPC.CHAT_QUEUE_MESSAGE, async (_e, conversationId: string, message: Message) => {
     const q = queuedUserMessages.get(conversationId) || [];
+    if (q.length >= 100) throw new Error('Too many queued messages');
+    if (!message || message.role !== 'user') throw new Error('Only user messages can be queued');
+    await validateAttachmentRefs(message.content, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_TOTAL_BYTES);
     q.push(message);
     queuedUserMessages.set(conversationId, q);
   });
@@ -145,18 +248,14 @@ async function runChat(
   getWin: () => BrowserWindow | null,
   tools: ToolRegistry
 ): Promise<{ messageId: string }> {
+  activeRequests.get(req.conversationId)?.abort();
   const abort = new AbortController();
   activeRequests.set(req.conversationId, abort);
   // Clear any stale queued messages from a previous run.
   queuedUserMessages.delete(req.conversationId);
   const messageId = randomUUID();
 
-  // Persist user message immediately
   const userMsg = req.messages[req.messages.length - 1];
-  if (userMsg && userMsg.role === 'user' && !req.skipUserPersist) {
-    persistMessage(req.conversationId, userMsg);
-    updateConversationPreview(req.conversationId, userMsg);
-  }
 
   const win = getWin();
   const send = (evt: StreamEvent): void => {
@@ -167,14 +266,41 @@ async function runChat(
   // Run async without blocking the invoke response
   (async () => {
     try {
-      const adapter = getAdapter(req.providerId);
-      if (!adapter) {
-        send({ type: 'error', conversationId: req.conversationId, messageId, error: `Provider ${req.providerId} not configured` });
+      const appSettings = getSetting<Partial<AppSettings>>('appSettings');
+      const resolution = resolveProviderChain(
+        { providerId: req.providerId, model: req.model },
+        appSettings?.providerFallbackChain,
+        listProviders()
+      );
+      const providerTargets = resolution.targets.flatMap((target) => {
+        const adapter = getAdapter(target.providerId);
+        if (adapter) return [{ ...target, adapter }];
+        resolution.unavailable.push(`Provider "${target.providerId}" could not be loaded.`);
+        return [];
+      });
+      if (resolution.unavailable.length) logger.warn('chat', resolution.unavailable.join(' '));
+      if (providerTargets.length === 0) {
+        const error = resolution.unavailable.join(' ') || `Provider ${req.providerId} not configured`;
+        send({ type: 'error', conversationId: req.conversationId, messageId, error });
         send({ type: 'done', conversationId: req.conversationId, messageId });
         return;
       }
 
       send({ type: 'start', conversationId: req.conversationId, messageId });
+
+      if (userMsg && userMsg.role === 'user') {
+        try {
+          await validateAttachmentRefs(userMsg.content, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_TOTAL_BYTES);
+        } catch (err) {
+          send({ type: 'error', conversationId: req.conversationId, messageId, error: err instanceof Error ? err.message : 'Invalid attachment' });
+          send({ type: 'done', conversationId: req.conversationId, messageId });
+          return;
+        }
+        if (!req.skipUserPersist) {
+          persistMessage(req.conversationId, userMsg);
+          updateConversationPreview(req.conversationId, userMsg);
+        }
+      }
 
       // Resolve working directory: project path > global setting > the app's
       // default workspace (Documents\DERO Hive) — never the app's own folder.
@@ -202,29 +328,22 @@ async function runChat(
         : withConv;
       let messages = req.messages;
 
-      // Look up model context window for adaptive truncation
-      const providerRow = getDb().prepare('SELECT models FROM providers WHERE id = ?').get(req.providerId) as { models?: string } | undefined;
-      let modelDef: ProviderModel | null = null;
-      if (providerRow?.models) {
-        try {
-          const list = JSON.parse(providerRow.models) as ProviderModel[];
-          modelDef = list.find((m) => m.id === req.model) || null;
-        } catch { /* ignore */ }
-      }
+      let activeTargets = providerTargets;
+      let modelDef: ProviderModel | null = activeTargets[0].modelDef;
 
-      // Block vision if the model doesn't support it
-      const modelSupportsVision = modelDef?.supportsVision ?? false;
-      if (!modelSupportsVision) {
-        for (const m of messages) {
-          const parts = Array.isArray(m.content) ? m.content : [];
-          for (const p of parts) {
-            if ('image_url' in p) {
-              send({ type: 'error', conversationId: req.conversationId, messageId, error: `Model "${req.model}" does not support image input. Please switch to a vision-capable model or remove the image attachment.` });
-              send({ type: 'done', conversationId: req.conversationId, messageId });
-              return;
-            }
-          }
+      // Drop fallback targets that can't take an image if one is attached,
+      // instead of hard-failing when only the primary model lacks vision.
+      const hasImage = messages.some((m) => Array.isArray(m.content) && m.content.some((p) =>
+        'image_url' in p || (p.type === 'attachment_ref' && p.attachment.type === 'image')
+      ));
+      if (hasImage) {
+        activeTargets = activeTargets.filter((target) => target.modelDef.supportsVision);
+        if (activeTargets.length === 0) {
+          send({ type: 'error', conversationId: req.conversationId, messageId, error: `Model "${req.model}" does not support image input. Please switch to a vision-capable model or remove the image attachment.` });
+          send({ type: 'done', conversationId: req.conversationId, messageId });
+          return;
         }
+        modelDef = activeTargets[0].modelDef;
       }
 
       // ---- OpenChamber-style AUTO COMPACTION ----
@@ -304,12 +423,17 @@ async function runChat(
       // results and decide the next action. Keep it bounded so a mistaken or
       // repetitive plan cannot run indefinitely.
       const availableTools = tools.listTools();
-      const configuredRounds = req.maxAgenticRounds ?? getSetting<Partial<AppSettings>>('appSettings')?.maxAgenticRounds ?? 20;
+      const configuredRounds = req.maxAgenticRounds ?? appSettings?.maxAgenticRounds ?? 20;
       const maxAgenticRounds = Number.isFinite(configuredRounds)
         ? Math.min(50, Math.max(1, Math.floor(configuredRounds)))
         : 20;
 
       let lastTurnId = messageId;
+      let selectedTarget = activeTargets[0];
+      // Once a round has committed output or triggered a side effect (e.g. a
+      // tool permission prompt), switching providers mid-conversation could
+      // duplicate work or desync tool state — fallback is vetoed from then on.
+      let fallbackAllowed = true;
       for (let round = 0; round < maxAgenticRounds; round++) {
         const turnId = round === 0 ? messageId : randomUUID();
         lastTurnId = turnId;
@@ -319,46 +443,70 @@ async function runChat(
         let assistantContent = '';
         let assistantReasoning = '';
         const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-
-        for await (const evt of streamWithRetry(
-          () => adapter.stream({
-            conversationId: req.conversationId,
-            cwd,
-            model: req.model,
-            messages: truncateMessagesForContext(currentMessages, modelDef, systemPrompt),
-            tools: availableTools,
-            systemPrompt,
-            temperature: req.temperature,
-            topP: req.topP,
-            maxTokens: req.maxTokens,
-            reasoning: req.reasoning,
-            signal: abort.signal,
-            requestPermission: (permission) => tools.requestPermission(permission)
-          }),
-          abort.signal
-        )) {
-          if (abort.signal.aborted) break;
-          if (evt.type === 'delta' && evt.content) {
-            assistantContent += evt.content;
-            send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, content: evt.content });
-          } else if (evt.type === 'reasoning' && evt.reasoning) {
-            assistantReasoning += evt.reasoning;
-            send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, reasoning: evt.reasoning });
-          } else if (evt.type === 'tool_calls' && evt.toolCalls) {
-            toolCalls.push(...evt.toolCalls);
-            send({ type: 'tool_calls', conversationId: req.conversationId, messageId: turnId, toolCalls: [] });
-          } else if (evt.type === 'usage' && evt.usage) {
-            roundUsage.promptTokens += evt.usage.promptTokens;
-            roundUsage.completionTokens += evt.usage.completionTokens;
-            roundUsage.totalTokens += evt.usage.totalTokens;
-            send({ type: 'usage', conversationId: req.conversationId, messageId: turnId, usage: evt.usage });
-          } else if (evt.type === 'error' && evt.error) {
-            send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: evt.error });
-            send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
-            notifyStreamOutcome(win, 'error', evt.error);
-            return;
+        const preparedTargets = await Promise.all(activeTargets.map(async (target) => ({
+          ...target,
+          providerMessages: await hydrateAttachmentRefs(
+            truncateMessagesForContext(currentMessages, target.modelDef, systemPrompt)
+          )
+        })));
+        let sideEffectOccurred = false;
+        try {
+          for await (const { event: evt } of streamWithFallback(
+            preparedTargets,
+            (target) => {
+              if (selectedTarget.providerId !== target.providerId || selectedTarget.model !== target.model) {
+                logger.info('chat', `falling back to ${target.providerId}/${target.model}`);
+              }
+              selectedTarget = target;
+              return target.adapter.stream({
+                conversationId: req.conversationId,
+                cwd,
+                model: target.model,
+                messages: target.providerMessages,
+                tools: availableTools,
+                systemPrompt,
+                temperature: req.temperature,
+                topP: req.topP,
+                maxTokens: req.maxTokens,
+                reasoning: req.reasoning,
+                signal: abort.signal,
+                requestPermission: (permission) => {
+                  sideEffectOccurred = true;
+                  fallbackAllowed = false;
+                  return tools.requestPermission(permission, { cwd, conversationId: req.conversationId });
+                }
+              });
+            },
+            abort.signal,
+            () => fallbackAllowed,
+            () => !sideEffectOccurred
+          )) {
+            if (abort.signal.aborted) break;
+            if (commitsProviderOutput(evt)) fallbackAllowed = false;
+            if (evt.type === 'delta' && evt.content) {
+              assistantContent += evt.content;
+              send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, content: evt.content });
+            } else if (evt.type === 'reasoning' && evt.reasoning) {
+              assistantReasoning += evt.reasoning;
+              send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, reasoning: evt.reasoning });
+            } else if (evt.type === 'tool_calls' && evt.toolCalls) {
+              toolCalls.push(...evt.toolCalls);
+              send({ type: 'tool_calls', conversationId: req.conversationId, messageId: turnId, toolCalls: [] });
+            } else if (evt.type === 'usage' && evt.usage) {
+              roundUsage.promptTokens += evt.usage.promptTokens;
+              roundUsage.completionTokens += evt.usage.completionTokens;
+              roundUsage.totalTokens += evt.usage.totalTokens;
+              send({ type: 'usage', conversationId: req.conversationId, messageId: turnId, usage: evt.usage });
+            }
           }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: errorMessage });
+          send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+          notifyStreamOutcome(win, 'error', errorMessage);
+          return;
         }
+        activeTargets = [selectedTarget];
 
         // Persist assistant message
         const assistantMsg: Message = {
@@ -370,8 +518,8 @@ async function runChat(
             id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments }
           })) : undefined,
           createdAt: Date.now(),
-          model: req.model,
-          provider: req.providerId,
+          model: selectedTarget.model,
+          provider: selectedTarget.providerId,
           usage: roundUsage.totalTokens > 0 ? { ...roundUsage } : undefined
         };
         persistMessage(req.conversationId, assistantMsg);
@@ -392,7 +540,7 @@ async function runChat(
         if (toolCalls.length === 0 && queued.length === 0) {
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
           notifyStreamOutcome(win, 'done', assistantContent);
-          void maybeGenerateTitle(req.conversationId, req.providerId, req.model);
+          void maybeGenerateTitle(req.conversationId, selectedTarget.providerId, selectedTarget.model);
           return;
         }
 
@@ -465,7 +613,7 @@ async function runChat(
       send({ type: 'done', conversationId: req.conversationId, messageId });
       notifyStreamOutcome(win, 'error', errMsg);
     } finally {
-      activeRequests.delete(req.conversationId);
+      if (activeRequests.get(req.conversationId) === abort) activeRequests.delete(req.conversationId);
     }
   })();
 

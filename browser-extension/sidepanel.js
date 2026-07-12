@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const BRIDGE = 'http://127.0.0.1:43120';
-const DEFAULT = { autoRefresh: false, scope: 'page', pairingCode: '', theme: 'hive', guardSites: true, providerId: '', model: '' };
+const DEFAULT = { autoRefresh: false, scope: 'page', clientToken: '', theme: 'hive', guardSites: true, providerId: '', model: '' };
 // Domains where page capture is refused when the sensitive-site guard is on.
 const SENSITIVE_HOST = /(bank|banking|paypal|venmo|zelle|coinbase|binance|kraken|wallet|chase\.|wellsfargo|citi(bank)?\.|hsbc|barclays|santander|revolut|monzo|fidelity|schwab|vanguard|healthcare|myhealth|patient|medicare|kaiser)/i;
 
@@ -9,6 +9,9 @@ let recognition = null;          // Web Speech fallback
 let recording = null;            // { recorder, stream } while dictating via Whisper
 let renameSessionId = '';        // session currently being renamed inline
 let lastPushedSelection = '';    // guards the two-way model sync against loops
+let activeProject = null;        // supplied by Hive; the extension never chooses a project id
+let captureBusy = false;
+let captureFeedback = '';
 const activeStreams = new Map(); // handoffId -> EventSource
 const openThinking = new Set();  // handoff ids whose "Thinking" details the user expanded
 
@@ -18,10 +21,13 @@ async function load() {
   const saved = await chrome.storage.local.get(['hiveBrowserStore']);
   store = { ...store, ...(saved.hiveBrowserStore || {}) };
   store.settings = { ...DEFAULT, ...(store.settings || {}) };
+  const hadLegacyPairing = Object.hasOwn(store.settings, 'pairingCode');
+  delete store.settings.pairingCode; // retired insecure auto-pair credential
   if (!store.sessions.length) createSession(false);
   if (!store.activeSessionId) store.activeSessionId = store.sessions[0].id;
   if (store.settings.scope === 'pinned') store.settings.scope = 'page';
   applySettings(); render();
+  if (hadLegacyPairing) await persist();
   if (store.settings.autoRefresh) void capture();
   // Pending replies are resumed by connectBridge() once pairing is confirmed,
   // so a stale token from a Hive restart can't mis-mark them as failed.
@@ -40,8 +46,14 @@ function applySettings() {
   $('theme-select').value = store.settings.theme || 'hive';
   $('auto-refresh').checked = store.settings.autoRefresh;
   $('guard-sites').checked = store.settings.guardSites !== false;
-  $('bridge-status').textContent = store.bridgeConnected ? 'Connected to DERO Hive.' : 'Waiting for DERO Hive to start…';
+  $('bridge-status').textContent = store.bridgeConnected
+    ? 'Connected to DERO Hive.'
+    : store.settings.clientToken
+      ? 'Paired; waiting for DERO Hive to start…'
+      : 'Enter the one-time code shown in DERO Hive.';
+  if (store.bridgeConnected) $('pair-status').textContent = 'Paired and connected.';
   $('send').innerHTML = store.bridgeConnected ? 'Send to Hive <span>↗</span>' : 'Copy to Hive <span>↗</span>';
+  renderCapture();
 }
 
 function escapeHtml(value) { const div = document.createElement('div'); div.textContent = value ?? ''; return div.innerHTML; }
@@ -200,6 +212,40 @@ function renderModels() {
   $('model-status').textContent = model ? `${provider.name} · ${model.name}` : 'Pair with Hive to load models';
 }
 
+function renderCapture() {
+  const button = $('save-project');
+  if (!button) return;
+  const context = contextForScope();
+  button.disabled = captureBusy || !store.bridgeConnected || !activeProject || !context;
+  button.textContent = captureBusy ? 'Saving…' : activeProject ? `Save to ${activeProject.name}` : 'No active project';
+  button.title = activeProject ? `Save this context to ${activeProject.name}` : 'Open a project in DERO Hive first';
+  const status = $('capture-status');
+  if (status) status.textContent = captureFeedback;
+}
+
+async function saveToProject() {
+  const context = contextForScope();
+  if (!context || !activeProject || !store.bridgeConnected || captureBusy) return;
+  captureBusy = true;
+  captureFeedback = 'Saving…';
+  renderCapture();
+  try {
+    const response = await fetch(`${BRIDGE}/v1/capture`, {
+      method: 'POST',
+      headers: bridgeHeaders(true),
+      body: JSON.stringify({ title: context.title || 'Browser capture', url: context.url, content: receipt(context) })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Save failed (${response.status})`);
+    captureFeedback = result.queued ? 'Queued — vault offline' : 'Saved';
+  } catch (error) {
+    captureFeedback = error.message || 'Save failed';
+  } finally {
+    captureBusy = false;
+    renderCapture();
+  }
+}
+
 function renderHandoff(handoff) {
   const meta = handoff.pending ? 'DERO Hive is responding…' : handoff.direct ? 'Sent to DERO Hive' : 'Copied to DERO Hive';
   const time = new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -230,6 +276,7 @@ function render(skipModels = false) {
   const renameInput = document.querySelector('[data-rename-input]');
   if (renameInput) { renameInput.focus(); renameInput.select(); }
   if (!skipModels) renderModels();
+  renderCapture();
 }
 
 // Coalesce streaming renders so a fast token stream doesn't thrash the DOM.
@@ -262,7 +309,7 @@ async function handoff() {
   let direct = false; let requestId = '';
   if (store.bridgeConnected) {
     try {
-      const response = await fetch(`${BRIDGE}/v1/context`, { method: 'POST', headers: { Authorization: `Bearer ${store.settings.pairingCode}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ task, title: c.title, url: c.url, text: c.text, selection: c.selection, scope: currentScope(), providerId: store.settings.providerId, model: store.settings.model }) });
+      const response = await fetch(`${BRIDGE}/v1/context`, { method: 'POST', headers: bridgeHeaders(true), body: JSON.stringify({ task, title: c.title, url: c.url, text: c.text, selection: c.selection, scope: currentScope(), providerId: store.settings.providerId, model: store.settings.model }) });
       if (!response.ok) throw new Error('Bridge rejected the request');
       const result = await response.json();
       requestId = result.requestId || '';
@@ -285,7 +332,7 @@ async function handoff() {
 
 function streamReply(requestId, handoffId) {
   activeStreams.get(handoffId)?.close();
-  const url = `${BRIDGE}/v1/stream?requestId=${encodeURIComponent(requestId)}&token=${encodeURIComponent(store.settings.pairingCode)}`;
+  const url = `${BRIDGE}/v1/stream?requestId=${encodeURIComponent(requestId)}&token=${encodeURIComponent(store.settings.clientToken)}`;
   const source = new EventSource(url);
   activeStreams.set(handoffId, source);
   let failures = 0;
@@ -340,8 +387,35 @@ function clearChat() {
 
 /* ---------- pairing, models & two-way model sync ---------- */
 
+function bridgeHeaders(json = false) {
+  const headers = { Authorization: `Bearer ${store.settings.clientToken}` };
+  if (json) headers['Content-Type'] = 'application/json';
+  return headers;
+}
+
+async function pairWithHive() {
+  const code = $('pairing-code').value.trim();
+  if (!code) { $('pair-status').textContent = 'Enter the code shown in DERO Hive.'; return; }
+  $('pair-status').textContent = 'Pairing…';
+  try {
+    const response = await fetch(`${BRIDGE}/v1/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.token) throw new Error(result.error || `Pairing failed (${response.status})`);
+    store.settings.clientToken = result.token;
+    $('pairing-code').value = '';
+    await persist();
+    await connectBridge();
+  } catch (error) {
+    $('pair-status').textContent = error.message || 'Could not pair with DERO Hive.';
+  }
+}
+
 async function loadModels() {
-  const response = await fetch(`${BRIDGE}/v1/models`, { headers: { Authorization: `Bearer ${store.settings.pairingCode}` } });
+  const response = await fetch(`${BRIDGE}/v1/models`, { headers: bridgeHeaders() });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     if (response.status === 404) throw new Error('Restart DERO Hive, then reopen Hive Companion to enable model sync');
@@ -363,7 +437,7 @@ async function pushModelSelection() {
   if (!store.bridgeConnected || !store.settings.providerId || !store.settings.model) return;
   lastPushedSelection = `${store.settings.providerId}::${store.settings.model}`;
   try {
-    await fetch(`${BRIDGE}/v1/select-model`, { method: 'POST', headers: { Authorization: `Bearer ${store.settings.pairingCode}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: store.settings.providerId, model: store.settings.model }) });
+    await fetch(`${BRIDGE}/v1/select-model`, { method: 'POST', headers: bridgeHeaders(true), body: JSON.stringify({ providerId: store.settings.providerId, model: store.settings.model }) });
     $('model-status').textContent = 'Model switched in DERO Hive ✓';
     setTimeout(() => renderModels(), 1200);
   } catch { /* bridge poll will reconcile */ }
@@ -371,10 +445,15 @@ async function pushModelSelection() {
 
 async function syncStateFromHive() {
   try {
-    const response = await fetch(`${BRIDGE}/v1/state`, { headers: { Authorization: `Bearer ${store.settings.pairingCode}` } });
+    const response = await fetch(`${BRIDGE}/v1/state`, { headers: bridgeHeaders() });
     if (!response.ok) throw new Error('state failed');
     const state = await response.json();
     store.whisperAvailable = Boolean(state.whisper);
+    const previousProjectId = activeProject?.id;
+    activeProject = state.activeProject && typeof state.activeProject.id === 'string' && typeof state.activeProject.name === 'string'
+      ? { id: state.activeProject.id, name: state.activeProject.name }
+      : null;
+    if (activeProject?.id !== previousProjectId) captureFeedback = '';
     const remote = state.providerId && state.model ? `${state.providerId}::${state.model}` : '';
     const local = `${store.settings.providerId}::${store.settings.model}`;
     const interacting = document.activeElement === $('provider-select') || document.activeElement === $('model-select');
@@ -386,16 +465,20 @@ async function syncStateFromHive() {
       void persist();
       renderModels();
     }
+    renderCapture();
   } catch {
-    // Hive quit or restarted: fall back to the auto-pair loop.
+    // Hive quit or restarted: the saved credential reconnect loop will retry.
     if (store.bridgeConnected) { store.bridgeConnected = false; void persist(); applySettings(); }
   }
 }
 
 async function connectBridge() {
   store.bridgeConnected = false; await persist();
+  if (!store.settings.clientToken) { applySettings(); return; }
+  let rejected = false;
   try {
-    const response = await fetch(`${BRIDGE}/health`, { headers: { Authorization: `Bearer ${store.settings.pairingCode}` } });
+    const response = await fetch(`${BRIDGE}/health`, { headers: bridgeHeaders() });
+    rejected = response.status === 401 || response.status === 403;
     if (!response.ok) throw new Error('Companion is closed');
     store.bridgeConnected = true;
     await loadModels();
@@ -403,18 +486,14 @@ async function connectBridge() {
     await persist();
     $('bridge-status').textContent = 'Connected. Models are loaded from DERO Hive.';
     resumePendingReplies();
-  } catch { /* Auto-pair loop will retry when the Companion becomes available. */ }
+  } catch {
+    if (rejected) {
+      store.settings.clientToken = '';
+      await persist();
+      $('pair-status').textContent = 'Pairing expired. Enter the new code from DERO Hive.';
+    }
+  }
   applySettings();
-}
-
-async function autoPair() {
-  try {
-    const response = await fetch(`${BRIDGE}/v1/pair`);
-    if (!response.ok) return;
-    const { token } = await response.json();
-    if (!token) return;
-    if (token !== store.settings.pairingCode || !store.bridgeConnected) { store.settings.pairingCode = token; await connectBridge(); }
-  } catch { /* Companion is closed or DERO Hive is not running. */ }
 }
 
 function selectScope(scope) { store.settings.scope = scope; void persist(); render(); if (scope === 'page') void capture(); }
@@ -452,7 +531,7 @@ async function startWhisperDictation() {
     voiceStatus('Transcribing…');
     try {
       const wav = await blobToWav16kBase64(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-      const response = await fetch(`${BRIDGE}/v1/transcribe`, { method: 'POST', headers: { Authorization: `Bearer ${store.settings.pairingCode}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ wav }) });
+      const response = await fetch(`${BRIDGE}/v1/transcribe`, { method: 'POST', headers: bridgeHeaders(true), body: JSON.stringify({ wav }) });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || `Transcription failed (${response.status})`);
       appendToTask((data.text || '').trim());
@@ -521,6 +600,7 @@ $('refresh').addEventListener('click', () => void capture());
 $('pick-text').addEventListener('click', () => void pickText());
 $('toggle-receipt').addEventListener('click', () => { $('receipt').hidden = !$('receipt').hidden; });
 $('send').addEventListener('click', () => void handoff());
+$('save-project').addEventListener('click', () => void saveToProject());
 $('voice').addEventListener('click', () => void startVoice());
 $('clear-chat').addEventListener('click', clearChat);
 
@@ -592,6 +672,8 @@ $('close-settings').addEventListener('click', () => { $('settings').hidden = tru
 $('theme-select').addEventListener('change', (event) => { store.settings.theme = event.target.value; void persist(); applySettings(); });
 $('auto-refresh').addEventListener('change', (event) => { store.settings.autoRefresh = event.target.checked; void persist(); });
 $('guard-sites').addEventListener('change', (event) => { store.settings.guardSites = event.target.checked; void persist(); });
+$('pair-hive').addEventListener('click', () => void pairWithHive());
+$('pairing-code').addEventListener('keydown', (event) => { if (event.key === 'Enter') void pairWithHive(); });
 $('provider-select').addEventListener('change', (event) => {
   store.settings.providerId = event.target.value;
   // Resolve the default model here so the selection pushed to Hive is never
@@ -605,11 +687,14 @@ $('model-select').addEventListener('change', (event) => { store.settings.model =
 $('reload-models').addEventListener('click', () => void loadModels().catch((error) => { $('model-status').textContent = error.message || 'Could not load models'; }));
 $('copy-diagnostics').addEventListener('click', () => void diagnostics().then(() => { $('copy-diagnostics').textContent = 'Diagnostics copied'; setTimeout(() => { $('copy-diagnostics').textContent = 'Copy diagnostics'; }, 1400); }));
 
-load();
-void autoPair();
+void (async () => {
+  await load();
+  if (store.settings.clientToken) await connectBridge();
+})();
 setInterval(() => {
-  if (!store.bridgeConnected) void autoPair();
-  else if (!store.providers.length) void loadModels().catch(() => {});
+  if (!store.bridgeConnected) {
+    if (store.settings.clientToken) void connectBridge();
+  } else if (!store.providers.length) void loadModels().catch(() => {});
   else void syncStateFromHive();
 }, 2500);
 chrome.storage.session.get('deroHivePickedText').then(({ deroHivePickedText }) => { if (deroHivePickedText?.text) { store.pickedText = deroHivePickedText; render(); } });

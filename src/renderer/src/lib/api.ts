@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   BookmarkEntry,
   ChatRequest,
   Conversation,
@@ -11,6 +12,8 @@ import type {
   Project,
   PromptTemplate,
   Skill,
+  SkillImportPickResult,
+  SkillImportResult,
   AppSettings,
   Artifact,
   ToolDefinition,
@@ -19,13 +22,32 @@ import type {
   UsageStats,
   WhisperStatus,
   SimulatorStatus,
-  SimulatorStartOptions
+  SimulatorStartOptions,
+  KnowledgeStatus,
+  KnowledgeListResult,
+  KnowledgeReadResult,
+  KnowledgeSearchHit,
+  KnowledgeBootstrapResult,
+  KnowledgeCaptureRequest,
+  KnowledgeCaptureResult,
+  KnowledgeAppendRequest,
+  KnowledgeWriteResult,
+  KnowledgeOpenRequest,
+  KnowledgeRetryResult,
+  KnowledgeAutomation,
+  KnowledgeAutomationKind,
+  KnowledgeAutomationSaveRequest,
+  KnowledgeAutomationRunResult,
+  KnowledgeAutomationStatus,
+  BrowserBridgeActiveProject,
+  BrowserBridgeStatus,
+  McpRegistry
 } from '@shared/types';
 
 declare global {
   interface Window {
     hive: {
-      chatSend: (req: ChatRequest & { attachments?: Array<{ type: string; filename: string; mimeType: string; data: string }>; skipUserPersist?: boolean }) => Promise<{ messageId: string }>;
+      chatSend: (req: ChatRequest & { skipUserPersist?: boolean }) => Promise<{ messageId: string }>;
       chatQueueMessage: (conversationId: string, message: { id: string; role: 'user'; content: string | Array<{ type: string; text?: string; image_url?: { url: string }; input_audio?: { data: string; format: string }; file?: { filename: string; data: string; mimeType: string } }>; createdAt: number }) => Promise<void>;
       chatAbort: (id: string) => Promise<{ ok: boolean }>;
       onChatStream: (cb: (e: StreamEvent) => void) => () => void;
@@ -64,15 +86,35 @@ declare global {
       mcpConnect: (id: string) => Promise<{ ok: boolean }>;
       mcpDisconnect: (id: string) => Promise<{ ok: boolean }>;
       mcpStatus: () => Promise<McpServerStatus[]>;
+      mcpRegistry: () => Promise<McpRegistry>;
       onMcpChanged: (cb: (s: McpServerStatus[]) => void) => () => void;
 
       skillList: () => Promise<Skill[]>;
       skillSave: (s: Skill) => Promise<Skill>;
       skillDelete: (id: string) => Promise<{ ok: boolean }>;
+      skillRescan: () => Promise<Skill[]>;
+      skillOpenDir: () => Promise<{ ok: boolean; error?: string }>;
+      skillImportPick: () => Promise<SkillImportPickResult>;
+      skillImport: (sourceDir: string) => Promise<SkillImportResult>;
 
       projectList: () => Promise<Project[]>;
       projectSave: (p: Project) => Promise<Project>;
       projectDelete: (id: string) => Promise<{ ok: boolean }>;
+
+      knowledgeStatus: (projectId: string) => Promise<KnowledgeStatus>;
+      knowledgeList: (input: { projectId: string; path?: string }) => Promise<KnowledgeListResult>;
+      knowledgeRead: (input: { projectId: string; path: string }) => Promise<KnowledgeReadResult>;
+      knowledgeSearch: (input: { projectId: string; query: string; limit?: number; contextLength?: number }) => Promise<KnowledgeSearchHit[]>;
+      knowledgeBootstrap: (projectId: string) => Promise<KnowledgeBootstrapResult>;
+      knowledgeCapture: (input: KnowledgeCaptureRequest) => Promise<KnowledgeCaptureResult>;
+      knowledgeAppend: (input: KnowledgeAppendRequest) => Promise<KnowledgeWriteResult>;
+      knowledgeOpen: (input: KnowledgeOpenRequest) => Promise<KnowledgeWriteResult>;
+      knowledgeRetryOutbox: (projectId?: string) => Promise<KnowledgeRetryResult>;
+      knowledgeAutomationList: (projectId?: string) => Promise<KnowledgeAutomation[]>;
+      knowledgeAutomationSave: (input: KnowledgeAutomationSaveRequest) => Promise<KnowledgeAutomation>;
+      knowledgeAutomationDelete: (input: { projectId: string; kind: KnowledgeAutomationKind }) => Promise<{ ok: boolean }>;
+      knowledgeAutomationRunNow: (projectId: string, kind: KnowledgeAutomationKind) => Promise<KnowledgeAutomationRunResult>;
+      knowledgeAutomationStatus: (projectId?: string) => Promise<KnowledgeAutomationStatus[]>;
 
       toolList: () => Promise<ToolDefinition[]>;
       toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;
@@ -101,7 +143,8 @@ declare global {
       settingsGet: () => Promise<AppSettings>;
       settingsSet: (s: Partial<AppSettings>) => Promise<AppSettings>;
 
-      attachFromFile: () => Promise<Array<{ type: string; filename: string; mimeType: string; data: string }> | null>;
+      attachFromFile: () => Promise<Attachment[] | null>;
+      attachFromBytes: (a: { data: string; filename: string; mimeType: string }) => Promise<Attachment>;
 
       artifactSave: (a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) => Promise<{ id: string }>;
       artifactList: (conversationId?: string) => Promise<Artifact[]>;
@@ -132,11 +175,12 @@ declare global {
         noReleases?: boolean; error?: string;
       }>;
       updateInstall: (a: { assetUrl?: string; assetName?: string; url: string }) => Promise<{ ok: boolean; launched?: boolean; error?: string }>;
-      browserBridgeSetEnabled: (enabled: boolean) => Promise<{ enabled: boolean; port: number; pairingCode?: string }>;
-      browserBridgeStatus: () => Promise<{ enabled: boolean; port: number; pairingCode?: string }>;
+      browserBridgeSetEnabled: (enabled: boolean) => Promise<BrowserBridgeStatus>;
+      browserBridgeStatus: () => Promise<BrowserBridgeStatus>;
+      browserBridgeRevokePairing: () => Promise<BrowserBridgeStatus>;
       browserBridgeBind: (requestId: string, conversationId: string) => Promise<{ ok: boolean }>;
       onBrowserBridgeContext: (cb: (data: { detail: string; requestId?: string; providerId?: string; model?: string }) => void) => () => void;
-      browserBridgeReportSelection: (providerId?: string, model?: string) => Promise<{ ok: boolean }>;
+      browserBridgeReportSelection: (providerId?: string, model?: string, activeProject?: BrowserBridgeActiveProject) => Promise<{ ok: boolean }>;
       onBrowserBridgeSelectModel: (cb: (data: { providerId: string; model: string }) => void) => () => void;
 
       winMinimize: () => Promise<void>;
