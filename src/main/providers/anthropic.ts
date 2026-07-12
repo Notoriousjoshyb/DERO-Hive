@@ -97,12 +97,20 @@ export class AnthropicAdapter implements ProviderAdapter {
           type: 'document',
           source: { type: 'base64', media_type: 'application/pdf', data: p.file.data }
         });
+      } else if (p.type === 'file' && /^(text\/|application\/(json|javascript|xml))/u.test(p.file.mimeType)) {
+        blocks.push({ type: 'text', text: `[Attached file: ${p.file.filename}]\n${Buffer.from(p.file.data, 'base64').toString('utf8')}` });
       }
     }
     return blocks;
   }
 
   async *stream(req: ProviderStreamRequest): AsyncGenerator<ProviderStreamEvent> {
+    const hasAudio = req.messages.some((message) => Array.isArray(message.content)
+      && message.content.some((part) => part.type === 'input_audio'));
+    if (hasAudio) {
+      yield { type: 'error', error: 'This Anthropic adapter does not support audio attachments. Switch to an audio-capable model/provider or attach a transcript.' };
+      return;
+    }
     const url = `${this.cfg.baseUrl.replace(/\/$/, '')}/messages`;
     const messages = this.toAnthropicMessages(req.messages as never[]);
 

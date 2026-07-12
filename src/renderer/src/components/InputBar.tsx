@@ -8,6 +8,8 @@ import { UsageBudgetAlert } from './UsageBudgetAlert';
 import { thinkingOptionsFor } from '@shared/thinkingCapabilities';
 import { resolveAgent, shouldOrchestratorDispatch } from '@shared/agents';
 import { executeCustomCommand } from '../lib/customSlashCommands';
+import { extractDeroReferences, extractDeroReferenceItems, formatDeroReferenceReceipt, hasDeroReferences } from '@shared/deroReferences';
+import type { DeroReference } from '@shared/deroReferences';
 
 interface Props {
   conversationId?: string;
@@ -228,6 +230,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     state.setChatError(null);
 
     let prompt = content;
+    const deroReferences = extractDeroReferences(content);
     let skillName: string | undefined;
     let extractedText: string | null = null;
     const m = content.match(/^(\/\S+)\s*([\s\S]*)/);
@@ -260,6 +263,10 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       }
     }
 
+    if (hasDeroReferences(deroReferences)) {
+      prompt = `${prompt}\n\n${formatDeroReferenceReceipt(deroReferences)}`;
+    }
+
     // Plan-mode system prompt
     let systemPrompt = skillName ? `Active skill: ${skillName}` : undefined;
     if (composerPlanMode && !skillName) {
@@ -290,7 +297,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 
     // If the user message had a slash skill or shell command, the displayed
     // message keeps the raw text; the prompt sent to the model is expanded below.
-    const sendContent = skillName || shellMatch
+    const sendContent = skillName || shellMatch || hasDeroReferences(deroReferences)
       ? attachmentParts.length > 0
         ? [{ type: 'text', text: prompt } as ContentPart, ...attachmentParts]
         : prompt
@@ -411,6 +418,27 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   };
 
   const wordCount = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
+  const deroRefItems = useMemo(() => extractDeroReferenceItems(text), [text]);
+
+  const handleChainAction = (ref: DeroReference, action: string): void => {
+    const prompts: Record<string, string> = {
+      explain: `/chain-context Explain this DERO smart contract: ${ref.value}. Use the read-only DERO MCP tools to get source, state, and metadata. Attach verified daemon evidence with provenance labels.`,
+      inspect: `/chain-context Inspect the state of DERO smart contract ${ref.value}. Query GetSC with relevant keys and report the current storage state with daemon provenance.`,
+      trace: `/chain-context Trace transaction ${ref.value} on the DERO network. Include sender, receiver, amount, fee, block, and any contract invocations.`,
+      estimate: `/chain-context Estimate the deployment cost for the contract at ${ref.value}. Consider gas, storage, and network conditions from the connected daemon.`,
+      balance: `/chain-context Check the balance of DERO address ${ref.value}. Use GetEncryptedBalance and report native DERO and any token holdings.`,
+      telaInspect: `/chain-context Inspect the TELA dApp at ${ref.value}. Use tela_inspect to verify the contract, check TELA-DOC-1 documents, and report the app structure.`
+    };
+    const prompt = prompts[action] || `/chain-context Analyze ${ref.value} on the DERO network using read-only tools.`;
+    const ta = textareaRef.current;
+    if (ta) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(ta, prompt);
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      setText(prompt);
+      ta.focus();
+    }
+  };
 
   return (
     <div className={`border-t border-border bg-bg p-4 input-bar-offset ${composerFocusMode ? 'fixed inset-x-0 bottom-0 z-40 shadow-2xl' : ''}`}>
@@ -520,6 +548,24 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             aria-label="Message input"
             className="w-full resize-none px-4 pt-3 pb-1.5 bg-transparent text-fg placeholder-fg-subtle focus:outline-none text-sm leading-relaxed caret-accent"
           />
+          {deroRefItems.length > 0 && (
+            <div className="flex items-center gap-1 px-3 py-1.5 border-t border-border/60 text-[10px] text-fg-muted overflow-x-auto">
+              <span className="flex-shrink-0">Chain context detected:</span>
+              {deroRefItems.map((ref, i) => {
+                const actionLabel = ref.type === 'scid' ? 'Explain' : ref.type === 'address' ? 'Check Balance' : 'Inspect';
+                const actionKey = ref.type === 'scid' ? 'explain' : ref.type === 'address' ? 'balance' : 'telaInspect';
+                return (
+                  <span key={i} className="flex items-center gap-0.5 flex-shrink-0">
+                    <span className="px-1.5 py-0.5 rounded bg-accent-soft/50 text-fg">{ref.label}</span>
+                    <button
+                      onClick={() => handleChainAction(ref, actionKey)}
+                      className="px-1.5 py-0.5 rounded hover:bg-bg-elev text-accent hover:underline"
+                    >{actionLabel}</button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {!text && !isStreaming && (
             <div className="flex items-center gap-3 px-4 pb-2 text-[10px] text-fg-subtle/60 select-none">
               {HELP_HINTS.map((h) => (

@@ -1,4 +1,4 @@
-import type { ProviderModel } from '@shared/types';
+import type { ProviderModel, MediaKind } from '@shared/types';
 
 export interface ModelMetadata {
   contextWindow: number;
@@ -91,7 +91,10 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   'kimi-k2.7-code-highspeed': { contextWindow: 262_144, maxOutput: 262_144, supportsVision: true, supportsTools: true },
   'kimi-k2.6': { contextWindow: 262_144, maxOutput: 262_144, supportsVision: true, supportsTools: true },
   'kimi-k2.5': { contextWindow: 262_144, maxOutput: 100_352, supportsVision: true, supportsTools: true },
+  // Official stable IDs exposed by https://api.kimi.com/coding — do not
+  // rename; Kimi's docs guarantee these strings.
   'kimi-for-coding': { contextWindow: 262_144, maxOutput: 262_144, supportsVision: false, supportsTools: true },
+  'kimi-for-coding-highspeed': { contextWindow: 262_144, maxOutput: 262_144, supportsVision: false, supportsTools: true },
   'kimi-k2-0711-preview': { contextWindow: 131_072, maxOutput: 100_352, supportsVision: false, supportsTools: true },
   'moonshot-v1-8k': { contextWindow: 8_192, maxOutput: 8_192, supportsVision: false, supportsTools: true },
   'moonshot-v1-32k': { contextWindow: 32_768, maxOutput: 8_192, supportsVision: false, supportsTools: true },
@@ -172,16 +175,39 @@ export function getModelMetadata(modelId: string): ModelMetadata | null {
 
 export function applyKnownMetadata(models: ProviderModel[]): ProviderModel[] {
   return models.map((m) => {
-    const known = getModelMetadata(m.id);
-    if (!known) return m;
+    const mediaKinds = m.mediaKinds && m.mediaKinds.length ? m.mediaKinds : mediaKindsForModel(m.id);
+    const withMedia = mediaKinds.length ? { ...m, mediaKinds } : m;
+    const known = getModelMetadata(withMedia.id);
+    if (!known) return withMedia;
     return {
-      ...m,
-      contextWindow: m.contextWindow ?? known.contextWindow,
-      maxOutput: m.maxOutput ?? known.maxOutput,
-      supportsVision: m.supportsVision ?? known.supportsVision,
-      supportsTools: m.supportsTools ?? known.supportsTools,
-      supportsAudio: m.supportsAudio ?? known.supportsAudio,
-      supportsReasoning: m.supportsReasoning ?? known.supportsReasoning
+      ...withMedia,
+      contextWindow: withMedia.contextWindow ?? known.contextWindow,
+      maxOutput: withMedia.maxOutput ?? known.maxOutput,
+      supportsVision: withMedia.supportsVision ?? known.supportsVision,
+      supportsTools: withMedia.supportsTools ?? known.supportsTools,
+      supportsAudio: withMedia.supportsAudio ?? known.supportsAudio,
+      supportsReasoning: withMedia.supportsReasoning ?? known.supportsReasoning
     };
   });
+}
+
+// Media generation models are identified from their id. Text/chat models return
+// [] and stay out of Vision → Media. Matched case-insensitively against the id
+// (with a normalized copy so gpt_image / gpt-image both hit). Deliberately
+// conservative: whisper/transcribe are speech *input*, not generation.
+const IMAGE_MODEL_RE = /(dall-?e|gpt-image|image-1|imagen|\bflux\b|sdxl|sd-?3|sd-?xl|stable-diffusion|stable-image|ideogram|kandinsky|recraft|seedream|playground-v|aura-flow|kolors|hidream|nano-banana|grok-image|firefly)/;
+const VIDEO_MODEL_RE = /(sora|veo|\bkling\b|runway|gen-?3|gen-?4|\bwan\b|hunyuan-video|\bltx\b|mochi|\bpika\b|seedance|cogvideo|hailuo|marey|minimax\/video|video-0)/;
+const AUDIO_MODEL_RE = /(tts|text-to-speech|\bspeech\b|musicgen|music-0|stable-audio|audiogen|lyria|\bsuno\b|\bbark\b|\bxtts\b|orpheus|eleven_|elevenlabs|dia-tts|\bkokoro\b)/;
+
+export function mediaKindsForModel(modelId: string): MediaKind[] {
+  const id = modelId.toLowerCase();
+  const norm = normalizeId(modelId);
+  const hay = `${id} ${norm}`;
+  // whisper/transcription are input, not generation — never tag as audio.
+  if (/whisper|transcrib/.test(id)) return [];
+  const kinds: MediaKind[] = [];
+  if (VIDEO_MODEL_RE.test(hay)) kinds.push('video');
+  if (IMAGE_MODEL_RE.test(hay)) kinds.push('image');
+  if (AUDIO_MODEL_RE.test(hay)) kinds.push('audio');
+  return kinds;
 }

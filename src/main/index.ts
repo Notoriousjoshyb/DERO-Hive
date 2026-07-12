@@ -1,7 +1,7 @@
-import { app, BrowserWindow, shell, ipcMain, dialog, Menu, nativeTheme } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, dialog, Menu, nativeTheme, protocol, net } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { IPC } from '../shared/types';
 import { registerChatHandlers } from './ipc/chat';
 import { registerProviderHandlers, startModelRefreshScheduler } from './ipc/providers';
@@ -20,6 +20,9 @@ import { registerProjectHandlers } from './ipc/projects';
 import { registerWhisperHandlers } from './ipc/whisper';
 import { registerSimulatorHandlers } from './ipc/simulator';
 import { registerKnowledgeHandlers } from './ipc/knowledge';
+import { registerMediaHandlers } from './ipc/media';
+import { MediaManager } from './media/manager';
+import { setMediaManager } from './media/instance';
 import { initDb, closeDb, getSetting } from './db/client';
 import { initSecrets } from './utils/secrets';
 import { logger } from './utils/logger';
@@ -27,6 +30,7 @@ import { ensureDirs } from './utils/paths';
 import { McpManager } from './mcp/manager';
 import { WhisperManager } from './whisper/manager';
 import { SimulatorManager } from './simulator/manager';
+import { setSimulatorManager } from './simulator/instance';
 import { BrowserBridge } from './browserBridge';
 import { terminalDisposeAll } from './terminal/session';
 import { shutdownAdapterCache } from './providers/registry';
@@ -40,6 +44,7 @@ let mainWindow: BrowserWindow | null = null;
 let mcpManager: McpManager | null = null;
 let whisperManager: WhisperManager | null = null;
 let simulatorManager: SimulatorManager | null = null;
+let mediaManager: MediaManager | null = null;
 let browserBridge: BrowserBridge | null = null;
 let knowledgeAutomations: KnowledgeAutomationScheduler | null = null;
 
@@ -224,6 +229,17 @@ if (!gotSingleInstanceLock) {
 // produces noise; disable it so real errors stay visible. Must be set before ready.
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 
+// Custom scheme used to stream generated media (image/video/audio) files from
+// the userData/project media folders into the renderer's <img>/<video>/<audio>
+// tags. Registered as privileged so it supports range requests (seeking) and
+// the fetch API. Must be declared before the app 'ready' event.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'hive-media',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: false }
+  }
+]);
+
 app.whenReady().then(async () => {
   if (!app.hasSingleInstanceLock()) return;
   electronApp.setAppUserModelId('com.dero.hive');
@@ -259,10 +275,46 @@ app.whenReady().then(async () => {
   simulatorManager = new SimulatorManager((status) => {
     mainWindow?.webContents.send(IPC.SIMULATOR_STATUS_CHANGED, status);
   });
+  setSimulatorManager(simulatorManager);
   browserBridge = new BrowserBridge(() => mainWindow, () => whisperManager, () => getKnowledgeService());
   // The browser extension should work whenever the app is running, so the
   // loopback bridge starts with the app instead of with the Companion panel.
   void browserBridge.setEnabled(true).catch((err) => logger.error('browser-bridge', 'failed to start', err));
+
+  // Init media generation manager (image / video / audio). Files are served to
+  // the renderer through the hive-media:// protocol handled here.
+  mediaManager = new MediaManager();
+  setMediaManager(mediaManager);
+  // Repair artifacts written by an earlier build with a broken filename/path.
+  mediaManager.repairArtifactPaths();
+
+  // hive-media://artifact/<id> → stream the artifact file from disk. Only ids
+  // that resolve to a known artifact are served, so the renderer cannot read
+  // arbitrary paths through this scheme.
+  protocol.handle('hive-media', async (request) => {
+    try {
+      const url = new URL(request.url);
+      // host is the resource type ("artifact"); first path segment is the id.
+      const id = decodeURIComponent(url.pathname.replace(/^\/+/, '').split('/')[0] || '');
+      if (!id) return new Response('Bad request', { status: 400 });
+      const file = mediaManager?.artifactFileById(id);
+      if (!file) return new Response('Not found', { status: 404 });
+      const res = await net.fetch(pathToFileURL(file.path).toString(), {
+        headers: request.headers,
+        method: request.method
+      });
+      // Ensure a correct content-type so <video>/<audio> pick the right decoder.
+      if (file.mimeType) {
+        const headers = new Headers(res.headers);
+        headers.set('Content-Type', file.mimeType);
+        return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+      }
+      return res;
+    } catch (err) {
+      logger.warn('media', `hive-media protocol error: ${String(err)}`);
+      return new Response('Error', { status: 500 });
+    }
+  });
 
   // Init project knowledge vault: routes reads/writes through a
   // user-configured Obsidian MCP server, plus the digest/synthesis scheduler.
@@ -289,6 +341,7 @@ app.whenReady().then(async () => {
   registerWhisperHandlers(whisperManager);
   registerSimulatorHandlers(simulatorManager);
   registerKnowledgeHandlers(knowledgeService, knowledgeAutomations);
+  if (mediaManager) registerMediaHandlers(mediaManager);
   ipcMain.handle(IPC.BROWSER_BRIDGE_SET_ENABLED, (_event, enabled: boolean) => browserBridge?.setEnabled(Boolean(enabled)) ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_STATUS, () => browserBridge?.status() ?? { enabled: false, port: 43120, paired: false });
   ipcMain.handle(IPC.BROWSER_BRIDGE_BIND, (_event, requestId: string, conversationId: string) => browserBridge?.bind(requestId, conversationId) ?? { ok: false });
@@ -370,3 +423,4 @@ nativeTheme.on('updated', () => {
 });
 
 logger.info('app', 'main process ready');
+

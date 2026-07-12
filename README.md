@@ -19,6 +19,7 @@ DERO Hive is a local-first desktop AI workspace for chat, coding, tools, MCP ser
 - Swarm: run specialists in parallel on a task, followed by an automatic Verify pass that fact-checks their reports against the codebase before a Synthesizer produces the final answer.
 - Optional per-project knowledge vault: capture notes into an Obsidian vault (via MCP), with consent-gated automatic writes, scheduled daily digests and weekly syntheses, and an offline retry queue.
 - Appearance engine: themes, accent colour override, and custom CSS injection.
+- Activity panel: a live, terminal-style log of every file the agent writes or edits, with `git diff`-style hunks, before/after snapshots, and +/- line counts.
 - Browser Companion extension (Chrome/Edge side panel) that sends page context to DERO Hive, streams replies live back into the browser, and can save captured context straight into a project's knowledge vault. See below.
 
 ## Requirements
@@ -39,11 +40,46 @@ npm run dev
 
 `postinstall` rebuilds the native SQLite dependency, prepares bundled resources, and applies the Codex ACP Windows hidden-window patch.
 
+## Terminal interface
+
+Hive includes a full-screen terminal UI designed for the VS Code integrated terminal and other modern terminals. It reuses the desktop provider adapters, model metadata, reasoning controls, tools, MCP servers, skills, permissions, projects, and SQLite conversation format.
+
+```bash
+# Run once from this checkout
+npm run cli:link
+
+# Then open any project in VS Code and run this in its integrated terminal
+hive
+
+# Or start directly from this checkout
+npm run hive -- -C path/to/project
+```
+
+Run the command from the project you want Hive to work in. The launch folder becomes the tool workspace automatically; use `hive -C <folder>` to override it. On first use, configure a provider with `hive provider add`, then refresh its models with `hive provider refresh <provider-id>` if needed. `hive --classic` keeps the line-oriented interface, while `hive chat "prompt"` supports scripts and one-shot requests.
+
+Inside the TUI:
+
+- `/` opens discoverable commands, `@` completes and injects bounded workspace-file context, `#` inserts saved or built-in prompt-library entries, and `!command` runs an explicit local shell command and sends its output back as context.
+- `Ctrl+P` switches provider/model, `Ctrl+T` cycles model-aware reasoning effort, `Shift+Tab` switches Build/Plan, `Ctrl+O` expands reasoning/tool detail, `Esc` stops a response, and `Ctrl+R` resumes a session.
+- `PgUp`/`PgDn` (or `Shift+↑`/`Shift+↓`) scroll back through the transcript — the full-screen renderer repaints in place, so use these rather than the terminal's own scrollback.
+- `/theme` switches between Hive Dark, Hive Light, System, Solarized, Nord, Catppuccin, and Gruvbox. The desktop accent override is also understood.
+- `/permissions` selects Inspect (always ask), Collaborate (once per conversation), Project trust, or Autopilot. It can also list/add/remove scoped rules; persistent deny rules always win.
+- `/attach`, `/agent`, `/compact`, `/fork`, `/undo`, `/diff`, `/context`, `/mcp`, `/skills`, `/project`, `/export`, and `/search` expose the corresponding coding-first workflows.
+
+Plan mode retains read-only file/search inspection while suppressing mutating, shell, media, and third-party tools. Codex ACP-native file/shell activity appears in the same expandable tool timeline as Hive tools. Generated media is copied into the active workspace under `media/hive/` so it remains accessible from the terminal; attachment support still depends on the selected model/provider's image, audio, PDF, or file capabilities.
+
+This terminal interface focuses on coding-agent workflows. Desktop-only visual surfaces—including side-by-side Compare, Swarm orchestration, microphone capture, the Vision/Media studio, Browser Companion, and knowledge-vault dashboards—remain in the Electron app rather than being imitated as incomplete terminal panels.
+
+The CLI uses `~/.hive` by default so a standalone Node process never races the running Electron app for its database and cannot silently bypass Electron's OS-backed secret store. Override it with `--data-dir` or `HIVE_DATA_DIR` when needed, but do not point both running interfaces at the same database. Headless API-key storage uses the existing machine-derived fallback and is obfuscation rather than OS-keychain encryption.
+
 ## Verification and builds
 
 ```bash
-# Type-check main and renderer processes
+# Type-check main, renderer, and terminal processes
 npm run typecheck
+
+# Terminal command/parser and render smoke tests
+npm run test:cli
 
 # Production bundle
 npm run build
@@ -78,6 +114,20 @@ The Codex adapter stays alive for the app session. Normal messages reuse the exi
 
 Codex normally stores its reusable credentials in the operating-system credential store or `~/.codex/auth.json`. Treat `auth.json` as a password and never commit or share it.
 
+## Media generation
+
+Generate images, video, and audio and view or play them directly in **Vision → Media** — images render inline, and video and audio get in-app players.
+
+You can also just **ask in chat** ("generate an image of…", "read this aloud"). Tool-capable models call the built-in `generate_image` / `generate_audio` / `generate_video` tools, and the result previews inline in the conversation. Note a chat model only knows *text* — it needs a media generator to be available: either a media-capable model on a connected provider, or a dedicated media provider. If none is configured, Hive tells you how to add one instead of guessing.
+
+Media capability is derived from your **model providers**. When a provider connects and its model list is pulled, each model id is auto-classified: text-to-image models (DALL·E, GPT Image, Flux, SDXL, Imagen…), video models (Sora, Veo, Kling…), and speech/music models (TTS, MusicGen…). Any media-capable models then appear as options in the Media studio for their kind — no separate configuration needed.
+
+**MiniMax** is wired natively: if you connect a MiniMax provider, Hive reuses that same key against MiniMax's own media endpoints, so image, voice, music, and video generation (per your MiniMax plan) work in the Media studio and from chat without any extra setup.
+
+For anything a chat provider can't do — video, music, local generators (ComfyUI / Automatic1111), or key-free services — add a **dedicated media provider** under **Settings → Media**. Built-in presets cover OpenAI Images, Stability AI, Pollinations (no key), Replicate (image / video / music), ComfyUI, Automatic1111, OpenAI-compatible image endpoints, and OpenAI / ElevenLabs speech.
+
+Generated files are written under the app's media folder (or the active project's `media/` folder) and streamed to the UI over a restricted `hive-media://` scheme that only serves known artifacts. There is a 50 MB per-file cap. Wallet access, signing, and any on-chain action remain out of scope for media generation.
+
 ## Browser Companion extension
 
 `browser-extension/` contains a Manifest V3 side-panel extension for Chrome/Edge. Load it via `chrome://extensions` → Developer mode → **Load unpacked**, then open it with the toolbar icon or **Alt+H**.
@@ -98,6 +148,24 @@ The composer shows the reasoning levels appropriate to the selected model when t
 
 Different providers expose reasoning differently. DERO Hive only sends provider-specific reasoning fields where the adapter supports them, preventing unsupported models from receiving invalid request parameters.
 
+## DERO Developer Studio
+
+Set a project type to **DERO developer project** in **Settings → Projects** to enable its Developer Studio in the project cockpit. It provides focused AI workflows for DVM-BASIC contract design and security review, TELA dApp planning, chain investigation, simulator test planning, and release preparation.
+
+The Studio starts and checks the bundled simulator over a loopback-only RPC endpoint, shows basic chain state, and can run a local structural check on pasted or selected `.bas` source. The `lint_dvm_basic` AI tool uses the same deterministic checks. These checks are guidance, not a compiler or proof of execution: confirm a contract with simulator execution and daemon gas estimation before considering a deployment. Wallet access, signing, transfers, live invocations, and deployment remain explicit user actions.
+
+AI agents can also call `get_simulator_chain_info`, a read-only tool that reports the state of the local simulator only when it is running.
+
+When a composer message includes a likely DERO address, 64-character chain identifier, or TELA URL, Hive adds a labelled unverified-reference receipt to the model context. This helps agents use DERO tools to verify claims while ensuring pasted identifiers are never treated as trusted chain evidence by default.
+
+Use **Create starter contract** to create `contracts/Counter.bas` inside the project folder. It never overwrites an existing file.
+
+Use **Create TELA starter** to create a small `tela-starter/` frontend. Its XSWD example requests only `DERO.GetInfo`; it does not sign, transfer, deploy, or access keys, and an existing starter file is never overwritten.
+
+**Generate TELA dApp** scaffolds a named `tela/<name>/` contract + frontend from a short brief, then runs a validation pass (contract initializer, `SIGNER()` guard, HTML structure, XSWD wiring, hardcoded-secret scan, relative asset paths) before you touch a live network.
+
+Contract briefs — AI review findings and proposed regression tests for a piece of DVM-BASIC source — are saved to `.hive/artifacts.json` in the project folder so they survive a restart. **Create fixture wallet** requests a throwaway simulator address (via `DERO.GetRandomAddress`) for local balance/testing without touching a real wallet. The `discover_contracts` tool guides an agent to search contracts already indexed by a connected Gnomon MCP server (by similarity, function name, transaction, or TELA app) rather than scanning the chain itself.
+
 ## Security model
 
 - API secrets, MCP server environment variables, and MCP bearer tokens remain in the Electron main process, encrypted at rest via Electron safe storage where available.
@@ -114,6 +182,7 @@ src/main/knowledge/       Project knowledge vault service and digest/synthesis s
 src/preload/              Context-isolated renderer API
 src/renderer/src/         React user interface and Zustand state
 src/shared/               Shared types, presets, model metadata, capabilities
+cli/                      Ink terminal UI, headless services, and CLI commands
 browser-extension/        Chrome/Edge side-panel Browser Companion (unpacked MV3 extension)
 resources/mcp/            Bundled DERO MCP server source and assets
 resources/mcp-registry.json  Curated seed registry for the MCP Discover tab
@@ -125,7 +194,9 @@ scripts/                  Resource setup and Codex ACP patch scripts
 
 | Variable | Purpose |
 |---|---|
-| `DERO_HIVE_DATA_DIR` | Overrides DERO Hive's local app-data directory. |
+| `HIVE_DATA_DIR` | Overrides the headless/terminal local-data directory (default `~/.hive`). |
+| `HIVE_WORKSPACE` | Overrides the terminal fallback workspace when no launch folder is available. |
+| `HIVE_RESOURCES` | Overrides the bundled-resource root for a relocated terminal installation. |
 | `CODEX_PATH` | Optional custom Codex executable used by ACP. |
 
 ## Acknowledgments
@@ -161,4 +232,3 @@ DERO Hive is possible because of these open-source projects and services. This l
 ## License
 
 MIT. See the repository license for details.
-

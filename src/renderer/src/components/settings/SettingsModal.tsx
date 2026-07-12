@@ -7,17 +7,19 @@ import { SkillsPanel } from './SkillsPanel';
 import { ToolsPanel } from './ToolsPanel';
 import { ProjectsPanel } from './ProjectsPanel';
 import { PromptsPanel } from './PromptsPanel';
+import { MediaPanel } from './MediaPanel';
 import { useAppStore } from '../../stores/app';
 
 interface Props {
   onClose: () => void;
 }
 
-type Tab = 'general' | 'providers' | 'mcp' | 'discover' | 'skills' | 'prompts' | 'tools' | 'projects';
+type Tab = 'general' | 'providers' | 'mcp' | 'discover' | 'skills' | 'prompts' | 'tools' | 'projects' | 'media';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'providers', label: 'Providers' },
+  { id: 'media', label: 'Media' },
   { id: 'projects', label: 'Projects' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'discover', label: 'Discover' },
@@ -72,6 +74,7 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
           <div className="flex-1 overflow-y-auto p-6">
             {tab === 'general' && <GeneralPanel />}
             {tab === 'providers' && <ProvidersPanel />}
+            {tab === 'media' && <MediaPanel />}
             {tab === 'projects' && <ProjectsPanel />}
             {tab === 'mcp' && <McpPanel />}
             {tab === 'discover' && <DiscoverPanel />}

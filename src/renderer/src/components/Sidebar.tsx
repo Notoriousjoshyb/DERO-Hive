@@ -21,6 +21,11 @@ export function Sidebar(): JSX.Element {
   const toggleCodeTab = useAppStore((s) => s.toggleCodeTab);
   const visionTabOpen = useAppStore((s) => s.visionTabOpen);
   const toggleVisionTab = useAppStore((s) => s.toggleVisionTab);
+  const projectCockpitId = useAppStore((s) => s.projectCockpitId);
+  const lastDeroProjectId = useAppStore((s) => s.lastDeroProjectId);
+  const openProjectCockpit = useAppStore((s) => s.openProjectCockpit);
+  const closeProjectCockpit = useAppStore((s) => s.closeProjectCockpit);
+  const openProjectSettings = useAppStore((s) => s.openProjectSettings);
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Array<{ conversationId: string; snippet: string; role: string }>>([]);
@@ -47,11 +52,12 @@ export function Sidebar(): JSX.Element {
   }, [search]);
 
   // Opening or creating a chat must land the user in the chat view — close
-  // any full-view tab (Code/Vision) occupying the main column.
+  // any full-view tab (Code/Vision/Cockpit) occupying the main column.
   const backToChat = (): void => {
     const s = useAppStore.getState();
     if (s.codeTabOpen) s.toggleCodeTab();
-    else if (s.visionTabOpen) s.toggleVisionTab();
+    if (s.visionTabOpen) s.toggleVisionTab();
+    if (s.projectCockpitId) s.closeProjectCockpit();
   };
 
   const handleNew = async (projectId?: string): Promise<void> => {
@@ -125,10 +131,12 @@ export function Sidebar(): JSX.Element {
   // Chats that belong to a project live under that project — keep them out of
   // Recents so they don't appear duplicated in two places.
   const recentConvs = activeConvs.filter((c) => !c.pinned && !c.projectId);
+  const deroProjects = projects.filter((project) => project.config?.kind === 'dero');
 
   const goHome = (): void => {
     if (codeTabOpen) toggleCodeTab();
-    if (useAppStore.getState().visionTabOpen) useAppStore.getState().toggleVisionTab();
+    if (visionTabOpen) toggleVisionTab();
+    if (projectCockpitId) closeProjectCockpit();
   };
   const goCode = (): void => { if (!codeTabOpen) toggleCodeTab(); };
   const goVision = (): void => { if (!visionTabOpen) toggleVisionTab(); };
@@ -200,6 +208,18 @@ export function Sidebar(): JSX.Element {
           onClick={() => setProjectsExpanded((v) => !v)}
           active={projectsExpanded}
         />
+        {deroProjects.length > 0 && (
+          <NavItem
+            icon={<DeroStudioIcon />}
+            label="DERO Studio"
+            badge={deroProjects.length > 1 ? String(deroProjects.length) : undefined}
+            active={!!projectCockpitId && deroProjects.some((p) => p.id === projectCockpitId)}
+            onClick={() => openProjectCockpit(
+              lastDeroProjectId && deroProjects.some((p) => p.id === lastDeroProjectId) ? lastDeroProjectId : deroProjects[0].id
+            )}
+            title="Open DERO Studio"
+          />
+        )}
       </div>
 
       {/* Search */}
@@ -281,11 +301,11 @@ export function Sidebar(): JSX.Element {
               </Section>
             )}
 
-            {activeConvs.length === 0 && !projectsExpanded && (
+            {pinnedConvs.length === 0 && recentConvs.length === 0 && !projectsExpanded && (
               <div className="px-3 py-6 text-center text-xs text-fg-subtle">
-                <div className="mb-1">No chats yet</div>
-                <button onClick={() => void handleNew()} className="text-accent hover:underline">
-                  Start your first chat →
+                <div className="mb-1">{activeConvs.length === 0 ? 'No chats yet' : 'Chats hidden'}</div>
+                <button onClick={() => setProjectsExpanded(true)} className="text-accent hover:underline">
+                  {activeConvs.length === 0 ? 'Start your first chat →' : 'Show projects →'}
                 </button>
               </div>
             )}
@@ -295,7 +315,6 @@ export function Sidebar(): JSX.Element {
               expanded={expandedProjects}
               toggleProject={toggleProject}
               addingProject={addingProject}
-              setAddingProject={setAddingProject}
               newProjectName={newProjectName}
               setNewProjectName={setNewProjectName}
               newProjectPath={newProjectPath}
@@ -313,6 +332,7 @@ export function Sidebar(): JSX.Element {
               onMoveToProject={onMoveToProject}
               currentId={currentId}
               isOpen={projectsExpanded}
+              onOpenProjectSettings={openProjectSettings}
             />
 
             <BookmarksSection onOpen={(conversationId, messageId) => {
@@ -409,6 +429,15 @@ function ProjectsIcon(): JSX.Element {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
       <path d="M2 3.5h10L11 11.5H3L2 3.5z" />
       <path d="M5 3.5V2.5a1 1 0 011-1h2a1 1 0 011 1v1" />
+    </svg>
+  );
+}
+
+function DeroStudioIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 1.5l1.2 2.8 3 .3-2.3 2 0.7 2.9L7 8.1 4.4 9.5l.7-2.9-2.3-2 3-.3L7 1.5z" />
+      <path d="M7 5.1v1.8M7 8.9v.1" />
     </svg>
   );
 }
@@ -955,7 +984,6 @@ function ProjectsSection({
   expanded,
   toggleProject,
   addingProject,
-  setAddingProject,
   newProjectName,
   setNewProjectName,
   newProjectPath,
@@ -972,13 +1000,13 @@ function ProjectsSection({
   onArchive,
   onMoveToProject,
   currentId,
-  isOpen
+  isOpen,
+  onOpenProjectSettings
 }: {
   projects: Project[];
   expanded: Set<string>;
   toggleProject: (id: string) => void;
   addingProject: boolean;
-  setAddingProject: (v: boolean) => void;
   newProjectName: string;
   setNewProjectName: (v: string) => void;
   newProjectPath: string;
@@ -996,6 +1024,7 @@ function ProjectsSection({
   onMoveToProject: (id: string, projectId?: string) => Promise<void> | void;
   currentId?: string;
   isOpen: boolean;
+  onOpenProjectSettings: () => void;
 }): JSX.Element {
   if (!isOpen) return <></>;
   return (
@@ -1003,9 +1032,9 @@ function ProjectsSection({
       <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle flex items-center justify-between">
         <span>Projects</span>
         <button
-          onClick={() => setAddingProject(!addingProject)}
+          onClick={onOpenProjectSettings}
           className="text-fg-subtle hover:text-accent p-0.5 rounded"
-          title="Add project"
+          title="Add project with full settings"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
             <path d="M5 1v8M1 5h8" />

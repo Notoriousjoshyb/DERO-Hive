@@ -1,11 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import type { ProviderAdapter, ProviderStreamRequest, ProviderStreamEvent } from './base';
-import type { Message, ProviderConfig, ProviderModel, ThinkingOption } from '@shared/types';
+import type { ContentPart, Message, ProviderConfig, ProviderModel, ThinkingOption } from '@shared/types';
 import { logger } from '../utils/logger';
 import { getWorkspaceRoot, resolveWithinAllowed } from '../utils/pathPolicy';
 
@@ -26,12 +25,14 @@ interface AcpEvent {
   content?: string;
   reasoning?: string;
   error?: string;
+  toolActivity?: NonNullable<ProviderStreamEvent['toolActivity']>;
 }
 
 interface SessionState {
   sessionId: string;
   model: string;
   bootstrapped: boolean;
+  cwd: string;
 }
 
 interface Runtime {
@@ -40,6 +41,7 @@ interface Runtime {
   init: InitializeResponse;
   queues: Map<string, AsyncQueue<AcpEvent>>;
   permissionHandlers: Map<string, (request: { requestId: string; toolName: string; args: Record<string, unknown>; description?: string }) => Promise<boolean>>;
+  readOnlySessions: Set<string>;
   sessions: Map<string, SessionState>;
   authenticationAttempt: Promise<void> | null;
 }
@@ -61,11 +63,11 @@ class AsyncQueue<T> {
 }
 
 function defaultCodexAcpPath(): string {
+  const appRoot = process.env.HIVE_APP_ROOT || process.cwd();
   const candidates = [
     join(process.resourcesPath || '', 'app.asar.unpacked/node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
+    join(appRoot, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
     join(process.cwd(), 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
-    join(__dirname, '../../../node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
-    join(__dirname, '../../node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
     'codex-acp'
   ];
   return candidates.find((candidate) => candidate === 'codex-acp' || existsSync(candidate)) || candidates[0];
@@ -73,12 +75,13 @@ function defaultCodexAcpPath(): string {
 
 function bundledCodexPath(): string | undefined {
   if (process.platform !== 'win32') return undefined;
+  const appRoot = process.env.HIVE_APP_ROOT || process.cwd();
   const target = process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc';
   const packageName = process.arch === 'arm64' ? 'codex-win32-arm64' : 'codex-win32-x64';
   const candidates = [
     join(process.resourcesPath || '', `app.asar.unpacked/node_modules/@openai/${packageName}/vendor/${target}/bin/codex.exe`),
+    join(appRoot, `node_modules/@openai/${packageName}/vendor/${target}/bin/codex.exe`),
     join(process.cwd(), `node_modules/@openai/${packageName}/vendor/${target}/bin/codex.exe`),
-    join(__dirname, `../../node_modules/@openai/${packageName}/vendor/${target}/bin/codex.exe`)
   ];
   return candidates.find(existsSync);
 }
@@ -103,24 +106,92 @@ function thinkingOptionsFromConfig(options: SessionConfigOption[] | null | undef
   });
 }
 
+function attachmentBlock(part: ContentPart): acp.ContentBlock[] {
+  if (part.type === 'text') return [{ type: 'text', text: part.text }];
+  if (part.type === 'image_url') {
+    const match = /^data:([^;,]+);base64,([\s\S]+)$/u.exec(part.image_url.url);
+    return match
+      ? [{ type: 'image', mimeType: match[1], data: match[2] }]
+      : [{ type: 'resource_link', name: 'image', uri: part.image_url.url }];
+  }
+  if (part.type === 'input_audio') {
+    return [{ type: 'audio', mimeType: part.input_audio.format === 'wav' ? 'audio/wav' : 'audio/mpeg', data: part.input_audio.data }];
+  }
+  if (part.type === 'file') {
+    const uri = `hive-attachment:///${encodeURIComponent(part.file.filename)}`;
+    if (/^(text\/|application\/(json|javascript|xml))/u.test(part.file.mimeType)) {
+      return [{ type: 'resource', resource: { uri, mimeType: part.file.mimeType, text: Buffer.from(part.file.data, 'base64').toString('utf8') } }];
+    }
+    return [{ type: 'resource', resource: { uri, mimeType: part.file.mimeType, blob: part.file.data } }];
+  }
+  return [{ type: 'resource_link', name: part.attachment.filename, uri: `hive-attachment:///${part.attachment.id}`, mimeType: part.attachment.mimeType, size: part.attachment.size }];
+}
+
 function contentBlocksFromMessages(messages: Message[], systemPrompt?: string): acp.ContentBlock[] {
   const blocks: acp.ContentBlock[] = [];
   if (systemPrompt) blocks.push({ type: 'text', text: systemPrompt });
   for (const message of messages) {
-    const text = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
-    blocks.push({ type: 'text', text: `[${message.role}]: ${text}` });
+    if (typeof message.content === 'string') {
+      blocks.push({ type: 'text', text: `[${message.role}]: ${message.content}` });
+      continue;
+    }
+    blocks.push({ type: 'text', text: `[${message.role} message]` });
+    for (const part of message.content) blocks.push(...attachmentBlock(part));
   }
   return blocks;
 }
 
+function toolArgs(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : { input: value ?? null };
+}
+
+function toolResult(update: acp.ToolCall | acp.ToolCallUpdate): { content: string; meta: Record<string, unknown> } {
+  const rendered: string[] = [];
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  for (const item of update.content || []) {
+    if (item.type === 'diff') {
+      const oldLines = (item.oldText || '').split('\n').length;
+      const newLines = item.newText.split('\n').length;
+      linesAdded += Math.max(0, newLines - oldLines);
+      linesRemoved += Math.max(0, oldLines - newLines);
+      rendered.push(`Updated ${item.path} (+${Math.max(0, newLines - oldLines)} -${Math.max(0, oldLines - newLines)})`);
+    } else if (item.type === 'terminal') {
+      rendered.push(`Terminal: ${item.terminalId}`);
+    } else if (item.content.type === 'text') {
+      rendered.push(item.content.text);
+    } else {
+      rendered.push(`[${item.content.type} result]`);
+    }
+  }
+  if (update.rawOutput !== undefined) {
+    rendered.push(typeof update.rawOutput === 'string' ? update.rawOutput : JSON.stringify(update.rawOutput, null, 2));
+  }
+  return {
+    content: rendered.filter(Boolean).join('\n') || (update.status === 'failed' ? 'Codex tool failed.' : 'Codex tool completed.'),
+    meta: {
+      source: 'codex-acp',
+      ...(update.kind ? { kind: update.kind } : {}),
+      ...(update.locations?.length ? { locations: update.locations } : {}),
+      ...(linesAdded || linesRemoved ? { linesAdded, linesRemoved } : {})
+    }
+  };
+}
+
 /** Routes ACP notifications to the queue for the session that produced them. */
 class CodexAcpClient implements Client {
+  private readonly tools = new Map<string, { name: string; args: Record<string, unknown>; startedAt: number; kind?: acp.ToolKind }>();
+
   constructor(
     private readonly queues: Map<string, AsyncQueue<AcpEvent>>,
-    private readonly permissionHandlers: Runtime['permissionHandlers']
+    private readonly permissionHandlers: Runtime['permissionHandlers'],
+    private readonly readOnlySessions: Set<string>
   ) {}
 
   async requestPermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
+    if (this.readOnlySessions.has(params.sessionId)) return { outcome: { outcome: 'cancelled' } };
     const handler = this.permissionHandlers.get(params.sessionId);
     if (!handler) return { outcome: { outcome: 'cancelled' } };
 
@@ -149,9 +220,50 @@ class CodexAcpClient implements Client {
       queue.push({ type: 'delta', content: update.content.text });
     } else if (update.sessionUpdate === 'agent_thought_chunk' && update.content.type === 'text' && update.content.text) {
       queue.push({ type: 'reasoning', reasoning: update.content.text });
+    } else if (update.sessionUpdate === 'tool_call') {
+      const state = { name: update.title, args: toolArgs(update.rawInput), startedAt: Date.now(), kind: update.kind };
+      this.tools.set(`${params.sessionId}\0${update.toolCallId}`, state);
+      queue.push({
+        type: 'tool_start',
+        toolActivity: { id: update.toolCallId, name: update.title, args: state.args, status: 'running', meta: { source: 'codex-acp', kind: update.kind } }
+      });
+      if (update.status === 'completed' || update.status === 'failed') {
+        const result = toolResult(update);
+        queue.push({
+          type: 'tool_result',
+          toolActivity: {
+            id: update.toolCallId, name: update.title, args: state.args,
+            status: update.status === 'failed' ? 'error' : 'success', result: result.content,
+            durationMs: Date.now() - state.startedAt, meta: result.meta
+          }
+        });
+        this.tools.delete(`${params.sessionId}\0${update.toolCallId}`);
+      }
+    } else if (update.sessionUpdate === 'tool_call_update') {
+      const key = `${params.sessionId}\0${update.toolCallId}`;
+      const current = this.tools.get(key) || {
+        name: update.title || update.kind || 'Codex tool', args: toolArgs(update.rawInput), startedAt: Date.now(), kind: update.kind || undefined
+      };
+      if (update.title) current.name = update.title;
+      if (update.rawInput !== undefined) current.args = toolArgs(update.rawInput);
+      if (update.kind) current.kind = update.kind;
+      if (!this.tools.has(key)) {
+        this.tools.set(key, current);
+        queue.push({ type: 'tool_start', toolActivity: { id: update.toolCallId, name: current.name, args: current.args, status: 'running', meta: { source: 'codex-acp', kind: current.kind } } });
+      }
+      if (update.status === 'completed' || update.status === 'failed') {
+        const result = toolResult(update);
+        queue.push({
+          type: 'tool_result',
+          toolActivity: {
+            id: update.toolCallId, name: current.name, args: current.args,
+            status: update.status === 'failed' ? 'error' : 'success', result: result.content,
+            durationMs: Date.now() - current.startedAt, meta: result.meta
+          }
+        });
+        this.tools.delete(key);
+      }
     }
-    // tool_call notifications describe work Codex is already executing. They
-    // are not function-call requests for Hive's outer tool loop.
   }
 
   readTextFile(params: acp.ReadTextFileRequest): acp.ReadTextFileResponse {
@@ -160,6 +272,7 @@ class CodexAcpClient implements Client {
   }
 
   writeTextFile(params: acp.WriteTextFileRequest): acp.WriteTextFileResponse | void {
+    if (this.readOnlySessions.has(params.sessionId)) throw new Error('Plan mode is read-only; file writes are disabled.');
     try {
       const path = resolveWithinAllowed(params.path);
       mkdirSync(dirname(path), { recursive: true });
@@ -215,6 +328,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
     });
     const queues = new Map<string, AsyncQueue<AcpEvent>>();
     const permissionHandlers = new Map<string, Runtime['permissionHandlers'] extends Map<string, infer T> ? T : never>();
+    const readOnlySessions = new Set<string>();
     proc.stderr.on('data', (data: Buffer) => logger.debug('codex-acp', data.toString().trim()));
     proc.on('error', (error) => logger.error('codex-acp', `process error: ${error.message}`));
     proc.on('exit', (code) => {
@@ -227,7 +341,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
       Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>
     );
-    const conn = new sdk.ClientSideConnection(() => new CodexAcpClient(queues, permissionHandlers), stream);
+    const conn = new sdk.ClientSideConnection(() => new CodexAcpClient(queues, permissionHandlers, readOnlySessions), stream);
     const init = await withTimeout(conn.initialize({
       protocolVersion: ACP_PROTOCOL_VERSION,
       clientInfo: { name: 'DERO Hive', version: '0.1.0' },
@@ -237,7 +351,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
       }
     }), 30_000, 'ACP initialize timed out. Is codex-acp running?');
 
-    return { proc, conn, init, queues, permissionHandlers, sessions: new Map(), authenticationAttempt: null };
+    return { proc, conn, init, queues, permissionHandlers, readOnlySessions, sessions: new Map(), authenticationAttempt: null };
   }
 
   private getRuntime(): Promise<Runtime> {
@@ -314,7 +428,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
       const modelOption = findSelectOption(response.configOptions, 'model', 'model');
       const models = flattenSelectOptions(modelOption).map((item) => item.value);
       const details: Record<string, Partial<ProviderModel>> = {};
-      const state: SessionState = { sessionId, model: '', bootstrapped: false };
+      const state: SessionState = { sessionId, model: '', bootstrapped: false, cwd: getWorkspaceRoot() };
 
       for (const model of models) {
         const options = await this.configureSession(runtime, state, model);
@@ -340,14 +454,25 @@ export class CodexAcpAdapter implements ProviderAdapter {
 
   async *stream(req: ProviderStreamRequest): AsyncGenerator<ProviderStreamEvent> {
     const runtime = await this.getRuntime();
+    const requestedCwd = resolve(req.cwd || getWorkspaceRoot());
     let session = runtime.sessions.get(req.conversationId);
+    if (session && resolve(session.cwd) !== requestedCwd) {
+      try { await runtime.conn.closeSession({ sessionId: session.sessionId }); } catch { /* recreate below */ }
+      runtime.sessions.delete(req.conversationId);
+      runtime.queues.delete(session.sessionId);
+      runtime.permissionHandlers.delete(session.sessionId);
+      runtime.readOnlySessions.delete(session.sessionId);
+      session = undefined;
+    }
     if (!session) {
-      const created = await this.newSession(runtime, req.cwd || getWorkspaceRoot());
-      session = { sessionId: created.sessionId, model: '', bootstrapped: false };
+      const created = await this.newSession(runtime, requestedCwd);
+      session = { sessionId: created.sessionId, model: '', bootstrapped: false, cwd: requestedCwd };
       runtime.sessions.set(req.conversationId, session);
     }
 
     await this.configureSession(runtime, session, req.model, req.reasoning?.effort);
+    if (req.planMode) runtime.readOnlySessions.add(session.sessionId);
+    else runtime.readOnlySessions.delete(session.sessionId);
     const queue = new AsyncQueue<AcpEvent>();
     runtime.queues.set(session.sessionId, queue);
     if (req.requestPermission) runtime.permissionHandlers.set(session.sessionId, req.requestPermission);
@@ -356,7 +481,21 @@ export class CodexAcpAdapter implements ProviderAdapter {
     const prompt = contentBlocksFromMessages(messages, session.bootstrapped ? undefined : req.systemPrompt);
     for (const attachment of req.attachments || []) {
       if (attachment.type === 'image') prompt.push({ type: 'image', data: attachment.data, mimeType: attachment.mimeType });
-      else prompt.push({ type: 'resource', resource: { uri: `file://${attachment.filename}`, mimeType: attachment.mimeType, text: attachment.data } });
+      else if (/^(text\/|application\/(json|javascript|xml))/u.test(attachment.mimeType)) {
+        prompt.push({
+          type: 'resource',
+          resource: {
+            uri: `hive-attachment:///${encodeURIComponent(attachment.filename)}`,
+            mimeType: attachment.mimeType,
+            text: Buffer.from(attachment.data, 'base64').toString('utf8')
+          }
+        });
+      } else {
+        prompt.push({
+          type: 'resource',
+          resource: { uri: `hive-attachment:///${encodeURIComponent(attachment.filename)}`, mimeType: attachment.mimeType, blob: attachment.data }
+        });
+      }
     }
 
     const onAbort = (): void => { void runtime.conn.cancel({ sessionId: session!.sessionId }); };
@@ -387,6 +526,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
     runtime.sessions.delete(conversationId);
     runtime.queues.delete(session.sessionId);
     runtime.permissionHandlers.delete(session.sessionId);
+    runtime.readOnlySessions.delete(session.sessionId);
     try { await runtime.conn.closeSession({ sessionId: session.sessionId }); }
     catch (error) { logger.debug('codex-acp', `close session failed: ${String(error)}`); }
   }

@@ -124,6 +124,10 @@ export interface ProviderModel {
   supportsVision?: boolean;
   supportsAudio?: boolean;
   supportsReasoning?: boolean;
+  /** Media this model can *generate*, auto-detected from its id when the models
+   *  list is pulled. Empty/undefined means a text (chat) model. A model tagged
+   *  here appears as an option in Vision → Media for that kind. */
+  mediaKinds?: MediaKind[];
   /** Exact effort values reported by providers that support live discovery (for example Codex ACP). */
   thinkingOptions?: ThinkingOption[];
   inputPrice?: number; // $/1M tokens
@@ -690,8 +694,27 @@ export const IPC = {
   SIMULATOR_START: 'simulator:start',
   SIMULATOR_STOP: 'simulator:stop',
   SIMULATOR_RESTART: 'simulator:restart',
+  SIMULATOR_HEALTH: 'simulator:health',
+  SIMULATOR_INFO: 'simulator:info',
+  DERO_LINT: 'dero:lint',
   SIMULATOR_OUTPUT: 'simulator:output',          // event: { stream, data }
-  SIMULATOR_STATUS_CHANGED: 'simulator:status-changed' // event
+  SIMULATOR_STATUS_CHANGED: 'simulator:status-changed', // event
+  SIMULATOR_CREATE_FIXTURE_WALLET: 'simulator:create-fixture-wallet',
+  SIMULATOR_GET_BALANCE: 'simulator:get-balance',
+  SIMULATOR_GET_CONTRACT_STATE: 'simulator:get-contract-state',
+  SIMULATOR_GET_HEIGHT: 'simulator:get-height',
+
+  // Media (image + video generation)
+  MEDIA_LIST: 'media:list',
+  MEDIA_SAVE_PROVIDER: 'media:save-provider',
+  MEDIA_DELETE_PROVIDER: 'media:delete-provider',
+  MEDIA_TEST_PROVIDER: 'media:test-provider',
+  MEDIA_GENERATE: 'media:generate',
+  MEDIA_CANCEL: 'media:cancel',
+  MEDIA_DELETE_ARTIFACT: 'media:delete-artifact',
+  MEDIA_OPEN_ARTIFACT: 'media:open-artifact',
+  MEDIA_REVEAL_ARTIFACT: 'media:reveal-artifact',
+  MEDIA_STATUS_CHANGED: 'media:status-changed' // event: MediaJobStatusEvent
 } as const;
 
 export interface WhisperStatus {
@@ -724,4 +747,143 @@ export interface SimulatorStartOptions {
   env?: Record<string, string>;
 }
 
+export interface SimulatorHealth {
+  reachable: boolean;
+  endpoint: string;
+  latencyMs?: number;
+  error?: string;
+}
+
+export interface SimulatorChainInfo {
+  height: number;
+  topoHeight: number;
+  network: string;
+  version: string;
+  txPoolSize: number;
+  status: string;
+}
+
 export type IpcChannel = typeof IPC[keyof typeof IPC];
+
+// ───────────────────────────────────────────────────────────────────────────
+// Media generation (image + video)
+// ───────────────────────────────────────────────────────────────────────────
+
+export type MediaKind = 'image' | 'video' | 'audio';
+export type MediaJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+export interface MediaModelOption {
+  id: string;
+  label: string;
+  kind: MediaKind;
+  /** Free-form hints surfaced in the UI ("1024x1024", "5s clip"). */
+  hint?: string;
+}
+
+export interface MediaProviderPreset {
+  id: string;
+  name: string;
+  kind: 'image' | 'video' | 'audio' | 'both';
+  /** Whether the provider requires an API key. */
+  requiresApiKey: boolean;
+  /** Base URL; "" for cloud presets that hard-code their endpoint. */
+  baseUrl?: string;
+  /** Where the renderer should direct the user to obtain a key. */
+  apiKeyUrl?: string;
+  notes: string;
+  defaultModel: string;
+  models: MediaModelOption[];
+}
+
+export interface MediaProviderConfig {
+  id: string;
+  presetId: string;
+  name: string;
+  /** May be empty for cloud providers that hard-code their endpoint. */
+  baseUrl: string;
+  hasApiKey: boolean;
+  enabled: boolean;
+  defaultImageModel?: string;
+  defaultVideoModel?: string;
+  defaultAudioModel?: string;
+  customHeaders?: Record<string, string>;
+  /** Optional model overrides; falls back to preset defaults. */
+  imageModels?: MediaModelOption[];
+  videoModels?: MediaModelOption[];
+  audioModels?: MediaModelOption[];
+  /** Free-form kwargs applied to every request (e.g. seed, negative_prompt). */
+  defaultOptions?: Record<string, string>;
+  updatedAt: number;
+}
+
+export interface MediaGenerationRequest {
+  prompt: string;
+  negativePrompt?: string;
+  model?: string;
+  /** Explicit media kind. When omitted the manager infers it from the
+   *  provider preset and request fields (e.g. durationSeconds ⇒ video). */
+  kind?: MediaKind;
+  width?: number;
+  height?: number;
+  steps?: number;
+  cfgScale?: number;
+  seed?: number;
+  durationSeconds?: number;
+  fps?: number;
+  /** Text-to-speech voice id (audio kind). */
+  voice?: string;
+  /** Preferred output container/format hint (e.g. "mp3", "wav"). */
+  format?: string;
+  /** Reference image(s) for image-to-image / video-from-image flows. */
+  referenceImageIds?: string[];
+  /** Target dedicated media provider. Falls back to the first enabled provider. */
+  providerId?: string;
+  /** Target model (chat) provider — generation runs through its base URL + key
+   *  using the OpenAI-compatible image / speech endpoints. Takes precedence
+   *  over providerId when set. */
+  modelProviderId?: string;
+  /** Arbitrary provider-specific extras (merged over defaultOptions). */
+  options?: Record<string, string>;
+  /** Project scope — generated files are placed under the project folder
+   *  when set, otherwise under the global artifacts directory. */
+  projectId?: string;
+}
+
+export interface MediaArtifactRecord {
+  id: string;
+  conversationId?: string;
+  messageId?: string;
+  projectId?: string;
+  kind: MediaKind;
+  providerId: string;
+  model: string;
+  prompt: string;
+  negativePrompt?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  seed?: number;
+  /** Relative path inside the project / artifacts directory. */
+  relativePath: string;
+  mimeType: string;
+  bytes: number;
+  status: MediaJobStatus;
+  error?: string;
+  options?: Record<string, string>;
+  createdAt: number;
+}
+
+export interface MediaJobRecord extends MediaArtifactRecord {
+  startedAt?: number;
+  finishedAt?: number;
+}
+
+export interface MediaJobStatusEvent {
+  job: MediaJobRecord;
+}
+
+export interface MediaListResponse {
+  artifacts: MediaArtifactRecord[];
+  providers: MediaProviderConfig[];
+  presets: MediaProviderPreset[];
+}

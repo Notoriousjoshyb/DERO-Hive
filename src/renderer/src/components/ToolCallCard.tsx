@@ -6,9 +6,10 @@ interface Props {
   result?: string;
   isError?: boolean;
   durationMs?: number;
+  meta?: Record<string, unknown>;
 }
 
-export function ToolCallCard({ toolCall, result, isError, durationMs }: Props): JSX.Element {
+export function ToolCallCard({ toolCall, result, isError, durationMs, meta }: Props): JSX.Element {
   const [expanded, setExpanded] = useState(false);
 
   let args: unknown;
@@ -16,6 +17,12 @@ export function ToolCallCard({ toolCall, result, isError, durationMs }: Props): 
 
   const hasResult = result !== undefined;
   const status = hasResult ? (isError ? 'error' : 'success') : 'running';
+
+  // Media-generation tools carry an artifact id in meta — preview it inline so
+  // the generated image/video/audio is visible right in the conversation.
+  const mediaId = meta && typeof meta.mediaArtifactId === 'string' ? meta.mediaArtifactId : null;
+  const mediaKind = meta && typeof meta.mediaKind === 'string' ? (meta.mediaKind as string) : null;
+  const mediaUrl = mediaId ? window.hive.mediaUrl(mediaId) : null;
 
   return (
     <div className={`text-xs rounded-lg border transition-colors ${
@@ -38,6 +45,17 @@ export function ToolCallCard({ toolCall, result, isError, durationMs }: Props): 
           <path d="M2 1l4 3-4 3z" />
         </svg>
       </button>
+      {mediaUrl && !isError && (
+        <div className="px-2 pb-2 pl-8">
+          {mediaKind === 'image' ? (
+            <img src={mediaUrl} alt="generated" className="rounded-lg max-w-full max-h-96 border border-border" loading="lazy" />
+          ) : mediaKind === 'video' ? (
+            <video src={mediaUrl} controls preload="metadata" className="rounded-lg max-w-full max-h-96 border border-border bg-black" />
+          ) : mediaKind === 'audio' ? (
+            <audio src={mediaUrl} controls className="w-full max-w-md" />
+          ) : null}
+        </div>
+      )}
       {expanded && (
         <div className="px-2 pb-2 pl-8 space-y-2 animate-fade-in">
           <div>

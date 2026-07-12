@@ -5,8 +5,6 @@ import { ensureDirs } from './paths';
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
-const LOG_FILE = join(paths.logs, 'hive.log');
-
 let initialized = false;
 function ensureLogDir(): void {
   if (initialized) return;
@@ -25,7 +23,7 @@ function ensureLogDir(): void {
 }
 
 function safeAppend(line: string): void {
-  try { ensureLogDir(); appendFileSync(LOG_FILE, line + '\n'); }
+  try { ensureLogDir(); appendFileSync(join(paths.logs, 'hive.log'), line + '\n'); }
   catch { /* swallow */ }
 }
 
@@ -34,25 +32,29 @@ function format(level: Level, scope: string, msg: string): string {
   return `[${ts}] [${level.toUpperCase()}] [${scope}] ${msg}`;
 }
 
+function canWriteConsole(): boolean {
+  return process.env.HIVE_TUI !== '1' && process.env.HIVE_CLI !== '1';
+}
+
 export const logger = {
   debug(scope: string, msg: string, meta?: unknown): void {
     const line = format('debug', scope, msg) + (meta ? ` ${JSON.stringify(meta)}` : '');
-    if (process.env.HIVE_DEBUG) console.log(line);
+    if (process.env.HIVE_DEBUG && canWriteConsole()) console.log(line);
     safeAppend(line);
   },
   info(scope: string, msg: string, meta?: unknown): void {
     const line = format('info', scope, msg) + (meta ? ` ${JSON.stringify(meta)}` : '');
-    console.log(line);
+    if (canWriteConsole()) console.log(line);
     safeAppend(line);
   },
   warn(scope: string, msg: string, meta?: unknown): void {
     const line = format('warn', scope, msg) + (meta ? ` ${JSON.stringify(meta)}` : '');
-    console.warn(line);
+    if (canWriteConsole()) console.warn(line);
     safeAppend(line);
   },
   error(scope: string, msg: string, meta?: unknown): void {
     const line = format('error', scope, msg) + (meta ? ` ${JSON.stringify(meta)}` : '');
-    console.error(line);
+    if (canWriteConsole()) console.error(line);
     safeAppend(line);
   }
 };

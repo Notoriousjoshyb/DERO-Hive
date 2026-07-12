@@ -1,9 +1,19 @@
-import { app } from 'electron';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import type { SkillImportPreview } from '@shared/types';
 import { paths } from '../utils/paths';
 import { logger } from '../utils/logger';
+
+function getAppPath(): string {
+  if (process.versions.electron) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const electron = require('electron') as typeof import('electron');
+      return electron.app.getAppPath();
+    } catch { /* fall through */ }
+  }
+  return process.env.HIVE_APP_ROOT || process.cwd();
+}
 
 export interface ParsedSkill {
   name: string;
@@ -31,7 +41,7 @@ const SKILL_FILE_MAX_BYTES = 256 * 1024;
 const UNSUPPORTED_SKILL_PARTS = ['references', 'assets', 'scripts', 'hooks', 'agents', 'commands'] as const;
 
 export function bundledSkillsDir(): string {
-  return join(app.getAppPath(), 'resources', 'skills');
+  return join(getAppPath(), 'resources', 'skills');
 }
 
 export function userSkillsDir(): string {

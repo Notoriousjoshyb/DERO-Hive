@@ -6,20 +6,36 @@
   "author": "DERO",
   "license": "MIT",
   "private": true,
+  "workspaces": [
+    "cli"
+  ],
+  "bin": {
+    "hive": "cli/bin/hive.js"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "postinstall": "node scripts/patch-codex-acp.mjs && electron-rebuild -f -w better-sqlite3 && node scripts/setup-whisper.mjs && node scripts/setup-mcp.mjs && node scripts/setup-simulator.mjs",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "node scripts/patch-codex-acp.mjs && node scripts/patch-sqlite3-dual.mjs && node scripts/setup-whisper.mjs && node scripts/setup-mcp.mjs && node scripts/setup-simulator.mjs",
+    "rebuild": "node scripts/patch-sqlite3-dual.mjs",
+    "rebuild:electron": "node scripts/patch-sqlite3-dual.mjs",
+    "setup:cli": "node scripts/patch-sqlite3-dual.mjs",
     "setup:whisper": "node scripts/setup-whisper.mjs",
     "setup:mcp": "node scripts/setup-mcp.mjs",
     "setup:simulator": "node scripts/setup-simulator.mjs",
-    "build": "electron-vite build",
-    "build:win": "electron-vite build && electron-builder --win --x64",
+    "build": "electron-vite build && node scripts/build-cli.mjs",
+    "build:cli": "node scripts/build-cli.mjs",
+    "build:win": "npm run build && electron-builder --win --x64",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "lint": "eslint \"src/**/*.{ts,tsx}\""
+    "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:cli",
+    "typecheck:cli": "tsc --noEmit -p tsconfig.cli.json",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "lint:cli": "eslint \"cli/src/**/*.{ts,tsx}\"",
+    "test:cli": "tsx cli/src/tui/commands.test.ts && tsx cli/src/services/conversation.test.ts && tsx cli/src/services/permissions.test.ts && tsx cli/src/tui/render.test.ts",
+    "cli": "node cli/bin/hive.js",
+    "cli:dev": "tsx cli/src/index.ts",
+    "hive": "node cli/bin/hive.js",
+    "cli:link": "npm link --workspace @dero-hive/cli"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "^1.1.2",
@@ -61,6 +77,7 @@
     "electron": "^32.1.2",
     "electron-builder": "^25.0.5",
     "electron-vite": "^2.3.0",
+    "esbuild": "^0.21.5",
     "eslint": "^10.6.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
@@ -78,6 +95,9 @@
     "files": [
       "out/**/*",
       "resources/**/*",
+      "cli/bin/**/*",
+      "cli/dist/**/*",
+      "cli/package.json",
       "!resources/whisper/**",
       "!resources/simulator/**",
       "!resources/mcp/**",

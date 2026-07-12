@@ -7,6 +7,7 @@ import type { Artifact } from '@shared/types';
 import { artifactGroupKey, artifactLabel } from '../lib/artifacts';
 import { renderVisionHtml } from '../lib/visionRender';
 import { VisionIcon } from './VisionPanel';
+import { MediaStudio } from './MediaStudio';
 
 interface Group {
   key: string;
@@ -19,6 +20,8 @@ export function VisionTab(): JSX.Element {
   const conversations = useAppStore((s) => s.conversations);
   const currentConversationId = useAppStore((s) => s.currentConversationId);
   const artifactsChangedAt = useAppStore((s) => s.artifactsChangedAt);
+  const visionMode = useAppStore((s) => s.visionMode);
+  const setVisionMode = useAppStore((s) => s.setVisionMode);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -70,28 +73,45 @@ export function VisionTab(): JSX.Element {
         <div className="flex items-center gap-2">
           <VisionIcon size={18} />
           <h2 className="text-sm font-semibold">Vision</h2>
-          <span className="text-xs text-fg-subtle">{groups.length} saved artifact{groups.length === 1 ? '' : 's'}</span>
+          {visionMode === 'artifacts' && (
+            <span className="text-xs text-fg-subtle">{groups.length} saved artifact{groups.length === 1 ? '' : 's'}</span>
+          )}
+        </div>
+        <div className="flex items-center bg-bg-elev rounded-lg p-0.5 text-[11px] ml-1">
+          <button
+            onClick={() => setVisionMode('artifacts')}
+            className={`px-2.5 py-0.5 rounded-md transition ${visionMode === 'artifacts' ? 'bg-bg text-fg shadow-elev-sm' : 'text-fg-muted hover:text-fg'}`}
+          >Artifacts</button>
+          <button
+            onClick={() => setVisionMode('media')}
+            className={`px-2.5 py-0.5 rounded-md transition ${visionMode === 'media' ? 'bg-bg text-fg shadow-elev-sm' : 'text-fg-muted hover:text-fg'}`}
+          >Media</button>
         </div>
         <div className="flex-1" />
-        <div className="flex items-center gap-1 text-[11px]">
-          <FilterChip active={scopeFilter === 'all'} onClick={() => setScopeFilter('all')}>All chats</FilterChip>
-          <FilterChip active={scopeFilter === 'current'} onClick={() => setScopeFilter('current')}>Current chat</FilterChip>
-          <span className="w-px h-4 bg-border mx-1" />
-          <FilterChip active={typeFilter === 'all'} onClick={() => setTypeFilter('all')}>All</FilterChip>
-          {types.map((t) => (
-            <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)}>{artifactLabel({ type: t })}</FilterChip>
-          ))}
-        </div>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search artifacts…"
-          className="bg-bg-input border border-border rounded-lg px-3 py-1.5 text-xs w-52 focus:outline-none focus:border-accent"
-        />
+        {visionMode === 'artifacts' && (
+          <>
+            <div className="flex items-center gap-1 text-[11px]">
+              <FilterChip active={scopeFilter === 'all'} onClick={() => setScopeFilter('all')}>All chats</FilterChip>
+              <FilterChip active={scopeFilter === 'current'} onClick={() => setScopeFilter('current')}>Current chat</FilterChip>
+              <span className="w-px h-4 bg-border mx-1" />
+              <FilterChip active={typeFilter === 'all'} onClick={() => setTypeFilter('all')}>All</FilterChip>
+              {types.map((t) => (
+                <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)}>{artifactLabel({ type: t })}</FilterChip>
+              ))}
+            </div>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search artifacts…"
+              className="bg-bg-input border border-border rounded-lg px-3 py-1.5 text-xs w-52 focus:outline-none focus:border-accent"
+            />
+          </>
+        )}
       </div>
 
-      {/* Grid */}
-      {visible.length === 0 ? (
+      {visionMode === 'media' ? (
+        <MediaStudio variant="tab" />
+      ) : /* Grid */ visible.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-10">
           <VisionIcon size={28} className="text-fg-subtle" />
           <div className="text-sm font-medium text-fg">{groups.length === 0 ? 'Nothing saved yet' : 'No matches'}</div>

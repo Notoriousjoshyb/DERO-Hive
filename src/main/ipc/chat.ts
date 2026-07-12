@@ -111,6 +111,8 @@ function commitsProviderOutput(event: ProviderStreamEvent): boolean {
   return (event.type === 'delta' && Boolean(event.content))
     || (event.type === 'reasoning' && Boolean(event.reasoning))
     || (event.type === 'tool_calls' && Boolean(event.toolCalls?.length))
+    || event.type === 'tool_start'
+    || event.type === 'tool_result'
     || event.type === 'usage';
 }
 
@@ -434,10 +436,24 @@ async function runChat(
       // tool permission prompt), switching providers mid-conversation could
       // duplicate work or desync tool state — fallback is vetoed from then on.
       let fallbackAllowed = true;
-      for (let round = 0; round < maxAgenticRounds; round++) {
+      // Loop-stall guard: if the model keeps requesting the identical set of
+      // tool calls round after round, it is stuck — finalize instead of looping.
+      let lastToolSignature = '';
+      let toolSignatureStreak = 0;
+      let forceFinalize = false;
+      // One extra pass past the budget runs with tools disabled, so the agent
+      // delivers a real final answer instead of failing when the cap is reached.
+      for (let round = 0; round <= maxAgenticRounds; round++) {
         const turnId = round === 0 ? messageId : randomUUID();
         lastTurnId = turnId;
         if (round > 0) send({ type: 'start', conversationId: req.conversationId, messageId: turnId });
+
+        // A "finalize" round suppresses tools and asks for a conclusive answer.
+        const finalizing = forceFinalize || round === maxAgenticRounds;
+        const roundTools = finalizing ? [] : availableTools;
+        const roundSystemPrompt = finalizing
+          ? `${systemPrompt}\n\n[You have reached the tool-use limit for this turn. Do not call any tools. Using only what you have already gathered, provide your complete final answer or report now.]`
+          : systemPrompt;
 
         const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
         let assistantContent = '';
@@ -463,12 +479,13 @@ async function runChat(
                 cwd,
                 model: target.model,
                 messages: target.providerMessages,
-                tools: availableTools,
-                systemPrompt,
+                tools: roundTools,
+                systemPrompt: roundSystemPrompt,
                 temperature: req.temperature,
                 topP: req.topP,
                 maxTokens: req.maxTokens,
                 reasoning: req.reasoning,
+                planMode: req.planMode,
                 signal: abort.signal,
                 requestPermission: (permission) => {
                   sideEffectOccurred = true;
@@ -508,13 +525,43 @@ async function runChat(
         }
         activeTargets = [selectedTarget];
 
+        // Providers may occasionally end a stream with truncated tool-call
+        // arguments. Never execute or persist those calls: a malformed
+        // historical arguments string makes compatible APIs reject every
+        // later request in the conversation.
+        const validToolCalls = toolCalls.filter((tc) => {
+          try {
+            const args: unknown = JSON.parse(tc.arguments);
+            return typeof args === 'object' && args !== null && !Array.isArray(args);
+          } catch {
+            return false;
+          }
+        });
+        if (validToolCalls.length !== toolCalls.length) {
+          const skipped = toolCalls.length - validToolCalls.length;
+          logger.warn('chat', `discarded ${skipped} malformed tool call(s) from ${selectedTarget.providerId}/${selectedTarget.model}`);
+          if (!assistantContent.trim()) {
+            assistantContent = 'I could not complete a tool request because the provider returned invalid tool arguments. Please try again.';
+            send({ type: 'delta', conversationId: req.conversationId, messageId: turnId, content: assistantContent });
+          }
+        }
+
+        // Stall detection: the same tool calls repeating across rounds means the
+        // agent is looping. Trip the finalize path so the next round wraps up.
+        if (!finalizing && validToolCalls.length > 0) {
+          const signature = validToolCalls.map((tc) => `${tc.name}:${tc.arguments}`).sort().join('|');
+          if (signature === lastToolSignature) toolSignatureStreak += 1;
+          else { toolSignatureStreak = 0; lastToolSignature = signature; }
+          if (toolSignatureStreak >= 2) forceFinalize = true; // identical calls 3 rounds running
+        }
+
         // Persist assistant message
         const assistantMsg: Message = {
           id: turnId,
           role: 'assistant',
           content: assistantContent,
           reasoning: assistantReasoning || undefined,
-          toolCalls: toolCalls.length ? toolCalls.map((tc) => ({
+          toolCalls: (!finalizing && validToolCalls.length) ? validToolCalls.map((tc) => ({
             id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments }
           })) : undefined,
           createdAt: Date.now(),
@@ -532,12 +579,21 @@ async function runChat(
           return;
         }
 
+        // Wrap-up round: tools were suppressed, so this is the conclusive answer.
+        // Never execute tools or start another round from here.
+        if (finalizing) {
+          send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+          notifyStreamOutcome(win, 'done', assistantContent);
+          void maybeGenerateTitle(req.conversationId, selectedTarget.providerId, selectedTarget.model);
+          return;
+        }
+
         // Check for messages the user queued while the model was streaming. If
         // there are no tool calls and no queued messages, the turn is done. If
         // there are queued messages, we continue the loop so the assistant can
         // respond to them, even if there were no tool calls this round.
         let queued = queuedUserMessages.get(req.conversationId) || [];
-        if (toolCalls.length === 0 && queued.length === 0) {
+        if (validToolCalls.length === 0 && queued.length === 0) {
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
           notifyStreamOutcome(win, 'done', assistantContent);
           void maybeGenerateTitle(req.conversationId, selectedTarget.providerId, selectedTarget.model);
@@ -546,7 +602,7 @@ async function runChat(
 
         // Execute tools sequentially
         const toolResults: Message[] = [];
-        for (const tc of toolCalls) {
+        for (const tc of validToolCalls) {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.arguments); } catch { /* leave empty */ }
           const ctx = { cwd, conversationId: req.conversationId };
@@ -594,13 +650,11 @@ async function runChat(
         // and any queued user messages.
       }
 
-      // The agent reached its configured safety budget. Close the turn that is
-      // actually streaming in the renderer, which after round 0 is no longer
-      // the original message, and make the stop reason visible to the user.
-      const limitMessage = `Agent stopped after ${maxAgenticRounds} tool round${maxAgenticRounds === 1 ? '' : 's'} to prevent an unbounded loop. Increase “Agent tool rounds” in Settings → General to let it continue further.`;
-      send({ type: 'error', conversationId: req.conversationId, messageId: lastTurnId, error: limitMessage });
+      // Safety net: the finalize round above normally ends the turn. If we still
+      // fall through here (e.g. user messages queued during finalize), close the
+      // turn cleanly rather than surfacing a hard "unbounded loop" failure.
       send({ type: 'done', conversationId: req.conversationId, messageId: lastTurnId });
-      notifyStreamOutcome(win, 'error', limitMessage);
+      notifyStreamOutcome(win, 'done', '');
     } catch (err) {
       logger.error('chat', 'runChat failed', {
         conversationId: req.conversationId,

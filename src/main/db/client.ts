@@ -4,7 +4,18 @@ import { dirname } from 'node:path';
 import { paths } from '../utils/paths';
 import { logger } from '../utils/logger';
 
-let db: Database.Database | null = null;
+const DB_GLOBAL_KEY = '__hive_db_instance__';
+
+function getGlobalDb(): Database.Database | null {
+  const g = globalThis as typeof globalThis & { [DB_GLOBAL_KEY]?: Database.Database | null };
+  return g[DB_GLOBAL_KEY] ?? null;
+}
+
+function setGlobalDb(value: Database.Database | null): void {
+  const g = globalThis as typeof globalThis & { [DB_GLOBAL_KEY]?: Database.Database | null };
+  if (value) g[DB_GLOBAL_KEY] = value;
+  else delete g[DB_GLOBAL_KEY];
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -218,19 +229,66 @@ CREATE TABLE IF NOT EXISTS swarm_tasks (
   UNIQUE(run_id, phase, task_index)
 );
 CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
+
+CREATE TABLE IF NOT EXISTS media_providers (
+  id TEXT PRIMARY KEY,
+  preset_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  base_url TEXT,
+  api_key_ref TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  default_image_model TEXT,
+  default_video_model TEXT,
+  default_audio_model TEXT,
+  image_models TEXT,
+  video_models TEXT,
+  audio_models TEXT,
+  custom_headers TEXT,
+  default_options TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_artifacts (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  message_id TEXT,
+  project_id TEXT,
+  kind TEXT NOT NULL CHECK(kind IN ('image', 'video', 'audio')),
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  negative_prompt TEXT,
+  width INTEGER,
+  height INTEGER,
+  duration_seconds REAL,
+  seed INTEGER,
+  relative_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  error TEXT,
+  options TEXT,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_media_artifacts_project ON media_artifacts(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_media_artifacts_conv ON media_artifacts(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_media_artifacts_status ON media_artifacts(status, created_at DESC);
 `;
 
-const CURRENT_SCHEMA_VERSION = 11;
+const CURRENT_SCHEMA_VERSION = 13;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(paths.db);
+  const db = new Database(paths.db);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
   db.exec(SCHEMA);
   runMigrations(db);
+  setGlobalDb(db);
   logger.info('db', `initialized at ${paths.db} (schema v${CURRENT_SCHEMA_VERSION})`);
 }
 
@@ -406,6 +464,109 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, phase, task_index);
       `);
     }
+  },
+  {
+    version: 12,
+    description: 'Add media generation tables (providers + artifacts)',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS media_providers (
+          id TEXT PRIMARY KEY,
+          preset_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          base_url TEXT,
+          api_key_ref TEXT,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          default_image_model TEXT,
+          default_video_model TEXT,
+          image_models TEXT,
+          video_models TEXT,
+          custom_headers TEXT,
+          default_options TEXT,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS media_artifacts (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          message_id TEXT,
+          project_id TEXT,
+          kind TEXT NOT NULL CHECK(kind IN ('image', 'video')),
+          provider_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          negative_prompt TEXT,
+          width INTEGER,
+          height INTEGER,
+          duration_seconds REAL,
+          seed INTEGER,
+          relative_path TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          bytes INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'queued',
+          error TEXT,
+          options TEXT,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          finished_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_media_artifacts_project ON media_artifacts(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_media_artifacts_conv ON media_artifacts(conversation_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_media_artifacts_status ON media_artifacts(status, created_at DESC);
+      `);
+    }
+  },
+  {
+    version: 13,
+    description: 'Add audio media support (provider columns + relax artifact kind CHECK)',
+    up: (database) => {
+      // 1. Add audio columns to media_providers if missing.
+      const providerCols = new Set(
+        (database.prepare(`PRAGMA table_info(media_providers)`).all() as Array<{ name: string }>).map((c) => c.name)
+      );
+      if (!providerCols.has('default_audio_model')) database.exec(`ALTER TABLE media_providers ADD COLUMN default_audio_model TEXT`);
+      if (!providerCols.has('audio_models')) database.exec(`ALTER TABLE media_providers ADD COLUMN audio_models TEXT`);
+
+      // 2. Relax the media_artifacts kind CHECK to allow 'audio'. SQLite cannot
+      // alter a CHECK in place, so rebuild the table only if the old constraint
+      // is still present, preserving any existing rows.
+      const artifactSql = (database.prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'media_artifacts'`
+      ).get() as { sql?: string } | undefined)?.sql || '';
+      if (artifactSql.includes("kind IN ('image', 'video')") && !artifactSql.includes('audio')) {
+        database.exec(`
+          ALTER TABLE media_artifacts RENAME TO media_artifacts_old;
+          CREATE TABLE media_artifacts (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            message_id TEXT,
+            project_id TEXT,
+            kind TEXT NOT NULL CHECK(kind IN ('image', 'video', 'audio')),
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            negative_prompt TEXT,
+            width INTEGER,
+            height INTEGER,
+            duration_seconds REAL,
+            seed INTEGER,
+            relative_path TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            bytes INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',
+            error TEXT,
+            options TEXT,
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            finished_at INTEGER
+          );
+          INSERT INTO media_artifacts SELECT * FROM media_artifacts_old;
+          DROP TABLE media_artifacts_old;
+          CREATE INDEX IF NOT EXISTS idx_media_artifacts_project ON media_artifacts(project_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_media_artifacts_conv ON media_artifacts(conversation_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_media_artifacts_status ON media_artifacts(status, created_at DESC);
+        `);
+      }
+    }
   }
 ];
 
@@ -438,14 +599,16 @@ function runMigrations(database: Database.Database): void {
 }
 
 export function getDb(): Database.Database {
+  const db = getGlobalDb();
   if (!db) throw new Error('DB not initialized');
   return db;
 }
 
 export function closeDb(): void {
+  const db = getGlobalDb();
   if (db) {
     db.close();
-    db = null;
+    setGlobalDb(null);
   }
 }
 

@@ -1,5 +1,6 @@
 import { normalizeToolApprovalMode, type ToolApprovalMode, type ToolDefinition, type PermissionRule } from '@shared/types';
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
 import { getDb, getSetting } from '../db/client';
 import { BUILTIN_TOOLS, builtinExecutors } from './builtin';
 import { McpManager } from '../mcp/manager';
@@ -23,6 +24,7 @@ export interface PermissionRequest {
   args: Record<string, unknown>;
   description?: string;
   conversationId?: string;
+  projectPath?: string;
 }
 
 type Decision = 'allow' | 'deny';
@@ -56,7 +58,7 @@ export class ToolRegistry extends EventEmitter {
     const mcp = this.executors.has(name) ? null : (this.mcpManager?.resolveTool(name) ?? null);
 
     // Check permissions
-    const rule = this.matchRule(name, args);
+    const rule = this.matchRule(name, args, ctx);
     if (rule?.action === 'deny') {
       return { content: `Denied by permission rule: ${name}`, isError: true };
     }
@@ -99,8 +101,10 @@ export class ToolRegistry extends EventEmitter {
     return { content: `Unknown tool: ${name}`, isError: true };
   }
 
-  matchRule(toolName: string, args: Record<string, unknown>): PermissionRule | null {
+  matchRule(toolName: string, args: Record<string, unknown>, ctx?: ToolContext): PermissionRule | null {
     const rows = getDb().prepare('SELECT * FROM permissions').all() as Array<Record<string, unknown>>;
+    let askRule: PermissionRule | null = null;
+    let allowRule: PermissionRule | null = null;
     for (const row of rows) {
       const rule: PermissionRule = {
         id: row.id as string,
@@ -112,9 +116,19 @@ export class ToolRegistry extends EventEmitter {
       };
       if (rule.toolName !== '*' && rule.toolName !== toolName) continue;
       if (rule.pattern && !matchPattern(rule.pattern, args)) continue;
-      return rule;
+      if (rule.scope === 'project') {
+        if (!rule.projectPath || !ctx) continue;
+        const expected = normalizeProjectPath(rule.projectPath);
+        const actual = normalizeProjectPath(ctx.cwd);
+        if (expected !== actual) continue;
+      }
+      // A matching deny is absolute. Explicit asks then take precedence over
+      // allows so a broad allow rule cannot mask a narrower safety rule.
+      if (rule.action === 'deny') return rule;
+      if (rule.action === 'ask') askRule ||= rule;
+      if (rule.action === 'allow') allowRule ||= rule;
     }
-    return null;
+    return askRule || allowRule;
   }
 
   listRules(): PermissionRule[] {
@@ -159,13 +173,18 @@ export class ToolRegistry extends EventEmitter {
     // 'always'/'session'/'project' all ask for sensitive built-ins; 'never' never does.
     // The scope of what "remembering" a decision means is handled in authorize().
     if (this.approvalMode() === 'never') return false;
-    return ['run_shell', 'write_file', 'edit_file'].includes(name);
+    const sensitiveBuiltins = ['run_shell', 'write_file', 'edit_file'];
+    const deroWritePatterns = ['invoke', 'deploy', 'transfer', 'send', 'sign'];
+    if (sensitiveBuiltins.includes(name)) return true;
+    const lower = name.toLowerCase();
+    if (deroWritePatterns.some(p => lower.includes(p))) return true;
+    return false;
   }
 
   /** Provider-native permission callbacks enter the same main-process gate. */
   async requestPermission(req: PermissionRequest, ctx?: ToolContext): Promise<boolean> {
     if (!ctx) return false;
-    const rule = this.matchRule(req.toolName, req.args);
+    const rule = this.matchRule(req.toolName, req.args, ctx);
     if (rule?.action === 'deny') return false;
     if (rule?.action === 'allow') return true;
     return this.authorize(req, ctx, rule?.action === 'ask');
@@ -188,7 +207,7 @@ export class ToolRegistry extends EventEmitter {
     const grantKey = this.approvalKey(mode, ctx, req.toolName);
     if (!explicitAsk && (mode === 'never' || (grantKey && this.scopedAllow.has(grantKey)))) return true;
 
-    const request = { ...req, conversationId: ctx.conversationId };
+    const request = { ...req, conversationId: ctx.conversationId, projectPath: ctx.cwd };
     return new Promise<boolean>((resolve) => {
       const wrap = (allow: boolean): void => resolve(allow);
       this.pendingRequests.set(req.requestId, {
@@ -206,6 +225,11 @@ export class ToolRegistry extends EventEmitter {
       }, 120_000);
     });
   }
+}
+
+function normalizeProjectPath(path: string): string {
+  const normalized = resolve(path).replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function matchPattern(pattern: string, args: Record<string, unknown>): boolean {

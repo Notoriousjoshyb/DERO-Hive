@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type BrowserBridgeActiveProject, type BrowserBridgeStatus } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus } from '../shared/types';
+import type { DvmLintResult } from '../shared/dvm';
 
 // Type-safe wrapper for renderer -> main IPC
 const api = {
@@ -188,6 +189,13 @@ const api = {
   simulatorStart: (opts?: SimulatorStartOptions) => ipcRenderer.invoke(IPC.SIMULATOR_START, opts),
   simulatorStop: () => ipcRenderer.invoke(IPC.SIMULATOR_STOP),
   simulatorRestart: (opts?: SimulatorStartOptions) => ipcRenderer.invoke(IPC.SIMULATOR_RESTART, opts),
+  simulatorHealth: () => ipcRenderer.invoke(IPC.SIMULATOR_HEALTH) as Promise<SimulatorHealth>,
+  simulatorInfo: () => ipcRenderer.invoke(IPC.SIMULATOR_INFO) as Promise<SimulatorChainInfo>,
+  simulatorCreateFixtureWallet: () => ipcRenderer.invoke(IPC.SIMULATOR_CREATE_FIXTURE_WALLET) as Promise<{ address: string; scid: string }>,
+  simulatorGetBalance: (address: string, scid?: string) => ipcRenderer.invoke(IPC.SIMULATOR_GET_BALANCE, address, scid) as Promise<{ balance: number; scid?: string }>,
+  simulatorGetContractState: (scid: string, keys?: string[]) => ipcRenderer.invoke(IPC.SIMULATOR_GET_CONTRACT_STATE, scid, keys) as Promise<Record<string, unknown>>,
+  simulatorGetHeight: () => ipcRenderer.invoke(IPC.SIMULATOR_GET_HEIGHT) as Promise<number>,
+  deroLint: (source: string) => ipcRenderer.invoke(IPC.DERO_LINT, source) as Promise<DvmLintResult>,
   onSimulatorOutput: (cb: (e: { stream: 'stdout' | 'stderr'; data: string }) => void) => {
     const l = (_: IpcRendererEvent, d: { stream: 'stdout' | 'stderr'; data: string }) => cb(d);
     ipcRenderer.on(IPC.SIMULATOR_OUTPUT, l);
@@ -231,6 +239,24 @@ const api = {
     const l = (_: IpcRendererEvent, d: any) => cb(d);
     ipcRenderer.on(IPC.PROVIDER_MODELS_UPDATED, l);
     return () => ipcRenderer.off(IPC.PROVIDER_MODELS_UPDATED, l);
+  },
+
+  // Media (image + video generation)
+  mediaList: () => ipcRenderer.invoke(IPC.MEDIA_LIST),
+  mediaSaveProvider: (cfg: unknown) => ipcRenderer.invoke(IPC.MEDIA_SAVE_PROVIDER, cfg),
+  mediaDeleteProvider: (id: string) => ipcRenderer.invoke(IPC.MEDIA_DELETE_PROVIDER, id),
+  mediaTestProvider: (id: string) => ipcRenderer.invoke(IPC.MEDIA_TEST_PROVIDER, id),
+  mediaGenerate: (req: unknown) => ipcRenderer.invoke(IPC.MEDIA_GENERATE, req),
+  mediaCancel: (id: string) => ipcRenderer.invoke(IPC.MEDIA_CANCEL, id),
+  mediaDeleteArtifact: (id: string) => ipcRenderer.invoke(IPC.MEDIA_DELETE_ARTIFACT, id),
+  mediaOpenArtifact: (id: string) => ipcRenderer.invoke(IPC.MEDIA_OPEN_ARTIFACT, id),
+  mediaRevealArtifact: (id: string) => ipcRenderer.invoke(IPC.MEDIA_REVEAL_ARTIFACT, id),
+  // Stable URL the renderer can drop into <img>/<video>/<audio> src.
+  mediaUrl: (id: string) => `hive-media://artifact/${encodeURIComponent(id)}`,
+  onMediaStatus: (cb: (data: { job: any }) => void) => {
+    const l = (_: IpcRendererEvent, d: { job: any }) => cb(d);
+    ipcRenderer.on(IPC.MEDIA_STATUS_CHANGED, l);
+    return () => ipcRenderer.off(IPC.MEDIA_STATUS_CHANGED, l);
   }
 };
 

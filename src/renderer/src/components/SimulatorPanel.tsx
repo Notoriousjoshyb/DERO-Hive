@@ -51,9 +51,7 @@ export function SimulatorPanel(): JSX.Element {
     ? 'bg-emerald-500'
     : status?.error
     ? 'bg-danger'
-    : installed
-    ? 'bg-fg-subtle/50'
-    : 'bg-amber-500/70';
+    : 'bg-danger';
 
   const simTitle = !installed
     ? 'Simulator binary not found — run "npm run setup:simulator"'
@@ -85,7 +83,7 @@ export function SimulatorPanel(): JSX.Element {
 
       {/* Simulator */}
       <ServiceRow
-        label="Simulator"
+        label="DERO Simulator"
         dotClass={`${simDot} ${running ? 'animate-pulse' : ''}`}
         title={simTitle}
         on={running}

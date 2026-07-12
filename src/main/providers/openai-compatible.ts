@@ -4,6 +4,15 @@ import type { ProviderConfig, Message, ToolDefinition, ContentPart } from '@shar
 import { supportsOpenAIReasoningEffort } from '@shared/thinkingCapabilities';
 import { logger } from '../utils/logger';
 
+// Kimi Code's docs explicitly require tools to identify themselves via the
+// User-Agent header: "Please maintain the tool's real identity identifier
+// when using. Tampering with the client identifier (User-Agent) is
+// considered a violation and may result in suspension of membership
+// benefits." We send our own identifier to every OpenAI-compatible request
+// so Kimi — and any other gateway that audits User-Agent — sees a real
+// client, not the default `Node.js` string from undici.
+const USER_AGENT = `DERO-Hive/${process.env.npm_package_version || '0.1.0'}`;
+
 // Pull the human-readable message out of an error response body.
 // Handles OpenAI ({error:{message}}) and OpenCode ({type:'error',error:{message}}) shapes.
 function extractErrorMessage(body: string): string | null {
@@ -47,12 +56,20 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         // Some gateways (OpenCode Zen/Go) return 401 for other problems too
         // (e.g. "model not supported") — surface the provider's own message.
         const detail = extractErrorMessage(body);
+        // Kimi Code returns the same 401 shape for a wrong key AND for the
+        // HighSpeed model on a non-Allegretto plan — disambiguate the latter
+        // so the user doesn't keep editing the wrong field.
+        const isKimiHighspeed = this.cfg.presetId === 'kimi'
+          && /highspeed/i.test(probeModel)
+          && (this.cfg.baseUrl.includes('kimi.com') || this.cfg.baseUrl.includes('moonshot'));
         return {
           ok: false,
           error: `Auth failed (${r.status})${detail ? `: ${detail}` : ': check your API key.'}`,
-          hint: detail && /model/i.test(detail)
-            ? 'The probe model may not exist on this endpoint — refresh the model list.'
-            : 'Edit the provider and re-enter the key.'
+          hint: isKimiHighspeed
+            ? 'kimi-for-coding-highspeed requires an Allegretto plan or above. Switch the default model to kimi-for-coding, or upgrade your plan.'
+            : detail && /model/i.test(detail)
+              ? 'The probe model may not exist on this endpoint — refresh the model list.'
+              : 'Edit the provider and re-enter the key.'
         };
       }
       if (r.status === 404) {
@@ -142,6 +159,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   private headers(): Record<string, string> {
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
       ...(this.cfg.customHeaders || {})
     };
     if (this.apiKey) h['Authorization'] = `Bearer ${this.apiKey}`;
@@ -150,18 +168,46 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
   private toOpenAIMessages(messages: Message[]): unknown[] {
     const out: unknown[] = [];
+    // A provider can occasionally end a stream with truncated tool arguments.
+    // Do not replay those records: OpenAI-compatible APIs reject the entire
+    // request when even one historical `arguments` field is invalid JSON.
+    // Keep the valid call ids so their corresponding tool results remain
+    // paired correctly, while orphaned results are skipped below.
+    const validToolCallIds = new Set<string>();
     for (const m of messages) {
       // tool result message
       if (m.role === 'tool' && m.toolCallId) {
+        if (!validToolCallIds.has(m.toolCallId)) {
+          logger.warn('openai', `skipping orphaned or malformed tool result ${m.toolCallId}`);
+          continue;
+        }
         out.push({ role: 'tool', tool_call_id: m.toolCallId, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
         continue;
       }
       // assistant tool_calls
       if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length) {
+        const validCalls = m.toolCalls.filter((tc) => {
+          if (!tc.id || !tc.function?.name || typeof tc.function.arguments !== 'string') return false;
+          try {
+            const args: unknown = JSON.parse(tc.function.arguments);
+            return typeof args === 'object' && args !== null && !Array.isArray(args);
+          } catch {
+            return false;
+          }
+        });
+        for (const tc of validCalls) validToolCallIds.add(tc.id);
+        if (validCalls.length !== m.toolCalls.length) {
+          logger.warn('openai', `skipping ${m.toolCalls.length - validCalls.length} malformed historical tool call(s)`);
+        }
+        if (validCalls.length === 0) {
+          // Preserve any normal assistant text, but omit unusable tool metadata.
+          out.push({ role: 'assistant', content: typeof m.content === 'string' ? m.content : '' });
+          continue;
+        }
         out.push({
           role: 'assistant',
           content: typeof m.content === 'string' ? m.content : '',
-          tool_calls: m.toolCalls.map((tc) => ({
+          tool_calls: validCalls.map((tc) => ({
             id: tc.id,
             type: 'function',
             function: { name: tc.function.name, arguments: tc.function.arguments }
@@ -186,9 +232,20 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       else if (p.type === 'image_url') out.push({ type: 'image_url', image_url: p.image_url });
       else if (p.type === 'input_audio') out.push({ type: 'input_audio', input_audio: p.input_audio });
       else if (p.type === 'file') {
-        // OpenAI doesn't have a native file content part for chat completions;
-        // many compatible providers accept it. Otherwise embed as text.
-        out.push({ type: 'file', file: p.file });
+        if (/^(text\/|application\/(json|javascript|xml))/u.test(p.file.mimeType)) {
+          out.push({
+            type: 'text',
+            text: `[Attached file: ${p.file.filename}]\n${Buffer.from(p.file.data, 'base64').toString('utf8')}`
+          });
+        } else {
+          out.push({
+            type: 'file',
+            file: {
+              filename: p.file.filename,
+              file_data: `data:${p.file.mimeType};base64,${p.file.data}`
+            }
+          });
+        }
       }
     }
     return out;
@@ -289,6 +346,12 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     // Aggregate tool calls by id as they stream in
     const toolAcc = new Map<string, { id: string; name: string; arguments: string }>();
     let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+    // Tracks whether the stream produced any user-visible output. If Kimi or
+    // another OpenAI-compat gateway returns 200 OK with a body but no content
+    // chunks (e.g. because the model declined silently or a request field is
+    // unsupported), surfacing a real error is much better than ending the turn
+    // with a blank assistant bubble.
+    let committed = false;
 
     for await (const evt of parseSSE(response, req.signal)) {
       if (evt.raw === '[DONE]') break;
@@ -315,12 +378,12 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           const content = delta.content as string | undefined
             ?? delta.text as string | undefined
             ?? (delta.message as Record<string, unknown> | undefined)?.content as string | undefined;
-          if (content) yield { type: 'delta', content };
+          if (content) { committed = true; yield { type: 'delta', content }; }
 
           // Reasoning content (o1/o3 style, or custom fields)
           const reasoning = (delta as { reasoning_content?: string; reasoning?: string }).reasoning_content
             ?? (delta as { reasoning_content?: string; reasoning?: string }).reasoning;
-          if (reasoning) yield { type: 'reasoning', reasoning };
+          if (reasoning) { committed = true; yield { type: 'reasoning', reasoning }; }
 
           // Tool calls
           const tcs = delta.tool_calls as Array<Record<string, unknown>> | undefined;
@@ -341,6 +404,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         // Stop reason — checked outside the delta block: many providers send
         // finish_reason in a chunk with no (or an empty) delta.
         if (choice.finish_reason === 'tool_calls' && toolAcc.size > 0) {
+          committed = true;
           yield { type: 'tool_calls', toolCalls: Array.from(toolAcc.values()) };
           toolAcc.clear();
         }
@@ -354,6 +418,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     // Some providers close the stream without a finish_reason 'tool_calls'
     // chunk — don't drop tool calls that were accumulated but never flushed.
     if (toolAcc.size > 0) {
+      committed = true;
       yield { type: 'tool_calls', toolCalls: Array.from(toolAcc.values()) };
       toolAcc.clear();
     }
@@ -368,6 +433,22 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         }
       };
     }
+
+    // Silent-stream guard: 200 OK but no user-visible events. Without this the
+    // chat loop completes with an empty assistant bubble and the user has no
+    // signal about what went wrong. Surface a real error with Kimi-specific
+    // guidance, since their docs require the tool identity in User-Agent and
+    // gate HighSpeed behind plan tier.
+    if (!committed) {
+      const isKimi = this.cfg.presetId === 'kimi'
+        || /kimi\.com|moonshot/i.test(this.cfg.baseUrl);
+      const detail = isKimi
+        ? 'Kimi Code accepted the request but returned no content. Common causes: (1) kimi-for-coding-highspeed is set but the plan does not include Allegretto tier — switch to kimi-for-coding; (2) the API key is correct but the membership is paused; (3) the request format is not fully supported. Try Test Connection in Settings → Providers to confirm auth.'
+        : 'Provider returned 200 OK but streamed no content. The model may have refused the request, the key may lack access to the requested model, or the request body uses an unsupported field.';
+      logger.warn('openai', `empty stream from ${this.cfg.name} (${req.model}) at ${this.cfg.baseUrl}`);
+      yield { type: 'error', error: detail };
+    }
+
     yield { type: 'done' };
   }
 }

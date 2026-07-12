@@ -66,6 +66,11 @@ export interface FileChange {
   linesRemoved: number;
   bytesAdded: number;
   isNewFile?: boolean;
+  before?: string;
+  after?: string;
+  beforeTruncated?: boolean;
+  afterTruncated?: boolean;
+  hunkStartLine?: number;
   at: number;
 }
 
@@ -228,6 +233,9 @@ interface AppState {
 
   // Project cockpit
   projectCockpitId: string | null;
+  // Survives closeProjectCockpit so the last-viewed project is remembered
+  // (e.g. reopening DERO Studio from the sidebar after navigating Home).
+  lastDeroProjectId: string | null;
   openProjectCockpit: (projectId: string) => void;
   closeProjectCockpit: () => void;
   openProjectSettings: () => void;
@@ -302,6 +310,10 @@ interface AppState {
   fileChanges: FileChange[];
   recordFileChange: (change: Omit<FileChange, 'at'>) => void;
   clearFileChanges: () => void;
+
+  // Simulator fixtures
+  simulatorFixtures: Array<{ address: string; scid: string; label: string }>;
+  addSimulatorFixture: (fixture: { address: string; scid: string; label: string }) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -678,7 +690,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSettingsOpen: (open) => set({ settingsOpen: open, ...(open ? {} : { settingsInitialTab: undefined }) }),
 
   projectCockpitId: null,
-  openProjectCockpit: (projectId) => set({ projectCockpitId: projectId, codeTabOpen: false, visionTabOpen: false }),
+  lastDeroProjectId: null,
+  openProjectCockpit: (projectId) => set({ projectCockpitId: projectId, lastDeroProjectId: projectId, codeTabOpen: false, visionTabOpen: false }),
   closeProjectCockpit: () => set({ projectCockpitId: null }),
   openProjectSettings: () => set({ settingsOpen: true, settingsInitialTab: 'projects' }),
 
@@ -756,5 +769,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   recordFileChange: (change) => set((s) => ({
     fileChanges: [...s.fileChanges, { ...change, at: Date.now() }].slice(-200)
   })),
-  clearFileChanges: () => set({ fileChanges: [] })
+  clearFileChanges: () => set({ fileChanges: [] }),
+
+  simulatorFixtures: [],
+  addSimulatorFixture: (fixture) => set((s) => ({ simulatorFixtures: [...s.simulatorFixtures, fixture] })),
 }));

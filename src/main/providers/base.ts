@@ -11,6 +11,7 @@ export interface ProviderStreamRequest {
   topP?: number;
   maxTokens?: number;
   reasoning?: { effort?: Exclude<ThinkingEffort, 'off'> };
+  planMode?: boolean;
   signal?: AbortSignal;
   requestPermission?: (request: { requestId: string; toolName: string; args: Record<string, unknown>; description?: string }) => Promise<boolean>;
   // For multi-modal: raw base64 attachments the user uploaded
@@ -18,10 +19,19 @@ export interface ProviderStreamRequest {
 }
 
 export interface ProviderStreamEvent {
-  type: 'delta' | 'reasoning' | 'tool_calls' | 'usage' | 'done' | 'error';
+  type: 'delta' | 'reasoning' | 'tool_calls' | 'tool_start' | 'tool_result' | 'usage' | 'done' | 'error';
   content?: string;
   reasoning?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  toolActivity?: {
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    status: 'running' | 'success' | 'error';
+    result?: string;
+    durationMs?: number;
+    meta?: Record<string, unknown>;
+  };
   usage?: TokenUsage;
   error?: string;
 }

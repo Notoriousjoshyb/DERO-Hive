@@ -21,6 +21,8 @@ import type {
   SearchResult,
   UsageStats,
   WhisperStatus,
+  SimulatorHealth,
+  SimulatorChainInfo,
   SimulatorStatus,
   SimulatorStartOptions,
   KnowledgeStatus,
@@ -41,8 +43,14 @@ import type {
   KnowledgeAutomationStatus,
   BrowserBridgeActiveProject,
   BrowserBridgeStatus,
-  McpRegistry
+  McpRegistry,
+  MediaListResponse,
+  MediaProviderConfig,
+  MediaArtifactRecord,
+  MediaGenerationRequest,
+  MediaJobRecord
 } from '@shared/types';
+import type { DvmLintResult } from '@shared/dvm';
 
 declare global {
   interface Window {
@@ -163,6 +171,13 @@ declare global {
       simulatorStart: (opts?: SimulatorStartOptions) => Promise<SimulatorStatus>;
       simulatorStop: () => Promise<SimulatorStatus>;
       simulatorRestart: (opts?: SimulatorStartOptions) => Promise<SimulatorStatus>;
+      simulatorHealth: () => Promise<SimulatorHealth>;
+      simulatorInfo: () => Promise<SimulatorChainInfo>;
+      simulatorCreateFixtureWallet: () => Promise<{ address: string; scid: string }>;
+      simulatorGetBalance: (address: string, scid?: string) => Promise<{ balance: number; scid?: string }>;
+      simulatorGetContractState: (scid: string, keys?: string[]) => Promise<Record<string, unknown>>;
+      simulatorGetHeight: () => Promise<number>;
+      deroLint: (source: string) => Promise<DvmLintResult>;
       onSimulatorOutput: (cb: (e: { stream: 'stdout' | 'stderr'; data: string }) => void) => () => void;
       onSimulatorStatus: (cb: (status: SimulatorStatus) => void) => () => void;
 
@@ -194,6 +209,19 @@ declare global {
       onProjectOpened: (cb: (path: string) => void) => () => void;
       onThemeChanged: (cb: (info: { shouldUseDarkColors: boolean }) => void) => () => void;
       onModelsUpdated: (cb: (data: { id: string; models: ProviderModel[]; fetchedAt: number }) => void) => () => void;
+
+      // Media generation (image / video / audio)
+      mediaList: () => Promise<MediaListResponse>;
+      mediaSaveProvider: (cfg: MediaProviderConfig & { apiKey?: string }) => Promise<{ ok: boolean; provider?: MediaProviderConfig; error?: string }>;
+      mediaDeleteProvider: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      mediaTestProvider: (id: string) => Promise<{ ok: boolean; error?: string; hint?: string }>;
+      mediaGenerate: (req: MediaGenerationRequest & { conversationId?: string; messageId?: string }) => Promise<{ ok: boolean; artifact?: MediaArtifactRecord; error?: string }>;
+      mediaCancel: (id: string) => Promise<{ ok: boolean }>;
+      mediaDeleteArtifact: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      mediaOpenArtifact: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      mediaRevealArtifact: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      mediaUrl: (id: string) => string;
+      onMediaStatus: (cb: (data: { job: MediaJobRecord }) => void) => () => void;
     };
   }
 }

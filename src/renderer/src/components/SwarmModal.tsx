@@ -7,7 +7,10 @@ import { VoiceInput } from './VoiceInput';
 const DEFAULT_WORKERS = ['architect', 'implement', 'test'];
 const MAX_REPORT_CHARS = 8_000;
 const MAX_PARALLEL_WORKERS = 3;
-const MAX_WORKER_ROUNDS = 4;
+// Swarm workers do real investigation/implementation, so they need a generous
+// tool-round budget. When the budget is reached the agent finalizes with a
+// report rather than failing (see the finalize path in ipc/chat.ts).
+const MAX_WORKER_ROUNDS = 24;
 const VERIFY_AGENT_ID = 'verify';
 
 type WorkerState = 'queued' | 'working' | 'done' | 'error';

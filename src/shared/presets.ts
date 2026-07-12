@@ -40,12 +40,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   },
   {
     id: 'kimi',
-    name: 'Kimi for Coding',
+    name: 'Kimi Code (kimi-for-coding)',
     baseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com',
+    docsUrl: 'https://www.kimi.com',
     defaultModel: 'kimi-for-coding',
     supportsTools: true,
-    notes: 'Kimi-for-Coding subscription endpoint — only exposes the coding models (usually 1–2). For the full Kimi/Moonshot catalog use the Moonshot AI preset.',
+    notes: 'Kimi Code subscription endpoint — exposes only the coding models (kimi-for-coding and, for Allegretto+ plans, kimi-for-coding-highspeed). HighSpeed ≈ 5–6× output speed but costs ~3× quota. The base URL already includes /coding/v1; do not edit. For the full Kimi/Moonshot catalog use the Moonshot AI preset.',
     models: []
   },
   {

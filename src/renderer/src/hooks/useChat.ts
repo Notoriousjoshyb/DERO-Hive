@@ -68,14 +68,31 @@ export function useChat(): void {
     });
 
     const offToolResult = window.hive.onToolResult((data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => {
-      recordToolResult(data.messageId, data.toolCallId, data.result, data.isError, data.durationMs);
+      recordToolResult(data.messageId, data.toolCallId, data.result, data.isError, data.durationMs, data.meta);
+      if (!data.isError && (data.toolName === 'generate_image' || data.toolName === 'generate_audio' || data.toolName === 'generate_video')) {
+        useAppStore.getState().setVisionOpen(true);
+      }
       if (data.toolName === 'todo_write' && data.meta && Array.isArray((data.meta as { todos?: unknown }).todos)) {
         const todos = (data.meta as { todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed'; active_form?: string }> }).todos;
         useAppStore.getState().setTodos(todos);
       }
-      // Track file diffs for the session (GitHub-style +/- line counts)
+      // Track file diffs for the session (GitHub-style +/- line counts + a
+      // bounded before/after snapshot so the Activity panel can render a
+      // terminal-style diff without re-reading the file).
       if (!data.isError && data.meta && (data.toolName === 'write_file' || data.toolName === 'edit_file')) {
-        const m = data.meta as { path?: string; kind?: 'write' | 'edit'; linesAdded?: number; linesRemoved?: number; bytesAdded?: number; isNewFile?: boolean };
+        const m = data.meta as {
+          path?: string;
+          kind?: 'write' | 'edit';
+          linesAdded?: number;
+          linesRemoved?: number;
+          bytesAdded?: number;
+          isNewFile?: boolean;
+          before?: string;
+          after?: string;
+          beforeTruncated?: boolean;
+          afterTruncated?: boolean;
+          hunkStartLine?: number;
+        };
         if (m.path && m.kind) {
           useAppStore.getState().recordFileChange({
             path: m.path,
@@ -83,7 +100,12 @@ export function useChat(): void {
             linesAdded: m.linesAdded || 0,
             linesRemoved: m.linesRemoved || 0,
             bytesAdded: m.bytesAdded || 0,
-            isNewFile: m.isNewFile
+            isNewFile: m.isNewFile,
+            before: m.before,
+            after: m.after,
+            beforeTruncated: m.beforeTruncated,
+            afterTruncated: m.afterTruncated,
+            hunkStartLine: m.hunkStartLine
           });
         }
       }

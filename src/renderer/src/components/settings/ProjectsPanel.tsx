@@ -40,7 +40,13 @@ export function ProjectsPanel(): JSX.Element {
     setSaving(true);
     setFormError(null);
     try {
-      await saveProject({ ...editing, name: editing.name.trim(), path: editing.path.trim() });
+      // DERO project type and MCP context do not require an Obsidian vault.
+      // Do not send a partially filled vault object to the strict main-process
+      // validator; a vault is only configured once both fields are present.
+      const draftConfig = { ...editing.config };
+      const draftKnowledge = draftConfig.knowledge;
+      if (!draftKnowledge?.serverId?.trim() || !draftKnowledge.folder?.trim()) delete draftConfig.knowledge;
+      await saveProject({ ...editing, name: editing.name.trim(), path: editing.path.trim(), config: draftConfig });
       setShowForm(false);
       setEditing(null);
     } catch (err) {
@@ -67,6 +73,13 @@ export function ProjectsPanel(): JSX.Element {
     if (patch.serverId === '') { updateConfig(undefined); return; }
     const current = editing.config?.knowledge || { provider: 'obsidian' as const, serverId: '', folder: '' };
     updateConfig({ ...current, ...patch });
+  };
+
+  const toggleProjectMcp = (serverId: string): void => {
+    if (!editing) return;
+    const ids = editing.config?.mcpServerIds || [];
+    const mcpServerIds = ids.includes(serverId) ? ids.filter((id) => id !== serverId) : [...ids, serverId];
+    setEditing({ ...editing, config: { ...editing.config, mcpServerIds } });
   };
 
   const openCockpit = (id: string): void => {
@@ -130,6 +143,32 @@ export function ProjectsPanel(): JSX.Element {
               <button onClick={handleBrowse} className="btn-secondary">Browse…</button>
             </div>
           </div>
+
+          <div>
+            <label className="text-sm text-fg-subtle">Project type</label>
+            <select
+              value={editing.config?.kind || 'general'}
+              onChange={(e) => setEditing({ ...editing, config: { ...editing.config, kind: e.target.value as 'general' | 'dero' } })}
+              className="input w-full mt-1"
+            >
+              <option value="general">General</option>
+              <option value="dero">DERO developer project</option>
+            </select>
+            <p className="mt-1 text-[11px] text-fg-subtle">DERO projects show the Contract Studio, simulator controls, and development prompts in their cockpit.</p>
+          </div>
+
+          {editing.config?.kind === 'dero' && (
+            <fieldset className="rounded-lg border border-border p-3 space-y-2">
+              <legend className="px-1 text-sm font-medium text-fg">DERO MCP context</legend>
+              <p className="text-[11px] text-fg-subtle">Record the MCP servers this project expects for read-only DERO documentation and chain context. Connection and tool permissions remain under your control.</p>
+              {mcpStatuses.length === 0 ? <p className="text-xs text-fg-subtle">No MCP servers configured.</p> : mcpStatuses.map((server) => (
+                <label key={server.id} className="flex items-center gap-2 text-sm text-fg-muted">
+                  <input type="checkbox" checked={(editing.config?.mcpServerIds || []).includes(server.id)} onChange={() => toggleProjectMcp(server.id)} className="accent-accent" />
+                  <span>{server.name}</span><span className={`text-[10px] ${server.connected ? 'text-success' : 'text-fg-subtle'}`}>{server.connected ? 'connected' : 'offline'}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
 
           <fieldset className="rounded-lg border border-border p-3 space-y-3">
             <legend className="px-1 text-sm font-medium text-fg">Obsidian knowledge</legend>
