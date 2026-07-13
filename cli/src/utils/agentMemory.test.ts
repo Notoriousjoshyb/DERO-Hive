@@ -74,4 +74,19 @@ const cycle284Query = memoryUtils.parseMemorySearchQuery('before:2026-07-14 afte
 assert.equal(cycle284Query.before, Date.parse('2026-07-14'));
 assert.equal(cycle284Query.after, Date.parse('2026-07-12'));
 assert.equal(memoryUtils.parseMemorySearchQuery('before:not-a-date').before, undefined);
+// Cycle 286: every requested plain token must be present in memory content.
+const cycle286Entries = [memory('a', 'DERO wallet sync'), memory('b', 'wallet only')];
+assert.deepEqual(memoryUtils.filterMemories(cycle286Entries, 'wallet DERO').map((entry) => entry.id), ['a']);
+// Cycle 287: quoted phrases require contiguous normalized content.
+const cycle287Entries = [memory('a', 'wallet sync complete'), memory('b', 'wallet then sync')];
+assert.deepEqual(memoryUtils.filterMemories(cycle287Entries, '"wallet sync"').map((entry) => entry.id), ['a']);
+// Cycle 288: all requested tags must be present after normalization.
+const cycle288Entries = [
+  memory('a', 'one', { tags: ['DERO', 'local-first'] }),
+  memory('b', 'two', { tags: ['DERO'] })
+];
+assert.deepEqual(memoryUtils.filterMemories(cycle288Entries, 'tag:dero tag:local-first').map((entry) => entry.id), ['a']);
+// Cycle 289: source filters are normalized case-insensitively.
+const cycle289Entries = [memory('a', 'one', { source: 'CLI' }), memory('b', 'two', { source: 'desktop' })];
+assert.deepEqual(memoryUtils.filterMemories(cycle289Entries, 'source:cli').map((entry) => entry.id), ['a']);
 console.log('agentMemory.test.ts — all assertions passed');

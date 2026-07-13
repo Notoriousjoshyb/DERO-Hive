@@ -769,3 +769,57 @@
 - Verification: `npm run build` -> exit 0 / passed / 8.5s; `npm run typecheck` -> exit 0 / passed / 6.9s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.9s; `npm run test:cli` -> exit 0 / passed / 4.7s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 286.
+
+
+## Cycle 283 — Memory tag and source query parsing coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 282; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory tag and source query parsing coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.8s; `npm run typecheck` -> exit 0 / passed / 7.4s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.7s; `npm run test:cli` -> exit 0 / passed / 4.2s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 284.
+
+
+## Cycle 284 — Memory date-filter parsing coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 283; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory date-filter parsing coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.8s; `npm run typecheck` -> exit 0 / passed / 7.2s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.5s; `npm run test:cli` -> exit 0 / passed / 4.6s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 285.
+
+
+## Cycle 286 — Memory token filtering coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 285; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory token filtering coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.9s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 3.8s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 287.
+
+
+## Cycle 287 — Memory exact-phrase filtering coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 286; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory exact-phrase filtering coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.3s; `npm run typecheck` -> exit 0 / passed / 6.9s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 288.
+
+
+## Cycle 288 — Memory required-tag filtering coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 287; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory required-tag filtering coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.5s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 289.
+
+
+## Cycle 289 — Memory source filtering coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 288; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory source filtering coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.9s; `npm run typecheck` -> exit 0 / passed / 7.4s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 290.
