@@ -62,3 +62,6 @@ assert.equal(filterCommandItems('/rewind')[0]?.name, 'undo');
 // Cycle 103: command keywords make capabilities discoverable without exact names.
 assert.equal(filterCommandItems('/clipboard')[0]?.name, 'copy');
 assert.equal(filterCommandItems('/sandbox')[0]?.name, 'permissions');
+// Cycle 104: descriptive prose participates in command discovery as the final tier.
+assert.equal(filterCommandItems('/safely')[0]?.name, 'quit');
+assert.equal(filterCommandItems('/colour')[0]?.name, 'theme');

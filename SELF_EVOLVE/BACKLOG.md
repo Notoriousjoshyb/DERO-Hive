@@ -74,3 +74,4 @@
 | 101 | Exact command-name ranking coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 102 | Command alias ranking coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 103 | Command keyword discovery coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 104 | Command description discovery coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
