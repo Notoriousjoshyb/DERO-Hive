@@ -35,3 +35,6 @@ assert.equal(cycle92?.item?.command, '/help');
 const cycle93 = parseSlashCommand('/new "first message" tail');
 assert.deepEqual(cycle93?.args, ['first message', 'tail']);
 assert.equal(cycle93?.argumentText, '"first message" tail');
+// Cycle 94: escaped quote and backslash characters inside quotes are decoded.
+const cycle94 = parseSlashCommand('/goal "say \\"hello\\"" "C:\\\\tmp"');
+assert.deepEqual(cycle94?.args, ['say "hello"', 'C:\\tmp']);
