@@ -59,3 +59,6 @@ assert.equal(filterCommandItems('/model')[0]?.name, 'model');
 // Cycle 102: exact aliases resolve to their canonical command first.
 assert.equal(filterCommandItems('/exit')[0]?.name, 'quit');
 assert.equal(filterCommandItems('/rewind')[0]?.name, 'undo');
+// Cycle 103: command keywords make capabilities discoverable without exact names.
+assert.equal(filterCommandItems('/clipboard')[0]?.name, 'copy');
+assert.equal(filterCommandItems('/sandbox')[0]?.name, 'permissions');

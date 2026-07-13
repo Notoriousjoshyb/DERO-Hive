@@ -73,3 +73,4 @@
 | 100 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
 | 101 | Exact command-name ranking coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 102 | Command alias ranking coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 103 | Command keyword discovery coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
