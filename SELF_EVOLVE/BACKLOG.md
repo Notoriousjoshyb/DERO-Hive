@@ -125,3 +125,5 @@
 | 315 | HEALTH - full gate cadence | verified — all required gates green |
 | 316 | Memory-context token-budget coverage | verified — all required gates green |
 | 317 | Updated-at memory filtering coverage | verified — all required gates green |
+| 318 | Updated-at memory-recency scoring coverage | verified — all required gates green |
+| 319 | Empty-memory deduplication isolation coverage | verified — all required gates green |

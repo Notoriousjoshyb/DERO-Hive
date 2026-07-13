@@ -234,4 +234,7 @@ const cycle318Score = memoryUtils.scoreMemory(memory('a', 'same'), 'same', {
   weights: { lexical: Number.NaN, recency: -1, tags: -1, pinned: -1 }
 });
 assert.equal(Math.abs(cycle318Score.score - 0.75) < 1e-12, true);
+// Cycle 319: empty collections and zero budgets produce no injected context.
+assert.equal(memoryUtils.buildMemoryContext([], 'anything', { now: NOW }), '');
+assert.equal(memoryUtils.buildMemoryContext([memory('a', 'same')], 'same', { now: NOW, tokenBudget: 0 }), '');
 console.log('agentMemory.test.ts — all assertions passed');
