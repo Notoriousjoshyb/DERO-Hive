@@ -71,3 +71,6 @@ assert.equal(cycle106[0]?.name, 'audit');
 assert.equal(cycle106[0]?.source, 'skill');
 // Cycle 107: disabled skills never leak into the command catalog.
 assert.equal(filterCommandItems('/hidden', [{ name: 'hidden', enabled: false }]).length, 0);
+// Cycle 108: malformed skill slash commands are rejected by the safe-name policy.
+assert.equal(filterCommandItems('/bad', [{ name: 'bad', slashCommand: '/bad command' }]).length, 0);
+assert.equal(filterCommandItems('/bad', [{ name: 'bad', slashCommand: '/-bad' }]).length, 0);
