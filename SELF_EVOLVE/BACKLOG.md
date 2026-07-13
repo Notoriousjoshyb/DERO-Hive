@@ -127,3 +127,14 @@
 | 317 | Updated-at memory filtering coverage | verified — all required gates green |
 | 318 | Updated-at memory-recency scoring coverage | verified — all required gates green |
 | 319 | Empty-memory deduplication isolation coverage | verified — all required gates green |
+| 320 | HEALTH - full gate cadence | verified — all required gates green |
+| 321 | Non-finite ranking-limit fallback coverage | verified — all required gates green |
+| 322 | Ranking-limit maximum-cap coverage | verified — all required gates green |
+| 323 | Negative score-threshold normalization coverage | verified — all required gates green |
+| 324 | Invalid memory-score weight hardening coverage | verified — all required gates green |
+| 325 | HEALTH - full gate cadence | verified — all required gates green |
+| 326 | Normalized multi-tag memory filtering coverage | verified — all required gates green |
+| 327 | Case-insensitive memory query-field coverage | verified — all required gates green |
+| 328 | Unknown memory query-field preservation coverage | verified — all required gates green |
+| 329 | Plain memory-context fallback coverage | verified — all required gates green |
+| 330 | HEALTH - full gate cadence | verified — all required gates green |

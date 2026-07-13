@@ -237,4 +237,41 @@ assert.equal(Math.abs(cycle318Score.score - 0.75) < 1e-12, true);
 // Cycle 319: empty collections and zero budgets produce no injected context.
 assert.equal(memoryUtils.buildMemoryContext([], 'anything', { now: NOW }), '');
 assert.equal(memoryUtils.buildMemoryContext([memory('a', 'same')], 'same', { now: NOW, tokenBudget: 0 }), '');
+// Cycle 321: non-finite limits fall back to the default result count.
+const cycle321Entries = Array.from({ length: 12 }, (_, index) => memory(String(index), 'same'));
+assert.equal(memoryUtils.rankMemories(cycle321Entries, '', { limit: Number.NaN, now: NOW }).length, 10);
+// Cycle 322: finite ranking limits are capped at one hundred results.
+const cycle322Entries = Array.from({ length: 105 }, (_, index) => memory(String(index), 'same'));
+assert.equal(memoryUtils.rankMemories(cycle322Entries, '', { limit: 999, now: NOW }).length, 100);
+// Cycle 323: negative minimum scores clamp to zero rather than excluding valid results.
+const cycle323Ranked = memoryUtils.rankMemories([memory('zero', 'unrelated')], 'query', {
+  now: NOW,
+  minScore: -1,
+  weights: { lexical: 1, recency: 0, tags: 0, pinned: 0 }
+});
+assert.deepEqual(cycle323Ranked.map(({ entry }) => entry.id), ['zero']);
+// Cycle 324: invalid weights are discarded and the remaining valid weight is normalized.
+const cycle324Score = memoryUtils.scoreMemory(memory('pinned', 'none', { pinned: true }), 'query', {
+  now: NOW,
+  weights: { lexical: Number.NaN, recency: -1, tags: 0, pinned: 2 }
+});
+assert.equal(cycle324Score.score, 1);
+// Cycle 326: multi-word and hash-prefixed tags compose under normalized filtering.
+const cycle326Entries = [
+  memory('match', 'note', { tags: ['#DERO', 'local first'] }),
+  memory('miss', 'note', { tags: ['DERO'] })
+];
+assert.deepEqual(memoryUtils.filterMemories(cycle326Entries, 'tag:#dero tag:local-first').map((entry) => entry.id), ['match']);
+// Cycle 327: structured query field names are case-insensitive.
+const cycle327Query = memoryUtils.parseMemorySearchQuery('TAG:DERO SOURCE:CLI');
+assert.deepEqual(cycle327Query.tags, ['dero']);
+assert.deepEqual(cycle327Query.sources, ['cli']);
+// Cycle 328: unknown structured-looking fields remain searchable plain text.
+const cycle328Query = memoryUtils.parseMemorySearchQuery('owner:alice wallet');
+assert.equal(cycle328Query.text, 'owner:alice wallet');
+assert.deepEqual(cycle328Query.tags, []);
+assert.deepEqual(cycle328Query.sources, []);
+// Cycle 329: entries without metadata use the stable memory source and omit empty tag suffixes.
+const cycle329Context = memoryUtils.buildMemoryContext([memory('a', 'plain note')], '', { now: NOW });
+assert.equal(cycle329Context, '- [memory] plain note');
 console.log('agentMemory.test.ts — all assertions passed');
