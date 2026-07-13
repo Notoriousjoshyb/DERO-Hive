@@ -38,3 +38,6 @@ assert.equal(cycle93?.argumentText, '"first message" tail');
 // Cycle 94: escaped quote and backslash characters inside quotes are decoded.
 const cycle94 = parseSlashCommand('/goal "say \\"hello\\"" "C:\\\\tmp"');
 assert.deepEqual(cycle94?.args, ['say "hello"', 'C:\\tmp']);
+// Cycle 96: unfinished user quotes remain usable instead of crashing autocomplete.
+const cycle96 = parseSlashCommand('/new "unfinished phrase');
+assert.deepEqual(cycle96?.args, ['unfinished phrase']);
