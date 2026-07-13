@@ -31,6 +31,7 @@
     "typecheck:cli": "tsc --noEmit -p tsconfig.cli.json",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:cli": "eslint \"cli/src/**/*.{ts,tsx}\"",
+    "test:vision": "tsx src/renderer/src/lib/visionViewer.test.ts",
     "test:cli": "tsx cli/src/tui/commands.test.ts && tsx cli/src/services/conversation.test.ts && tsx cli/src/services/permissions.test.ts && tsx cli/src/tui/render.test.ts",
     "cli": "node cli/bin/hive.js",
     "cli:dev": "tsx cli/src/index.ts",

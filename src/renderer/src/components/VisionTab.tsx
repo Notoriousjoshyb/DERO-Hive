@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -6,6 +6,7 @@ import { useAppStore } from '../stores/app';
 import type { Artifact } from '@shared/types';
 import { artifactGroupKey, artifactLabel } from '../lib/artifacts';
 import { renderVisionHtml } from '../lib/visionRender';
+import { shouldCloseVisionArtifactViewer } from '../lib/visionViewer';
 import { VisionIcon } from './VisionPanel';
 import { MediaStudio } from './MediaStudio';
 
@@ -164,8 +165,18 @@ function ArtifactViewer({ group, conversationTitle, onClose }: { group: Group; c
   const [vIdx, setVIdx] = useState(group.versions.length - 1);
   const [view, setView] = useState<'preview' | 'code'>('preview');
   const [copied, setCopied] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const active = group.versions[Math.min(vIdx, group.versions.length - 1)];
   const previewHtml = useMemo(() => renderVisionHtml(active), [active.type, active.content]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (shouldCloseVisionArtifactViewer(event.key)) onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    closeButtonRef.current?.focus();
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const copy = async (): Promise<void> => {
     try {
@@ -192,12 +203,15 @@ function ArtifactViewer({ group, conversationTitle, onClose }: { group: Group; c
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="vision-artifact-viewer-title"
         className="bg-bg-elev border border-border rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden"
       >
         {/* Viewer header */}
         <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
           <span className="px-1.5 py-0.5 rounded bg-accent-soft text-accent uppercase text-[9px] tracking-wide">{active.type}</span>
-          <span className="text-sm font-medium truncate">{artifactLabel(active)}</span>
+          <span id="vision-artifact-viewer-title" className="text-sm font-medium truncate">{artifactLabel(active)}</span>
           {conversationTitle && <span className="text-xs text-fg-subtle truncate">· {conversationTitle}</span>}
           {group.versions.length > 1 && (
             <span className="flex items-center gap-1 text-xs text-fg-muted ml-2">
@@ -211,7 +225,7 @@ function ArtifactViewer({ group, conversationTitle, onClose }: { group: Group; c
             <button onClick={() => setView('preview')} className={`px-2 py-0.5 rounded-md ${view === 'preview' ? 'bg-bg-input text-fg' : 'text-fg-muted hover:text-fg'}`}>Preview</button>
             <button onClick={() => setView('code')} className={`px-2 py-0.5 rounded-md ${view === 'code' ? 'bg-bg-input text-fg' : 'text-fg-muted hover:text-fg'}`}>Code</button>
           </div>
-          <button onClick={onClose} className="text-fg-muted hover:text-fg px-1.5 text-lg leading-none">×</button>
+          <button ref={closeButtonRef} onClick={onClose} aria-label="Close artifact viewer" className="text-fg-muted hover:text-fg px-1.5 text-lg leading-none">×</button>
         </div>
 
         {/* Content */}

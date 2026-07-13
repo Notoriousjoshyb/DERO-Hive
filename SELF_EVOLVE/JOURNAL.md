@@ -22,3 +22,15 @@
 - Discovered or parked: none; web discovery consulted official TypeScript guidance on strict parameter types.
 - Dependency decisions: none.
 - Next: Add focused renderer-state tests for Vision mode and tool-result metadata.
+
+## Cycle 2 - Vision artifact viewer accessibility - 2026-07-13
+
+- Chosen: Make the Vision artifact viewer keyboard-dismissible and expose dialog semantics (score 16: V4 F4 E1 R1). Discovery: local Vision gallery review found a modal with only pointer dismissal; React's official event guidance confirms keyboard handlers and semantic controls are appropriate. Other candidates: focused Vision helper coverage (16: V4 F5 E2 R1) and persisted gallery filters (9: V3 F4 E2 R2).
+- Definition of Done: The Vision artifact viewer closes on Escape, presents itself as a labelled modal dialog to assistive technology, and gives the close control an accessible label. Acceptance: only Escape triggers dismissal; ordinary keys do not. New focused test: execute a dependency-free `tsx` test for the Escape-key guard. Full gates: build, typecheck, lint plus CLI lint, focused test, and full CLI test suite pass. Documentation: update self-evolve state. Protected-path check: source, package manifest, tests, and state files are outside configured protected paths; no auth, secrets, payment, deployment, or migration changes.
+- Changed: `VisionTab.tsx` now focuses and labels the close control, handles Escape, and declares modal dialog semantics; added the isolated `visionViewer` guard and its `test:vision` test command.
+- Verification: `npm.cmd run build` -> exit 0 / passed / 10.79s; `npm.cmd run typecheck` -> exit 0 / passed / 8.34s (node, web, and CLI); `npm.cmd run lint` and `npm.cmd run lint:cli` -> exit 0 / passed / 3.92s total; `npm.cmd run test:vision` -> exit 0 / passed / 0.49s (3 assertions); `npm.cmd run test:cli` -> exit 0 / passed / 2.69s (4 CLI test scripts). Smoke: not configured (interactive Electron application). `git diff --check` passed; protected-path review passed.
+- Final regression after state finalisation: `npm.cmd run build` -> exit 0 / passed / 10.75s; `npm.cmd run typecheck` -> exit 0 / passed / 8.25s; `npm.cmd run lint` and `npm.cmd run lint:cli` -> exit 0 / passed / 4.00s total; `npm.cmd run test:vision` -> exit 0 / passed / 0.49s (3 assertions); `npm.cmd run test:cli` -> exit 0 / passed / 2.71s (4 CLI test scripts).
+- Result: completed (managed driver integration pending)
+- Discovered or parked: 003 focused Vision helper coverage and 004 persisted gallery filters; web discovery used React and TypeScript official documentation only.
+- Dependency decisions: none.
+- Next: Add focused pure-function coverage for Vision artifact rendering and state helpers.
