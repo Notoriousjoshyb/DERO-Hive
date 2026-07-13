@@ -644,3 +644,133 @@
 - Verification: `npm run test:cli` → exit 0 (10 scripts including the new file); other gates previously green in cycle 174 baseline.
 - Result: verified; no protected paths or dependencies changed.
 - Next: cycle 177 — another meaningful target.
+
+
+## Cycle 271 — Unicode-aware memory tokenization coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 270; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for unicode-aware memory tokenization coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.1s; `npm run typecheck` -> exit 0 / passed / 7.1s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.8s; `npm run test:cli` -> exit 0 / passed / 4.2s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 272.
+
+
+## Cycle 272 — Memory tag normalization and de-duplication coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 271; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory tag normalization and de-duplication coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.8s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 3.9s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 273.
+
+## Cycle 222 - Unicode-aware memory tokenization - 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 221. The next retrieval primitive needed deterministic identifier and Unicode token boundaries.
+- Chosen: Cover Unicode-aware memory tokenization (score V4/F5/E1/R1).
+- Changed: Added Cycle 222 assertions in cli/src/utils/agentMemory.test.ts for DERO-style identifiers, accented text, numbers, and punctuation-only input. Also repaired sibling-authored test fixtures to match current McpServerConfig and ProviderModel types so gates remained green.
+- Verification: npm run build -> exit 0; npm run typecheck -> exit 0; npm run lint && npm run lint:cli -> exit 0; npm run test:cli -> exit 0 (10 CLI scripts after sibling additions).
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Cycle 223 — normalized tag merging.
+
+
+## Cycle 273 — Stable memory fingerprint coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 272; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for stable memory fingerprint coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.4s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.5s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 274.
+
+
+## Cycle 274 — Jaccard memory similarity coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 273; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for jaccard memory similarity coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 275.
+
+
+## Cycle 275 — HEALTH - full gate cadence — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 274; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Run the complete required health-gate sequence without net-new behavior. (score V3/F5/E1/R1).
+- Changed: No runtime or test source changes; self-evolve state only.
+- Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 276.
+
+
+## Cycle 276 — Memory tag-overlap scoring coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 275; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory tag-overlap scoring coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.5s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.5s; `npm run test:cli` -> exit 0 / passed / 4.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 277.
+
+
+## Cycle 277 — Memory recency half-life coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 276; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory recency half-life coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.1s; `npm run typecheck` -> exit 0 / passed / 6.9s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 278.
+
+
+## Cycle 278 — Memory summary sanitization coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 277; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory summary sanitization coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.1s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.5s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 279.
+
+
+## Cycle 279 — Memory summary truncation coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 278; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory summary truncation coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 280.
+
+
+## Cycle 280 — HEALTH - full gate cadence — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 279; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Run the complete required health-gate sequence without net-new behavior. (score V3/F5/E1/R1).
+- Changed: No runtime or test source changes; self-evolve state only.
+- Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 6.7s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.4s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 281.
+
+
+## Cycle 281 — Memory search phrase parsing coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 280; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory search phrase parsing coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.3s; `npm run typecheck` -> exit 0 / passed / 6.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.7s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 282.
+
+
+## Cycle 282 — Escaped memory phrase parsing coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 281; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for escaped memory phrase parsing coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.3s; `npm run typecheck` -> exit 0 / passed / 7.3s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 4.0s; `npm run test:cli` -> exit 0 / passed / 4.2s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 283.
+
+## Cycle 223 - STARTED/FAILED - Normalized memory-tag merging - 2026-07-13
+- Changed: agentMemory.test.ts focused assertions.
+- Verification: failed after build 9.0s; typecheck 7.3s; lint 3.8s; test:cli 2.1s. See C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-221-270.
+- Result: incomplete; repair the failing gate before resuming this cycle.
+
+
+## Cycle 283 — Memory tag and source query parsing coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 282; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for memory tag and source query parsing coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 8.8s; `npm run typecheck` -> exit 0 / passed / 7.4s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.7s; `npm run test:cli` -> exit 0 / passed / 4.2s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 284.

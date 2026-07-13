@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import type { ProviderConfig, ProviderFallback } from '../../../src/shared/types.js';
+import type { ProviderConfig } from '../../../src/shared/types.js';
 import { resolveProviderChain } from './chat.js';
 
 let failures = 0;
@@ -24,7 +24,7 @@ const providers: ProviderConfig[] = [
   },
   {
     id: 'disabled', name: 'Disabled', enabled: false, baseUrl: '',
-    models: [{ id: 'm', label: 'M', contextWindow: 1, supportsTools: false, supportsVision: false }]
+    models: [{ id: 'm', name: 'M', contextWindow: 1, supportsTools: false, supportsVision: false }]
   }
 ];
 

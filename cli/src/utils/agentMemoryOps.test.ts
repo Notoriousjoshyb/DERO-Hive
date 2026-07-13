@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as memoryUtils from './agentMemory.js';
-import type { AgentMemoryEntry, MemorySearchQuery, RankedMemory } from './agentMemory.js';
+import type { AgentMemoryEntry, RankedMemory } from './agentMemory.js';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 6, 13); // 2026-07-13
