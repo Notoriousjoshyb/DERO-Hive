@@ -102,3 +102,6 @@ assert.deepEqual(commandSuggestions('/', [], 0), []);
 assert.deepEqual(commandSuggestions('/', [], -9), []);
 // Cycle 117: fractional limits are floored to a deterministic row count.
 assert.equal(commandSuggestions('/', [], 1.9).length, 1);
+// Cycle 118: non-finite limits fall back to the documented default of ten.
+assert.equal(commandSuggestions('/', [], Number.POSITIVE_INFINITY).length, 10);
+assert.equal(commandSuggestions('/', [], Number.NaN).length, 10);
