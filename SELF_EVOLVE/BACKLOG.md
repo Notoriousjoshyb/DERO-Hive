@@ -119,3 +119,7 @@
 | 309 | Invalid memory-budget hardening coverage | verified — all required gates green |
 | 310 | HEALTH - full gate cadence | verified — all required gates green |
 | 311 | Memory-context source and tag formatting coverage | verified — all required gates green |
+| 312 | Memory-context source normalization coverage | verified — all required gates green |
+| 313 | Memory-context truncation coverage | verified — all required gates green |
+| 314 | Memory-context result-limit coverage | verified — all required gates green |
+| 315 | HEALTH - full gate cadence | verified — all required gates green |

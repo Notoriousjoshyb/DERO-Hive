@@ -1066,3 +1066,39 @@
 - Verification: `npm run build` -> exit 0 / passed / 9.5s; `npm run typecheck` -> exit 0 / passed / 7.6s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.6s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 312.
+
+
+## Cycle 312 — Empty-memory fingerprint isolation coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 311; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for empty-memory fingerprint isolation coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 9.6s; `npm run typecheck` -> exit 0 / passed / 8.4s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 4.2s; `npm run test:cli` -> exit 0 / passed / 4.2s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 313.
+
+
+## Cycle 313 — Unicode memory-tag normalization coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 312; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for unicode memory-tag normalization coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 10.2s; `npm run typecheck` -> exit 0 / passed / 7.8s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.8s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 314.
+
+
+## Cycle 314 — Unterminated memory-query resilience coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 313; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for unterminated memory-query resilience coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 9.7s; `npm run typecheck` -> exit 0 / passed / 7.5s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.7s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 315.
+
+
+## Cycle 315 — HEALTH - full gate cadence — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 314; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Run the complete required health-gate sequence without net-new behavior. (score V3/F5/E1/R1).
+- Changed: No runtime or test source changes; self-evolve state only.
+- Verification: `npm run build` -> exit 0 / passed / 10.0s; `npm run typecheck` -> exit 0 / passed / 8.5s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 4.1s; `npm run test:cli` -> exit 0 / passed / 4.3s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 316.

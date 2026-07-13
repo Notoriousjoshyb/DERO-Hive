@@ -212,4 +212,13 @@ assert.notEqual(
   memoryUtils.memoryFingerprint({ id: 'empty-a', content: '' }),
   memoryUtils.memoryFingerprint({ id: 'empty-b', content: '   ' })
 );
+// Cycle 313: compatibility normalization applies to tags as well as content.
+assert.deepEqual(memoryUtils.mergeMemoryTags(['#ＤＥＲＯ', 'Local   First'], ['dero']), ['dero', 'local-first']);
+// Cycle 314: an unterminated quote is preserved as searchable plain text.
+const cycle314Query = memoryUtils.parseMemorySearchQuery('"unterminated phrase');
+assert.equal(cycle314Query.text, '"unterminated phrase');
+assert.deepEqual(cycle314Query.phrases, []);
+// Cycle 316: non-finite result limits use the bounded default rather than leaking all results.
+const cycle316Entries = Array.from({ length: 12 }, (_, index) => memory(String(index), 'same'));
+assert.equal(memoryUtils.rankMemories(cycle316Entries, '', { limit: Number.POSITIVE_INFINITY, now: NOW }).length, 10);
 console.log('agentMemory.test.ts — all assertions passed');
