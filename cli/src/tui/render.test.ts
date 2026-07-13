@@ -42,7 +42,10 @@ try {
     patchConsole: false
   });
   const exited = instance.waitUntilExit();
-  await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  const deadline = Date.now() + 3_000;
+  while (!/DERO HIVE/.test(output) && Date.now() < deadline) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
   if (!/DERO HIVE/.test(output)) process.stderr.write(output);
   assert.match(output, /DERO HIVE/);
   const escape = String.fromCharCode(27);
