@@ -119,3 +119,7 @@ assert.equal(theme121.resolveTheme('auto', { prefersDark: false }).id, 'system')
 assert.equal(theme121.resolveTheme('default', { prefersDark: true }).id, 'system');
 assert.equal(theme121.resolveTheme('hive-dark', {}).resolvedId, 'dark');
 assert.equal(theme121.resolveTheme('hive-light', {}).resolvedId, 'light');
+// Cycle 122: HIVE_THEME selects a preset when no explicit ID is supplied.
+const theme122 = await import('./themes.js');
+assert.equal(theme122.resolveTheme(undefined, { HIVE_THEME: 'nord' }).id, 'nord');
+assert.equal(theme122.resolveTheme(null, { HIVE_THEME: 'gruvbox' }).resolvedId, 'gruvbox');
