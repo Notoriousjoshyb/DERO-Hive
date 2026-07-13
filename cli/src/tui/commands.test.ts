@@ -144,3 +144,8 @@ for (const id of theme127.TERMINAL_THEME_IDS.filter((value) => value !== 'system
   assert.ok(Object.values(resolved.palette).every((value) => typeof value === 'string' && value.length > 0));
   assert.ok(Object.isFrozen(resolved.palette));
 }
+// Cycle 128: theme cycling handles invalid IDs and reverse traversal boundaries.
+const theme128 = await import('./themes.js');
+assert.equal(theme128.nextTheme('unknown'), 'system');
+assert.equal(theme128.nextTheme('light', -1), 'dark');
+assert.equal(theme128.nextTheme('system', -1), 'gruvbox');
