@@ -19,4 +19,8 @@ assert.equal(memoryUtils.normalizeMemoryText('ＦＵＬＬＷＩＤＴＨ'), 'fu
 assert.equal(DAY, 86_400_000);
 assert.equal(memory('fixture', 'ready').content, 'ready');
 
+// Cycle 222: Unicode-aware tokenization retains useful DERO identifiers.
+assert.deepEqual(memoryUtils.tokenizeMemoryText('Deploy wallet_rpc v2 — café 42!'), ['deploy', 'wallet_rpc', 'v2', 'café', '42']);
+assert.deepEqual(memoryUtils.tokenizeMemoryText('  !!!  '), []);
+
 console.log('agentMemory.test.ts — all assertions passed');

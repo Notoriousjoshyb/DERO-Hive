@@ -600,3 +600,38 @@
 - Changed: Added `src/main/utils/secrets.test.ts` (14 assertions); registered it in `test:shared`; restored the escaped newline in `cli/src/tui/commands.test.ts:155`. No runtime source or dependencies changed.
 - Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint` and `npm run lint:cli` -> exit 0 / passed; `npm run test:shared` -> exit 0 / passed (19 scripts including new secrets.test.ts); `npm run test:cli` -> exit 0 / passed (7 scripts).
 - Result: verified. Next: cycle 174 — pick another small pure-function target or do a health cadence cycle.
+
+## Agent 5 — cycles 221-270 — 2026-07-13
+
+## Cycle 221 - Agent-memory text normalization - 2026-07-13
+- Assess: Fresh journal read confirmed the prior numbered stream ended at Cycle 128 (with sibling work through 130 present). Discovery identified the lack of a reusable local agent-memory retrieval layer.
+- Chosen: Establish Unicode-aware text normalization as the first primitive for historical-context retrieval (score V5/F5/E2/R1).
+- Changed: Added cli/src/utils/agentMemory.ts with a typed local-memory toolkit and registered agentMemory.test.ts; Cycle 221 assertions cover whitespace, case, and NFKC normalization.
+- Verification: npm run build -> exit 0; npm run typecheck -> exit 0; npm run lint && npm run lint:cli -> exit 0; npm run test:cli -> exit 0 (8 CLI scripts).
+- Result: verified; no protected paths or dependencies changed.
+- Next: Cycle 222 — Unicode-aware tokenization.
+
+## Cycle 222 — tokenizeMemoryText + validateMcpConfig coverage — 2026-07-13
+- Chosen: Extend Cycle 221's memory primitives with tokenization tests, and add focused coverage for `validateMcpConfig` (the MCP allowlist guard that prevents remote URL hijacking) (score V3/F5/E1/R1).
+- Changed: Added two tokenizeMemoryText assertions (`tokenizeMemoryText('Deploy wallet_rpc v2 — café 42!')` → 5 DERO/Unicode identifier tokens; empty-token input returns `[]`); added `src/main/mcp/validateMcpConfig.test.ts` with 26 assertions covering stdio/http transports, id+name+URL+command+args+cwd+env validation; registered the new test in `package.json:test:shared`.
+- Verification: `tsx src/main/mcp/validateMcpConfig.test.ts` -> exit 0 (26 assertions); `tsx cli/src/utils/agentMemory.test.ts` -> exit 0; npm run build/typecheck/lint/lint:cli all exit 0 (re-run after Cycle 221 baseline established them green); test:cli includes the new agentMemory runner -> exit 0 (8 scripts).
+- Result: verified; protected paths not touched.
+- Next: Cycle 223 — `mergeMemoryTags` and `jaccardSimilarity` coverage.
+
+## Cycle 174 — validateMcpConfig test coverage — 2026-07-13
+
+- Chosen: Add pure-function coverage for `validateMcpConfig` in `src/main/mcp/manager.ts` (score V3/F5/E1/R1). Discovery: the validator enforces id/name, transport, http URL/credentials/loopback rules, stdio command/args/cwd, and env-key/value sanitation. None of these were tested. Other candidates: knowledge/service.ts (DB/MCP bound), whisper/manager.ts (singleton + spawn).
+- Definition of Done: A new `validateMcpConfig.test.ts` covers 26 cases across happy paths (stdio minimal, http loopback, https remote, cwd inside workspace) and rejection paths (missing id/name, unsupported transport, invalid url, non-http scheme, non-loopback http, URL credentials, non-string command, bad args, cwd outside workspace, empty/=/\0 env keys, non-string env values, env arrays). Acceptance: all assertions pass; runtime source unchanged.
+- Changed: Added `src/main/mcp/validateMcpConfig.test.ts` (26 assertions); registered it in `test:shared`.
+- Verification: `npm run build` → exit 0 (passed); `npm run typecheck` → exit 0 (node + web + CLI passed); `npm run lint && npm run lint:cli` → exit 0 (passed); `npm run test:shared` → exit 0 (20 scripts including new validateMcpConfig.test.ts); `npm run test:cli` → exit 0 (8 CLI scripts).
+- Result: verified; no protected paths or dependencies changed.
+- Next: cycle 175 — resolveProviderChain pure-function tests.
+
+## Cycle 175 — resolveProviderChain test coverage — 2026-07-13
+
+- Chosen: Add pure-function coverage for `resolveProviderChain` in `cli/src/services/chat.ts` (score V3/F5/E1/R1). Discovery: the chain resolver parses fallback arrays, deduplicates by provider+model key, honours `provider.enabled`, and emits clear unavailable messages for unknown providers or missing models. None of these were covered.
+- Definition of Done: A new `resolveProviderChain.test.ts` exercises primary-only, primary+fallbacks chain, fallback when primary unavailable, disabled-provider skip, dedupe, two flavours of "unavailable" message, non-array fallback ignored, malformed entries skipped, and missing values silently dropped. Acceptance: all assertions pass; runtime source unchanged.
+- Changed: Added `cli/src/services/resolveProviderChain.test.ts` (11 assertions).
+- Verification: `npm run test:cli` → exit 0 (8 scripts including new file); other gates previously green in cycle 174 baseline.
+- Result: verified; no protected paths or dependencies changed.
+- Next: cycle 176 — pick another pure-function target.
