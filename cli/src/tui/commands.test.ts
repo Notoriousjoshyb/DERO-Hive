@@ -53,3 +53,6 @@ assert.deepEqual(cycle98?.args, ['keep', 'exact', 'spacing']);
 // Cycle 99: explicit empty quoted arguments are preserved for command handlers.
 const cycle99 = parseSlashCommand('/system "" tail');
 assert.deepEqual(cycle99?.args, ['', 'tail']);
+// Cycle 101: exact command names outrank every fuzzy alternative.
+assert.equal(filterCommandItems('/theme')[0]?.name, 'theme');
+assert.equal(filterCommandItems('/model')[0]?.name, 'model');
