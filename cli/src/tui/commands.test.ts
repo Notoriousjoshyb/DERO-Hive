@@ -31,3 +31,7 @@ const cycle92 = parseSlashCommand('/HeLP');
 assert.equal(cycle92?.command, 'help');
 assert.equal(cycle92?.invokedAs, 'help');
 assert.equal(cycle92?.item?.command, '/help');
+// Cycle 93: quoted arguments preserve spaces and remain a single token.
+const cycle93 = parseSlashCommand('/new "first message" tail');
+assert.deepEqual(cycle93?.args, ['first message', 'tail']);
+assert.equal(cycle93?.argumentText, '"first message" tail');
