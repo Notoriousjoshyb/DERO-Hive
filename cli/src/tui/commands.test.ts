@@ -154,3 +154,42 @@ const format129 = await import('../utils/format.js');
 const ragged129 = format129.table([['Name'], ['Alice', 'Admin'], ['Bob']]);
 assert.equal(ragged129, 'Name   \nAlice  Admin\nBob    ');
 assert.equal(ragged129.includes('Admin'), true);
+// Cycle 131: legacy COLOR_SCHEME env var is honoured in addition to HIVE_COLOR_SCHEME.
+const theme131 = await import('./themes.js');
+assert.equal(theme131.resolveTheme('system', { COLOR_SCHEME: 'LIGHT' }).resolvedId, 'light');
+assert.equal(theme131.resolveTheme('system', { COLOR_SCHEME: 'Dark' }).resolvedId, 'dark');
+// Cycle 132: HIVE_ACCENT is honoured when accentColor and HIVE_ACCENT_COLOR are absent.
+const theme132 = await import('./themes.js');
+const accent132 = theme132.resolveTheme('light', { HIVE_ACCENT: '#fabada' });
+assert.equal(accent132.palette.accent, '#fabada');
+// Cycle 133: theme id normalisation trims surrounding whitespace before lookup.
+const theme133 = await import('./themes.js');
+assert.equal(theme133.resolveTheme('  dark  ').resolvedId, 'dark');
+assert.equal(theme133.resolveTheme('\tnord\n').id, 'nord');
+// Cycle 134: explicit accents accept raw six-digit hex with or without leading hash.
+const theme134 = await import('./themes.js');
+const accent134a = theme134.resolveTheme('dark', { accentColor: 'aabbcc' });
+assert.equal(accent134a.palette.accent, '#aabbcc');
+const accent134b = theme134.resolveTheme('dark', { accentColor: '  #ddeeff  ' });
+assert.equal(accent134b.palette.accent, '#ddeeff');
+// Cycle 136: COLORFGBG with a non-numeric suffix falls back to the dark default.
+const theme136 = await import('./themes.js');
+assert.equal(theme136.resolveTheme('system', { COLORFGBG: 'something;else' }).resolvedId, 'dark');
+// Cycle 137: case-insensitive HIVE_THEME matches the catalog even when surrounded by whitespace.
+const theme137 = await import('./themes.js');
+assert.equal(theme137.resolveTheme(undefined, { HIVE_THEME: '  CATPPUCCIN  ' }).id, 'catppuccin');
+// Cycle 138: every option exposes a stable id and a non-empty name and description.
+const theme138 = await import('./themes.js');
+const opts138 = theme138.listThemes();
+assert.equal(opts138.length, new Set(opts138.map((option) => option.id)).size);
+for (const option of opts138) {
+  assert.equal(typeof option.name, 'string');
+  assert.equal(typeof option.description, 'string');
+  assert.ok(option.name.length > 0);
+  assert.ok(option.description.length > 0);
+}
+// Cycle 139: resolveTheme returns a frozen object so callers cannot mutate the palette.
+const theme139 = await import('./themes.js');
+const frozen139 = theme139.resolveTheme('nord');
+assert.ok(Object.isFrozen(frozen139));
+assert.ok(Object.isFrozen(frozen139.palette));
