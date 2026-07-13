@@ -62,3 +62,4 @@
 | Cycle | Improvement | Status | Score |
 |---:|---|---|---|
 | 91 | Slash-command empty-input regression coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 92 | Slash-command case-normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

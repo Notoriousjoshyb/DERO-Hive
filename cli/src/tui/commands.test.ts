@@ -26,3 +26,8 @@ assert.equal(commandSuggestions('/', skills, 2).length, 2);
 assert.equal(parseSlashCommand(''), null);
 assert.equal(parseSlashCommand('   '), null);
 assert.equal(parseSlashCommand('/'), null);
+// Cycle 92: command lookup is case-insensitive while retaining canonical metadata.
+const cycle92 = parseSlashCommand('/HeLP');
+assert.equal(cycle92?.command, 'help');
+assert.equal(cycle92?.invokedAs, 'help');
+assert.equal(cycle92?.item?.command, '/help');
