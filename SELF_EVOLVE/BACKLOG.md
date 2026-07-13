@@ -105,3 +105,8 @@
 | 132 | HIVE_ACCENT environment precedence coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 133 | Theme id whitespace normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 134 | Accent hex normalisation tolerance coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 135 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
+| 136 | COLORFGBG non-numeric fallback coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 137 | HIVE_THEME case-insensitive trimmed coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 138 | Theme option completeness coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 139 | Resolved theme object immutability coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

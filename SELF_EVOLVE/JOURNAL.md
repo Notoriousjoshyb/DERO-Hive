@@ -541,6 +541,54 @@
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 135: HEALTH - full gate cadence.
 
+## Cycle 135 - HEALTH - full gate cadence - 2026-07-13
+- Assess: Cycle 134 is documented and all required gates were green; cadence requires a health-only cycle.
+- Chosen: Run the complete mandated gate sequence without net-new product behavior (score V1/F5/E5/R1).
+- Definition of Done: Build, node/web/CLI typecheck, renderer lint followed by CLI lint, and every CLI test script pass in the required order; document immediately before proceeding.
+- Changed: No runtime or test source changes for cycle 135 itself; self-evolve state only.
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 136: ...
+
+## Cycle 136 - COLORFGBG non-numeric fallback coverage - 2026-07-13
+- Assess: Cycle 135 is documented. Local inspection of `systemUsesDarkPalette` confirmed that a non-numeric `COLORFGBG` suffix falls through to the dark default, but the boundary was not asserted.
+- Chosen: COLORFGBG non-numeric fallback coverage (score V3/F5/E1/R1); without coverage, accidental tightening of the parser could silently flip the theme.
+- Definition of Done: Add focused executable regression case verifying that `COLORFGBG=something;else` still resolves to dark. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-136 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 137: ...
+
+## Cycle 137 - HIVE_THEME case-insensitive trimmed coverage - 2026-07-13
+- Assess: Cycle 136 is documented. Local inspection of `normaliseThemeId` together with the `HIVE_THEME` selection chain showed whitespace + uppercase combinations fall through to system, but no tight regression locked the contract.
+- Chosen: HIVE_THEME case-insensitive trimmed coverage (score V3/F5/E1/R1); locks the helper's tolerant contract end-to-end.
+- Definition of Done: Add focused executable regression case verifying that `HIVE_THEME='  CATPPUCCIN  '` resolves to the catppuccin theme. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-137 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 138: ...
+
+## Cycle 138 - Theme option completeness coverage - 2026-07-13
+- Assess: Cycle 137 is documented. Local inspection of `OPTIONS` in `themes.ts` confirmed each option ships name and description, but the rolling tests did not verify per-option metadata.
+- Chosen: Theme option completeness coverage (score V3/F5/E1/R1); prevents silent regression where an option is added without display metadata.
+- Definition of Done: Add focused executable regression case verifying that every entry in `listThemes()` has a unique id and non-empty `name` and `description` strings. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-138 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 139: ...
+
+## Cycle 139 - Resolved theme object immutability coverage - 2026-07-13
+- Assess: Cycle 138 is documented. Local inspection of `resolveTheme` confirmed the returned object and palette are frozen with `Object.freeze`, but the rolling tests did not cover the resolved-theme object itself.
+- Chosen: Resolved theme object immutability coverage (score V3/F5/E1/R1); protects callers from accidental mutation of resolved themes.
+- Definition of Done: Add focused executable regression cases verifying that `resolveTheme('nord')` returns a frozen object with a frozen palette. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-139 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 140: HEALTH - full gate cadence.
+
+
+
+
 
 
 
