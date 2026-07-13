@@ -335,7 +335,7 @@ export function isKnowledgeAutomationDue(automation: KnowledgeAutomation, now: D
   if (automation.kind === 'morning-digest') return currentMinutes >= scheduledMinutes;
   const weekday = automation.weeklyWeekday === 0 ? 7 : (automation.weeklyWeekday ?? 1);
   const currentWeekday = now.getDay() || 7;
-  return currentWeekday > weekday || (currentWeekday === weekday && currentMinutes >= scheduledMinutes);
+  return currentWeekday === weekday && currentMinutes >= scheduledMinutes;
 }
 
 export function isInterruptedCurrentRun(automation: KnowledgeAutomation, now: Date): boolean {
