@@ -65,3 +65,4 @@
 | 92 | Slash-command case-normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 93 | Double-quoted slash-command argument coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 94 | Escaped quoted-argument coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 95 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
