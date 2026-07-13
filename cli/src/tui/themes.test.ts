@@ -1,37 +1,25 @@
-import assert from 'node:assert';
-import { listThemes, TERMINAL_THEME_IDS } from './themes.js';
+import assert from 'node:assert/strict';
+import { listThemes, nextTheme, resolveTheme, TERMINAL_THEME_IDS } from './themes.js';
 
-// listThemes — returns OPTIONS array directly (no env dependency)
 const themes = listThemes();
-assert(themes.length > 0, 'should return at least one theme');
-assert(themes.length === TERMINAL_THEME_IDS.length, 'should match TERMINAL_THEME_IDS count');
+assert.equal(themes.length, TERMINAL_THEME_IDS.length);
+assert.equal(new Set(themes.map((theme) => theme.id)).size, themes.length);
+assert.ok(themes.every((theme) => theme.name && theme.description));
 
-// Each theme has required fields
-for (const t of themes) {
-  assert(typeof t.id === 'string' && t.id.length > 0, 'theme id required');
-  assert(typeof t.name === 'string' && t.name.length > 0, 'theme name required');
-  assert(typeof t.description === 'string' && t.description.length > 0, 'theme description required');
-}
+assert.equal(resolveTheme('dark', { prefersDark: false }).resolvedId, 'dark');
+assert.equal(resolveTheme('light', { prefersDark: true }).resolvedId, 'light');
+assert.equal(resolveTheme('system', { prefersDark: true }).resolvedId, 'dark');
+assert.equal(resolveTheme('system', { prefersDark: false }).resolvedId, 'light');
+assert.equal(resolveTheme('invalid', { prefersDark: true }).id, 'system');
 
-// All theme IDs are in TERMINAL_THEME_IDS
-const ids = themes.map(t => t.id);
-for (const id of ids) {
-  assert((TERMINAL_THEME_IDS as readonly string[]).includes(id), `theme id ${id} should be in TERMINAL_THEME_IDS`);
-}
+const accented = resolveTheme('dark', { accentColor: '#336699' });
+assert.equal(accented.palette.accent, '#336699');
+assert.match(accented.palette.accentSoft, /51, 102, 153/);
+const invalidAccent = resolveTheme('dark', { accentColor: 'not-a-colour' });
+assert.notEqual(invalidAccent.palette.accent, 'not-a-colour');
 
-// No duplicate IDs
-const uniqueIds = new Set(ids);
-assert.equal(uniqueIds.size, ids.length, 'no duplicate theme IDs');
-
-// Specific known themes by id
-const ids_list = themes.map(t => t.id);
-assert(ids_list.includes('system'), 'system theme required');
-assert(ids_list.includes('dark'), 'dark theme required');
-assert(ids_list.includes('light'), 'light theme required');
-
-// All themes have descriptions longer than 5 chars
-for (const t of themes) {
-  assert(t.description.length > 5, `theme ${t.id} should have a meaningful description`);
-}
+assert.equal(nextTheme(undefined), TERMINAL_THEME_IDS[0]);
+assert.equal(nextTheme(TERMINAL_THEME_IDS[0], -1), TERMINAL_THEME_IDS.at(-1));
+assert.equal(nextTheme(TERMINAL_THEME_IDS.at(-1), 1), TERMINAL_THEME_IDS[0]);
 
 console.log('themes.test.ts — all assertions passed');

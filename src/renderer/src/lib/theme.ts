@@ -147,7 +147,7 @@ export function applyThemePreset(preset?: string): void {
   }
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const m = hex.trim().match(/^#?([0-9a-f]{6})$/i);
   if (!m) return null;
   const n = parseInt(m[1], 16);

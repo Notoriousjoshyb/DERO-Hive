@@ -338,7 +338,7 @@ export function isKnowledgeAutomationDue(automation: KnowledgeAutomation, now: D
   return currentWeekday > weekday || (currentWeekday === weekday && currentMinutes >= scheduledMinutes);
 }
 
-function isInterruptedCurrentRun(automation: KnowledgeAutomation, now: Date): boolean {
+export function isInterruptedCurrentRun(automation: KnowledgeAutomation, now: Date): boolean {
   return automation.enabled
     && automation.lastRunKey === knowledgeAutomationRunKey(automation.kind, now)
     && automation.error === 'Run interrupted before completion';

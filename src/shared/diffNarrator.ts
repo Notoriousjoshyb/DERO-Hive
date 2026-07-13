@@ -81,9 +81,11 @@ export function buildSummary(cats: Record<string, string[]>, fileCount: number, 
   const parts: string[] = [];
   const total = adds + dels;
 
+  if (fileCount === 0) return 'No files changed.';
+
   if (fileCount === 1) {
-    const cat = Object.entries(cats)[0];
-    parts.push(`1 file changed in ${cat[0].toLowerCase()}.`);
+    const category = Object.keys(cats)[0] ?? 'Other';
+    parts.push(`1 file changed in ${category.toLowerCase()}.`);
   } else {
     parts.push(`${fileCount} files changed across ${Object.keys(cats).length} area${Object.keys(cats).length !== 1 ? 's' : ''}.`);
   }
