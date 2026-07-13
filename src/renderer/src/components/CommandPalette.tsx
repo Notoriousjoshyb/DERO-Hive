@@ -35,6 +35,10 @@ export function CommandPalette(): JSX.Element | null {
       { id: 'toggle-vision', title: 'Toggle Vision', subtitle: 'Open Vision workspace', icon: '👁', action: toggleVision },
       { id: 'toggle-code', title: 'Toggle Code tab', subtitle: 'Open code editor tab', icon: '⚡', action: toggleCodeTab },
       { id: 'search', title: 'Search conversations', subtitle: 'Full-text search', icon: '🔍', action: () => setSearchDialogOpen(true) },
+      { id: 'ask-data', title: 'Ask about your data', subtitle: 'Query your conversations DB naturally', icon: '🗄', action: () => {
+        const input = document.querySelector('textarea[aria-label="Message input"]') as HTMLTextAreaElement | null;
+        if (input) { input.value = '/ask '; input.focus(); input.dispatchEvent(new Event('input', { bubbles: true })); }
+      } },
       { id: 'settings', title: 'Settings', subtitle: 'Open settings', icon: '⚙', action: () => setSettingsOpen(true) },
       { id: 'shortcuts', title: 'Keyboard shortcuts', subtitle: 'Show shortcut help', icon: '?', action: toggleShortcuts },
     ];

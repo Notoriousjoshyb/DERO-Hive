@@ -81,6 +81,17 @@ npm run typecheck
 # Terminal command/parser and render smoke tests
 npm run test:cli
 
+# Vision artifact extraction and viewer tests (dependency-free)
+npm run test:vision
+
+# Shared library pure-function tests (diff, DERO references, thinking
+# capabilities, gnomon queries, agent resolution, DVM lint, model
+# metadata, provider presets, type normalizers)
+npm run test:shared
+
+# All test suites
+npm run test:all
+
 # Production bundle
 npm run build
 

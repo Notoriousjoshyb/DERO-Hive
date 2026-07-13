@@ -66,6 +66,7 @@ declare global {
       convUpdate: (id: string, data: Partial<Conversation>) => Promise<{ ok: boolean }>;
       convDelete: (id: string) => Promise<{ ok: boolean }>;
       convSearch: (q: string) => Promise<SearchResult[]>;
+      convNlQuery: (question: string) => Promise<{ answer: string }>;
       usageStats: () => Promise<UsageStats>;
       msgBookmark: (messageId: string, bookmarked: boolean) => Promise<{ ok: boolean }>;
       msgUpdate: (messageId: string, content: string) => Promise<{ ok: boolean; error?: string }>;
@@ -138,6 +139,8 @@ declare global {
       fsPickFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
       fsGlob: (req: { root?: string; pattern: string; limit?: number }) =>
         Promise<Array<{ path: string; rel: string; filename: string; isText: boolean }>>;
+      fsSearchCode: (req: { query: string; root?: string; exts?: string[]; limit?: number }) =>
+        Promise<Array<{ path: string; filename: string; preview: string; line: number }>>;
 
       shellRun: (cmd: string, opts?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> }) =>
         Promise<{ ok: boolean; stdout: string; stderr: string; code?: number; error?: string }>;

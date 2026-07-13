@@ -3,6 +3,7 @@ import { useAppStore } from '../../stores/app';
 import { TokenUsageBar } from '../TokenUsage';
 import { InputBar } from '../InputBar';
 import { CodeEditor } from './CodeEditor';
+import { ExplainOverlay } from './ExplainOverlay';
 import { FileTypeIcon } from './fileIcons';
 
 interface OpenFile {
@@ -39,6 +40,7 @@ export function CodeTab(): JSX.Element {
   // project/working-directory root for the explorer. Persisted to settings so
   // it survives across sessions.
   const [rootOverride, setRootOverride] = useState<string | null>(null);
+  const [explainTarget, setExplainTarget] = useState<{ code: string; path: string; language: string } | null>(null);
 
   const projectPath = useMemo(() => {
     if (rootOverride) return rootOverride;
@@ -465,22 +467,35 @@ export function CodeTab(): JSX.Element {
             {/* Editor (always visible) — dark VSCode-like surface */}
             <div className={`flex-1 min-h-0 flex flex-col editor-surface ${themeClass}`}>
               {activeFileObj ? (
-                <>
+                <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
                   <div className="editor-chrome px-3 py-1 border-b text-[11px] flex items-center gap-2 flex-shrink-0">
                     <FileTypeIcon name={activeFileObj.name} size={13} />
                     <span className="text-[#d4d4d4]">{activeFileObj.name}</span>
                     <span className="opacity-70">{getLanguage(activeFileObj.name)}</span>
                     {activeFileObj.modified && <span className="text-[#e2c08d]">● unsaved</span>}
+                    {activeFileObj && (
+                      <button
+                        onClick={() => {
+                          const ta = textareaRef?.current;
+                          const sel = ta?.value.substring(ta.selectionStart, ta.selectionEnd);
+                          const code = sel || activeFileObj.content.split('\n').slice(0, 10).join('\n');
+                          setExplainTarget({ code, path: activeFileObj.path, language: getLanguage(activeFileObj.name) });
+                        }}
+                        className="ml-auto text-[10px] text-[#6a6a6a] hover:text-[#d4d4d4] px-2 py-0.5 rounded border border-[#3f3f3f] hover:border-[#5f5f5f] transition"
+                      >Explain</button>
+                    )}
                   </div>
-                  <CodeEditor
-                    value={activeFileObj.content}
-                    onChange={updateFileContent}
-                    onKeyDown={handleEditorKeyDown}
-                    language={getLanguage(activeFileObj.name)}
-                    themeClass={themeClass}
-                    textareaRef={textareaRef}
-                  />
-                </>
+                  <div className="flex-1 min-h-0 overflow-hidden">
+                    <CodeEditor
+                      value={activeFileObj.content}
+                      onChange={updateFileContent}
+                      onKeyDown={handleEditorKeyDown}
+                      language={getLanguage(activeFileObj.name)}
+                      themeClass={themeClass}
+                      textareaRef={textareaRef}
+                    />
+                  </div>
+                </div>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-sm gap-3" style={{ color: '#6a6a6a' }}>
                   <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" style={{ color: '#3f3f3f' }}>
@@ -597,6 +612,15 @@ export function CodeTab(): JSX.Element {
         <div className="flex-shrink-0">
           <InputBar conversationId={currentConversationId} hasMessages={currentMessages.length > 0} />
         </div>
+      )}
+
+      {explainTarget && (
+        <ExplainOverlay
+          code={explainTarget.code}
+          path={explainTarget.path}
+          language={explainTarget.language}
+          onClose={() => setExplainTarget(null)}
+        />
       )}
     </div>
   );

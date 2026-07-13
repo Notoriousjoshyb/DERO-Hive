@@ -898,15 +898,15 @@ function rowToMessage(row: Record<string, unknown>): Message {
   try {
     const j = JSON.parse(content);
     if (Array.isArray(j)) parsed = j;
-  } catch { /* keep as string */ }
+  } catch { logger.warn('[chat]', 'stored message content JSON parse failed, keeping as string'); }
 
   let toolCalls: Message['toolCalls'];
   if (row.tool_calls) {
-    try { toolCalls = JSON.parse(row.tool_calls as string); } catch { /* ignore */ }
+    try { toolCalls = JSON.parse(row.tool_calls as string); } catch { logger.warn('[chat]', 'stored tool_calls JSON parse failed, id=' + String(row.id)); }
   }
   let usage: Message['usage'];
   if (row.usage) {
-    try { usage = JSON.parse(row.usage as string); } catch { /* ignore */ }
+    try { usage = JSON.parse(row.usage as string); } catch { logger.warn('[chat]', 'stored usage JSON parse failed, id=' + String(row.id)); }
   }
 
   return {

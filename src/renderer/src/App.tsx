@@ -15,6 +15,7 @@ import { ShortcutsCheatsheet } from './components/ShortcutsCheatsheet';
 import { SystemPromptModal } from './components/SystemPromptModal';
 import { AgentsModal } from './components/AgentsModal';
 import { SearchDialog } from './components/SearchDialog';
+import { CodeSearchDialog } from './components/CodeSearchDialog';
 import { ComparePanel } from './components/ComparePanel';
 import { SwarmModal } from './components/SwarmModal';
 import { CommandPalette } from './components/CommandPalette';
@@ -127,6 +128,7 @@ export default function App(): JSX.Element {
       <SystemPromptModal />
       <AgentsModal />
       <SearchDialog />
+      <CodeSearchDialog />
       <ComparePanel />
       <SwarmModal />
       <CommandPalette />

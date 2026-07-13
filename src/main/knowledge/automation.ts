@@ -395,11 +395,11 @@ function validateAutomation(input: KnowledgeAutomationSaveRequest): void {
   requiredString(input.model, 'Model');
 }
 
-function validateKind(kind: unknown): asserts kind is KnowledgeAutomationKind {
+export function validateKind(kind: unknown): asserts kind is KnowledgeAutomationKind {
   if (kind !== 'morning-digest' && kind !== 'weekly-synthesis') throw new Error('Invalid knowledge automation kind');
 }
 
-function rowToAutomation(row: Record<string, unknown>): KnowledgeAutomation {
+export function rowToAutomation(row: Record<string, unknown>): KnowledgeAutomation {
   return {
     projectId: row.project_id as string,
     kind: row.kind as KnowledgeAutomationKind,
@@ -415,23 +415,23 @@ function rowToAutomation(row: Record<string, unknown>): KnowledgeAutomation {
   };
 }
 
-function automationId(automation: Pick<KnowledgeAutomation, 'projectId' | 'kind'>): string {
+export function automationId(automation: Pick<KnowledgeAutomation, 'projectId' | 'kind'>): string {
   return `${automation.projectId}:${automation.kind}`;
 }
 
-function automationTarget(kind: KnowledgeAutomationKind, runKey: string): string {
+export function automationTarget(kind: KnowledgeAutomationKind, runKey: string): string {
   return kind === 'morning-digest' ? `Daily/${runKey}.md` : `Weekly/${runKey}.md`;
 }
 
-function automationMarker(kind: KnowledgeAutomationKind, runKey: string): string {
+export function automationMarker(kind: KnowledgeAutomationKind, runKey: string): string {
   return `<!-- dero-hive:${kind}:${runKey} -->`;
 }
 
-function localDateKey(date: Date): string {
+export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function isoWeekKey(date: Date): string {
+export function isoWeekKey(date: Date): string {
   const value = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const weekday = value.getUTCDay() || 7;
   value.setUTCDate(value.getUTCDate() + 4 - weekday);
@@ -441,10 +441,10 @@ function isoWeekKey(date: Date): string {
   return `${year}-W${String(week).padStart(2, '0')}`;
 }
 
-function wikiLink(path: string): string { return `[[${path.replace(/\.md$/i, '')}]]`; }
-function requiredString(value: unknown, label: string): string {
+export function wikiLink(path: string): string { return `[[${path.replace(/\.md$/i, '')}]]`; }
+export function requiredString(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is required`);
   if (value.length > 300) throw new Error(`${label} is too long`);
   return value.trim();
 }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+export function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

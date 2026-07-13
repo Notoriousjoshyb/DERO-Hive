@@ -8,13 +8,14 @@ export default tseslint.config(
       'out/**',
       'release/**',
       'resources/mcp/**',
-      'resources/whisper/**'
+      'resources/whisper/**',
+      'cli/dist/**'
     ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'src/shared/**/*.test.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off'
     }

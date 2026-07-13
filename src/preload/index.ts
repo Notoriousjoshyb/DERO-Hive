@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type MediaJobStatusEvent } from '../shared/types';
 import type { DvmLintResult } from '../shared/dvm';
 
 // Type-safe wrapper for renderer -> main IPC
@@ -23,6 +23,7 @@ const api = {
   convUpdate: (id: string, data: Partial<Conversation>) => ipcRenderer.invoke(IPC.CONV_UPDATE, { id, data }),
   convDelete: (id: string) => ipcRenderer.invoke(IPC.CONV_DELETE, id),
   convSearch: (q: string) => ipcRenderer.invoke(IPC.CONV_SEARCH, q),
+  convNlQuery: (question: string) => ipcRenderer.invoke(IPC.CONV_NL_QUERY, question) as Promise<{ answer: string }>,
   convRevert: (conversationId: string, messageId: string) =>
     ipcRenderer.invoke(IPC.CONV_REVERT, { conversationId, messageId }) as Promise<{ ok: boolean; error?: string; keptCount?: number }>,
   convFork: (conversationId: string, messageId?: string) => ipcRenderer.invoke(IPC.CONV_FORK, { conversationId, messageId }),
@@ -32,12 +33,12 @@ const api = {
   msgUpdate: (messageId: string, content: string) => ipcRenderer.invoke(IPC.MSG_UPDATE, { messageId, content }) as Promise<{ ok: boolean; error?: string }>,
   bookmarkList: () => ipcRenderer.invoke(IPC.BOOKMARK_LIST),
   onConvCompacted: (cb: (data: { conversationId: string; removedCount: number; tokensSaved: number; beforeTokens: number; afterTokens: number }) => void) => {
-    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    const l = (_: IpcRendererEvent, d: { conversationId: string; removedCount: number; tokensSaved: number; beforeTokens: number; afterTokens: number }) => cb(d);
     ipcRenderer.on(IPC.CONV_COMPACTED, l);
     return () => ipcRenderer.off(IPC.CONV_COMPACTED, l);
   },
   onConvTitleGenerated: (cb: (data: { conversationId: string; title: string }) => void) => {
-    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    const l = (_: IpcRendererEvent, d: { conversationId: string; title: string }) => cb(d);
     ipcRenderer.on(IPC.CONV_TITLE_GENERATED, l);
     return () => ipcRenderer.off(IPC.CONV_TITLE_GENERATED, l);
   },
@@ -105,12 +106,12 @@ const api = {
   toolList: () => ipcRenderer.invoke(IPC.TOOL_LIST),
   toolPermissionDecide: (rule: PermissionRule) => ipcRenderer.invoke(IPC.TOOL_PERMISSION_DECIDE, rule),
   onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => {
-    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    const l = (_: IpcRendererEvent, d: { requestId: string; toolName: string; args: unknown; description?: string }) => cb(d);
     ipcRenderer.on(IPC.TOOL_PERMISSION_REQUEST, l);
     return () => ipcRenderer.off(IPC.TOOL_PERMISSION_REQUEST, l);
   },
   onToolResult: (cb: (data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => void) => {
-    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    const l = (_: IpcRendererEvent, d: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => cb(d);
     ipcRenderer.on('chat:tool-result', l);
     return () => ipcRenderer.off('chat:tool-result', l);
   },
@@ -127,6 +128,8 @@ const api = {
     ipcRenderer.invoke(IPC.FS_PICK_FILE, filters),
   fsGlob: (req: { root?: string; pattern: string; limit?: number }) =>
     ipcRenderer.invoke(IPC.FS_GLOB, req),
+  fsSearchCode: (req: { query: string; root?: string; exts?: string[]; limit?: number }) =>
+    ipcRenderer.invoke(IPC.FS_SEARCH_CODE, req),
   shellRun: (cmd: string, opts?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> }) =>
     ipcRenderer.invoke(IPC.SHELL_RUN, { cmd, ...opts }),
   terminalExec: (sessionId: string, cmd: string, cwd?: string) =>
@@ -231,12 +234,12 @@ const api = {
     return () => ipcRenderer.off('app:project-opened', l);
   },
   onThemeChanged: (cb: (info: { shouldUseDarkColors: boolean }) => void) => {
-    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    const l = (_: IpcRendererEvent, d: { shouldUseDarkColors: boolean }) => cb(d);
     ipcRenderer.on('app:theme-changed', l);
     return () => ipcRenderer.off('app:theme-changed', l);
   },
   onModelsUpdated: (cb: (data: { id: string; models: ProviderModel[]; fetchedAt: number }) => void) => {
-    const l = (_: IpcRendererEvent, d: any) => cb(d);
+    const l = (_: IpcRendererEvent, d: { id: string; models: ProviderModel[]; fetchedAt: number }) => cb(d);
     ipcRenderer.on(IPC.PROVIDER_MODELS_UPDATED, l);
     return () => ipcRenderer.off(IPC.PROVIDER_MODELS_UPDATED, l);
   },
@@ -253,8 +256,8 @@ const api = {
   mediaRevealArtifact: (id: string) => ipcRenderer.invoke(IPC.MEDIA_REVEAL_ARTIFACT, id),
   // Stable URL the renderer can drop into <img>/<video>/<audio> src.
   mediaUrl: (id: string) => `hive-media://artifact/${encodeURIComponent(id)}`,
-  onMediaStatus: (cb: (data: { job: any }) => void) => {
-    const l = (_: IpcRendererEvent, d: { job: any }) => cb(d);
+  onMediaStatus: (cb: (data: MediaJobStatusEvent) => void) => {
+    const l = (_: IpcRendererEvent, d: MediaJobStatusEvent) => cb(d);
     ipcRenderer.on(IPC.MEDIA_STATUS_CHANGED, l);
     return () => ipcRenderer.off(IPC.MEDIA_STATUS_CHANGED, l);
   }

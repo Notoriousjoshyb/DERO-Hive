@@ -107,7 +107,7 @@ export function ComposerAutocomplete({ text, setText, textareaRef, keyHandlerRef
         const full = q.startsWith('http') ? q : `https://${q}`;
         window.hive.ghFetchUrl(full).then((res) => {
           if (!('error' in res)) {
-            const gh = res as unknown as GhMatch & { repo: string };
+          const gh = res as GhMatch;
             setGhCards([{ type: gh.type, number: gh.number, title: gh.title, state: gh.state, author: gh.author, url: gh.url, repo: gh.repo }]);
           }
         }).catch(() => {});

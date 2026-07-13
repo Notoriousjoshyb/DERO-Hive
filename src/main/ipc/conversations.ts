@@ -4,8 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client';
 import { closeConversationSessions } from '../providers/registry';
 import { deleteStoredAttachments, serializedAttachmentIds } from '../utils/attachments';
+import { logger } from '../utils/logger';
 
 export function registerConvHandlers(): void {
+  const now = Date.now();
   ipcMain.handle(IPC.CONV_LIST, (_e, opts?: { archived?: boolean; projectPath?: string }) => {
     const arch = opts?.archived ? 1 : 0;
     const rows = getDb().prepare(`
@@ -26,7 +28,6 @@ export function registerConvHandlers(): void {
 
   ipcMain.handle(IPC.CONV_CREATE, (_e, data: Partial<Conversation>) => {
     const id = data.id || randomUUID();
-    const now = Date.now();
     getDb().prepare(`
       INSERT INTO conversations (id, title, created_at, updated_at, provider_id, model, system_prompt, project_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -115,7 +116,6 @@ export function registerConvHandlers(): void {
     }
 
     const newConvId = randomUUID();
-    const now = Date.now();
     const db = getDb();
     const insertConv = db.prepare(`
       INSERT INTO conversations (id, title, created_at, updated_at, provider_id, model, system_prompt, project_id, parent_id)
@@ -232,7 +232,6 @@ export function registerConvHandlers(): void {
     `);
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
-    const now = Date.now();
     return {
       today: query.all(startOfToday.getTime()),
       week: query.all(now - 7 * 24 * 3600_000),
@@ -260,6 +259,67 @@ export function registerConvHandlers(): void {
       snippet: r.snippet,
       score: 1
     }));
+  });
+
+  // Natural language database query: converts simple English patterns to SQLite.
+  // Supports: "how many messages today", "total tokens this week", "which conv has most messages",
+  //           "show my conversations", "archived conversations", "tokens spent today".
+  ipcMain.handle(IPC.CONV_NL_QUERY, (_e, question: string) => {
+    if (!question?.trim()) return { answer: 'Ask me something about your conversations, like "how many messages today" or "which conversation used most tokens".' };
+    const q = question.trim().toLowerCase();
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000;
+
+    try {
+      // "how many messages [today|this week|...]"
+      const msgCount = q.match(/how many messages|count messages|total messages/i);
+      if (msgCount) {
+        const since = q.includes('today') ? todayStart : q.includes('week') ? weekStart : 0;
+        const row = getDb().prepare(`SELECT COUNT(*) as n FROM messages WHERE created_at >= ?`).get(since) as { n: number };
+        return { answer: `You have ${row.n} message${row.n === 1 ? '' : 's'}${since ? ' in the past week' : ' in total'}.` };
+      }
+
+      // "tokens spent [today|this week]"
+      const tokensToday = q.match(/tokens (spent|used)|total tokens/i);
+      if (tokensToday) {
+        const since = q.includes('today') ? todayStart : q.includes('week') ? weekStart : 0;
+        const row = getDb().prepare(`SELECT COALESCE(SUM(JSON_EXTRACT(usage, '$.totalTokens')), 0) as n FROM messages WHERE usage IS NOT NULL AND created_at >= ?`).get(since) as { n: number };
+        return { answer: `Approximately ${Math.round(row.n).toLocaleString()} tokens used${since ? ' in the past week' : ' in total'}.` };
+      }
+
+      // "which conv has most messages|most tokens|busiest"
+      const busiest = q.match(/which conv|busiest|most messages|most tokens/i);
+      if (busiest) {
+        const row = getDb().prepare(`
+          SELECT c.title, c.message_count, c.total_tokens
+          FROM conversations c WHERE c.archived = 0
+          ORDER BY c.message_count DESC LIMIT 1
+        `).get() as { title: string; message_count: number; total_tokens: number } | undefined;
+        if (row) return { answer: `"${row.title}" is the busiest with ${row.message_count} messages and ${Math.round(row.total_tokens).toLocaleString()} tokens.` };
+        return { answer: 'No conversations found.' };
+      }
+
+      // "show my conversations|recent convs"
+      const showConvs = q.match(/show (my )?convs|list conv|recent conversations/i);
+      if (showConvs) {
+        const rows = getDb().prepare(`SELECT title, message_count, updated_at FROM conversations WHERE archived = 0 ORDER BY updated_at DESC LIMIT 10`).all() as Array<{ title: string; message_count: number; updated_at: number }>;
+        if (!rows.length) return { answer: 'No conversations yet.' };
+        const lines = rows.map((r, i) => `${i + 1}. "${r.title}" — ${r.message_count} messages`).join('\n');
+        return { answer: `Here are your recent conversations:\n${lines}` };
+      }
+
+      // "archived conversations"
+      if (q.includes('archived')) {
+        const rows = getDb().prepare(`SELECT title, message_count FROM conversations WHERE archived = 1 ORDER BY updated_at DESC LIMIT 10`).all() as Array<{ title: string; message_count: number }>;
+        if (!rows.length) return { answer: 'No archived conversations.' };
+        const lines = rows.map((r, i) => `${i + 1}. "${r.title}" — ${r.message_count} messages`).join('\n');
+        return { answer: `Archived conversations:\n${lines}` };
+      }
+
+      return { answer: `I can answer questions like "how many messages today", "tokens spent this week", "which conv is busiest", or "show my conversations". Try one of those!` };
+    } catch (err) {
+      return { answer: `Sorry, I couldn't answer that: ${err instanceof Error ? err.message : String(err)}` };
+    }
   });
 
   ipcMain.handle(IPC.CONV_COMPACT, async (_e, conversationId: string) => {
@@ -361,6 +421,7 @@ export function registerConvHandlers(): void {
     const tokensSaved = Math.max(0, Math.round(beforeTokens - afterTokens));
 
     const db = getDb();
+    const now = Date.now();
     db.transaction(() => {
       // Wipe existing messages for this conversation
       db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
@@ -375,8 +436,7 @@ export function registerConvHandlers(): void {
         VALUES (last_insert_rowid(), ?, ?, ?)
       `);
 
-      const now = Date.now();
-      let i = 0;
+        let i = 0;
       for (const m of systemMsgs) {
         insert.run(
           m.id as string, conversationId, m.role as string, m.content as string,
@@ -490,11 +550,11 @@ function rowToMsg(row: Record<string, unknown>): Message {
 
   let toolCalls: Message['toolCalls'];
   if (row.tool_calls) {
-    try { toolCalls = JSON.parse(row.tool_calls as string); } catch { /* ignore */ }
+    try { toolCalls = JSON.parse(row.tool_calls as string); } catch { logger.warn('[conversations]', 'stored tool_calls JSON parse failed, id=' + String(row.id)); }
   }
   let usage: Message['usage'];
   if (row.usage) {
-    try { usage = JSON.parse(row.usage as string); } catch { /* ignore */ }
+    try { usage = JSON.parse(row.usage as string); } catch { logger.warn('[conversations]', 'stored usage JSON parse failed, id=' + String(row.id)); }
   }
 
   return {

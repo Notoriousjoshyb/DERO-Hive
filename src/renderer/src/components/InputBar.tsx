@@ -83,6 +83,18 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     return () => window.removeEventListener('hive:companion-compose', onCompose);
   }, []);
 
+  // CodeSearchDialog inserts a matched snippet into the composer
+  useEffect(() => {
+    const onInsert = (event: Event): void => {
+      const { path, line, preview } = (event as CustomEvent<{ path: string; line: number; preview: string }>).detail;
+      const snippet = `\n// ${path}:${line}\n${preview}\n`;
+      setText((current) => current ? `${current}${snippet}` : snippet);
+      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+    };
+    window.addEventListener('insert-search-result', onInsert);
+    return () => window.removeEventListener('insert-search-result', onInsert);
+  }, []);
+
   // Auto-grow textarea
   useEffect(() => {
     const ta = textareaRef.current;
@@ -267,6 +279,14 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       } catch (err) {
         prompt = `Shell command failed: ${err instanceof Error ? err.message : String(err)}`;
       }
+    }
+
+    // /ask — natural language DB query, answer inserted into composer
+    const askMatch = content.match(/^\/ask\s+(.+)/s);
+    if (askMatch) {
+      const result = await window.hive.convNlQuery(askMatch[1]);
+      setText(result.answer);
+      return;
     }
 
     if (hasDeroReferences(deroReferences)) {

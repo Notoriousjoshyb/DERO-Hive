@@ -205,8 +205,23 @@ export function providerCommand() {
   return cmd;
 }
 
+type JsonResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; raw: string };
+
+function parseSetting<T>(row: { value: string }): JsonResult<T> {
+  try {
+    return { ok: true, value: JSON.parse(row.value) as T };
+  } catch {
+    return { ok: false, raw: row.value };
+  }
+}
+
 function getSetting<T>(key: string, fallback?: T): T | undefined {
   const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
   if (!row) return fallback;
-  try { return JSON.parse(row.value) as T; } catch { return row.value as unknown as T; }
+  const result = parseSetting<T>(row);
+  if (result.ok) return result.value;
+  if (typeof fallback === 'string') return result.raw as unknown as T;
+  return fallback;
 }

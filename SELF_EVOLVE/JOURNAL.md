@@ -69,3 +69,17 @@
 - Dependency decisions: none.
 - Next: Prioritise focused Vision gallery filtering coverage (006) or the verification-guide documentation improvement (007) in the next non-health cycle.
 - Final regression after state finalisation: `npm.cmd run build`, `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run lint:cli`, `npm.cmd run test:vision` (38 assertions), and `npm.cmd run test:cli` (4 CLI test scripts) -> all exit 0 / passed / 27.0s total. Smoke remains not configured for the interactive Electron application. `git diff --check` and protected-path review passed.
+
+---
+
+## Agent 3 — cycles 90-109 — 2026-07-13
+
+> Note: This subagent (Agent 3) inherited a partial working tree with several in-flight feature cycles (43-49) whose backend handlers were never implemented. JOURNAL was also rolled back by a sibling subagent to the post-cycle-5 baseline, so cycles 6-89 are condensed here as completed before this agent took over. The remaining feature wiring (F1-F4) is implemented in cycles 90-95; cycles 96-109 add new bounded improvements.
+
+## Cycle 90 — HEALTH — Stray dev artifact cleanup — 2026-07-13
+
+- Assess: Five stray Python helper scripts (`add_clean.py`, `add_handler.py`, `fix_all.py`, `fix_escapes.py`, `fs_insert.py`) and two orphan `test-project-check.*` files were left behind in the source tree by a prior interrupted rename-symbol cycle. No runtime role; pollute source tree.
+- Chosen: Remove the 5 `.py` files and 2 test scripts. (score: V1 F5 E5 R1)
+- Changed: Removed 5 `.py` files from `src/main/ipc/` and 2 `test-project-check.*` files from repo root.
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint` and `npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed (6 CLI test scripts).
+- Result: verified. Next: Cycle 91 — wire up the F2 (FS_SEARCH_CODE) backend handler that cycle 43 declared but never wrote.
