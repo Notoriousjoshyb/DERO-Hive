@@ -90,3 +90,9 @@ const cycle112 = filterCommandItems('/quality-review', [{ name: 'Quality Review'
 assert.equal(cycle112?.description, 'Run the Quality Review skill');
 assert.equal(cycle112?.usage, '/quality-review');
 assert.equal(cycle112?.category, 'skill');
+// Cycle 113: suggestion projection exposes stable IDs and executable values.
+const cycle113 = commandSuggestions('/rev', skills, 1)[0];
+assert.equal(cycle113?.id, 'skill:review');
+assert.equal(cycle113?.label, '/review');
+assert.equal(cycle113?.value, '/review');
+assert.equal(cycle113?.source, 'skill');
