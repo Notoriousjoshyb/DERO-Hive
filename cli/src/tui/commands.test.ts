@@ -22,3 +22,7 @@ const skills = [
 ];
 assert.equal(filterCommandItems('/rev', skills)[0]?.name, 'review');
 assert.equal(commandSuggestions('/', skills, 2).length, 2);
+// Cycle 91: empty and incomplete slash-command input is rejected predictably.
+assert.equal(parseSlashCommand(''), null);
+assert.equal(parseSlashCommand('   '), null);
+assert.equal(parseSlashCommand('/'), null);

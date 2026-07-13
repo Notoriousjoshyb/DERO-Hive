@@ -106,3 +106,16 @@
 - Changed: Added `src/main/utils/paths.test.ts` (10 assertions).
 - Verification: full gates green; `npm run test:cli` -> exit 0 (6 scripts).
 - Result: verified. Next: cycle 173 — silent-catch lint sweep in `src/main/ipc`.
+
+
+## Agent 1 — cycles 91-130 — 2026-07-13
+
+## Cycle 91 - Slash-command empty-input regression coverage - 2026-07-13
+
+- Assess: Fresh journal read confirmed Cycle 90. Targeted inspection identified an uncovered boundary in the CLI command/theme/format pure-function surface.
+- Chosen: Slash-command empty-input regression coverage (score V3/F5/E1/R1); deterministic coverage gives the highest bounded reliability value without dependencies.
+- Definition of Done: Add a focused executable regression case (and the smallest source correction where required); all four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts`.
+- Verification: `npm run build` -> exit 0 / passed / 8.5s; `npm run typecheck` -> exit 0 / passed / 7.4s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 3.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 92: Slash-command case-normalisation coverage.

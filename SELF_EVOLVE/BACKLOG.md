@@ -56,3 +56,9 @@
 | F3 | Project-wide refactor — rename symbol across all files | 2 | 4 | 1 | 1 | 8 | candidate |
 | F4 | Inline code explanation — hover any function, plain-English | 3 | 4 | 1 | 2 | 10 | candidate |
 | F5 | Diff narrator — after self-evolve cycle, narrate changes in plain English | 3 | 4 | 1 | 1 | 9 | candidate |
+
+## Agent 1 outcomes - Cycles 91-130
+
+| Cycle | Improvement | Status | Score |
+|---:|---|---|---|
+| 91 | Slash-command empty-input regression coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
