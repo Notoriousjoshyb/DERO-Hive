@@ -3,6 +3,7 @@ import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfi
 import { speak } from '../lib/speech';
 import type { CustomSlashCommand } from '../lib/customSlashCommands';
 import { loadCustomSlashCommands } from '../lib/customSlashCommands';
+import { DEFAULT_VISION_ARTIFACT_FILTERS, type VisionArtifactScope } from '../lib/visionFilters';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -217,6 +218,9 @@ interface AppState {
   sidebarOpen: boolean;
   visionOpen: boolean;
   visionMode: 'artifacts' | 'media';
+  visionArtifactQuery: string;
+  visionArtifactTypeFilter: string;
+  visionArtifactScopeFilter: VisionArtifactScope;
   companionOpen: boolean;
   settingsOpen: boolean;
   settingsInitialTab?: string;
@@ -226,6 +230,9 @@ interface AppState {
   toggleVision: () => void;
   setVisionOpen: (open: boolean) => void;
   setVisionMode: (mode: 'artifacts' | 'media') => void;
+  setVisionArtifactQuery: (query: string) => void;
+  setVisionArtifactTypeFilter: (type: string) => void;
+  setVisionArtifactScopeFilter: (scope: VisionArtifactScope) => void;
   toggleCompanion: () => void;
   setSettingsOpen: (open: boolean) => void;
   toggleRightSidebar: () => void;
@@ -682,6 +689,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarOpen: true,
   visionOpen: false,
   visionMode: 'artifacts',
+  visionArtifactQuery: DEFAULT_VISION_ARTIFACT_FILTERS.query,
+  visionArtifactTypeFilter: DEFAULT_VISION_ARTIFACT_FILTERS.type,
+  visionArtifactScopeFilter: DEFAULT_VISION_ARTIFACT_FILTERS.scope,
   companionOpen: false,
   settingsOpen: false,
   rightSidebarOpen: false,
@@ -690,6 +700,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen, companionOpen: s.visionOpen ? s.companionOpen : false })),
   setVisionOpen: (open) => set({ visionOpen: open, companionOpen: open ? false : get().companionOpen }),
   setVisionMode: (mode) => set({ visionMode: mode }),
+  setVisionArtifactQuery: (query) => set({ visionArtifactQuery: query }),
+  setVisionArtifactTypeFilter: (type) => set({ visionArtifactTypeFilter: type }),
+  setVisionArtifactScopeFilter: (scope) => set({ visionArtifactScopeFilter: scope }),
   toggleCompanion: () => set((s) => ({ companionOpen: !s.companionOpen, visionOpen: s.companionOpen ? s.visionOpen : false })),
   setSettingsOpen: (open) => set({ settingsOpen: open, ...(open ? {} : { settingsInitialTab: undefined }) }),
 

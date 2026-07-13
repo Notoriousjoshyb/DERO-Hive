@@ -2,10 +2,10 @@
 
 ## Baseline
 
-- Last green cycle: 2 (managed driver integration pending)
+- Last green cycle: 4 (managed driver integration pending)
 - Known failing gates: none.
 - Flaky tests: none observed
-- Cycle 3 observation: Vision renderer and artifact identity/display helpers now have focused dependency-free regression coverage; no new health debt observed.
+- Cycle 4 observation: Vision gallery filter state now survives full-view tab navigation and has focused default-contract coverage; no new health debt observed.
 
 ## Debt queue
 

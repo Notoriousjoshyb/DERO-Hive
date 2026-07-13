@@ -24,9 +24,12 @@ export function VisionTab(): JSX.Element {
   const visionMode = useAppStore((s) => s.visionMode);
   const setVisionMode = useAppStore((s) => s.setVisionMode);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
-  const [query, setQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [scopeFilter, setScopeFilter] = useState<'all' | 'current'>('all');
+  const query = useAppStore((s) => s.visionArtifactQuery);
+  const setQuery = useAppStore((s) => s.setVisionArtifactQuery);
+  const typeFilter = useAppStore((s) => s.visionArtifactTypeFilter);
+  const setTypeFilter = useAppStore((s) => s.setVisionArtifactTypeFilter);
+  const scopeFilter = useAppStore((s) => s.visionArtifactScopeFilter);
+  const setScopeFilter = useAppStore((s) => s.setVisionArtifactScopeFilter);
   const [openKey, setOpenKey] = useState<string | null>(null);
 
   useEffect(() => {

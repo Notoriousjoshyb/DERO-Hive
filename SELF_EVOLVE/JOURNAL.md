@@ -46,3 +46,14 @@
 - Discovered or parked: 004 persisted gallery filters remains next; web discovery used React and TypeScript official documentation only.
 - Dependency decisions: none.
 - Next: Persist Vision gallery filter choices between visits.
+
+## Cycle 4 - Vision gallery filter persistence - 2026-07-13
+
+- Chosen: Persist Vision gallery filter choices between visits (score 9: V3 F4 E2 R2). Discovery: local review confirmed that `VisionTab` owns its query, type, and chat-scope state, so it resets whenever the full-view tab closes; official React state guidance confirms state must live above the remounted component to persist across visits. No duplicate candidates were found in the existing backlog; web discovery used React's official state-management documentation only.
+- Definition of Done: Keep the Vision gallery search text, artifact type, and chat-scope filters in the existing application store so returning to Vision during the same app session restores the exact choices. Acceptance: filter controls remain controlled, defaults stay All chats / All types / blank search, and no artifact filtering behavior changes. New focused test: verify the shared filter defaults and supported values with a dependency-free `tsx` test. Full gates: build, typecheck, lint plus CLI lint, focused Vision tests, and the full CLI suite pass. Documentation: update self-evolve state only. Protected-path check: planned renderer, test, package manifest, and state files are outside configured protected paths; no auth, secrets, payment, deployment, migration, or external-service change. Smoke: not configured because the Electron application is interactive.
+- Changed: Moved the gallery query, artifact-type, and chat-scope values to the existing Zustand app store, preserving them when `VisionTab` unmounts; added shared typed defaults and four dependency-free assertions. No dependencies were added.
+- Verification: `npm.cmd run build` -> exit 0 / passed; `npm.cmd run typecheck` -> exit 0 / passed (node, web, and CLI); `npm.cmd run lint` and `npm.cmd run lint:cli` -> exit 0 / passed; `npm.cmd run test:vision` -> exit 0 / passed (21 assertions); `npm.cmd run test:cli` -> exit 0 / passed (4 CLI test scripts). Combined gate duration: 25.4s. Smoke: not configured (interactive Electron application). `git diff --check` passed; protected-path review passed.
+- Final regression after state finalisation: `npm.cmd run build`, `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run lint:cli`, `npm.cmd run test:vision` (21 assertions), and `npm.cmd run test:cli` (4 CLI test scripts) -> all exit 0 / passed / 25.1s total. Smoke remains not configured for the interactive Electron application.
+- Result: verified (managed driver integration pending)
+- Dependency decisions: none.
+- Next: Health cycle 5 — choose one bounded reliability, test, type, dead-code, or documentation improvement; add no net-new product feature.
