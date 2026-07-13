@@ -57,6 +57,12 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
   // The autocomplete menu registers a key handler here; a `true` return means
   // it consumed the key (e.g. Enter selected a match instead of sending).
   const autocompleteKeyRef = useRef<((e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean) | null>(null);
+  // `submit` closes over `conversationId` and other per-render state. The
+  // compose listener below is registered once on mount, so it must call
+  // through this ref (kept fresh every render) rather than closing over
+  // `submit` directly — otherwise it would always see the conversation that
+  // was active at mount time and create a new chat on every bridge send.
+  const submitRef = useRef<(overrideText?: string) => Promise<void>>();
 
   // Panels can prepare a scoped prompt without bypassing the normal composer,
   // so attachments, voice input, agent selection, and send behaviour remain
@@ -70,7 +76,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
       if (typeof detail !== 'string' && detail.autoSend) {
         bridgeRequestRef.current = detail.requestId || null;
-        void submit(prompt);
+        void submitRef.current?.(prompt);
       }
     };
     window.addEventListener('hive:companion-compose', onCompose);
@@ -345,6 +351,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
       useAppStore.setState(() => ({ isStreaming: false }));
     }
   };
+  submitRef.current = submit;
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (autocompleteKeyRef.current?.(e)) return;

@@ -150,7 +150,7 @@ const TODO_DEF: ToolDefinition = {
           type: 'object',
           properties: {
             content: { type: 'string' },
-            status: { enum: ['pending', 'in_progress', 'completed'] },
+            status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
             active_form: { type: 'string' }
           },
           required: ['content', 'status']

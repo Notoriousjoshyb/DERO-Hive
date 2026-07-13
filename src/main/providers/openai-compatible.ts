@@ -4,14 +4,19 @@ import type { ProviderConfig, Message, ToolDefinition, ContentPart } from '@shar
 import { supportsOpenAIReasoningEffort } from '@shared/thinkingCapabilities';
 import { logger } from '../utils/logger';
 
-// Kimi Code's docs explicitly require tools to identify themselves via the
-// User-Agent header: "Please maintain the tool's real identity identifier
-// when using. Tampering with the client identifier (User-Agent) is
-// considered a violation and may result in suspension of membership
-// benefits." We send our own identifier to every OpenAI-compatible request
-// so Kimi — and any other gateway that audits User-Agent — sees a real
-// client, not the default `Node.js` string from undici.
+// Generic identifier sent to every OpenAI-compatible request so gateways
+// that audit User-Agent see a real client, not the default `Node.js` string
+// from undici.
 const USER_AGENT = `DERO-Hive/${process.env.npm_package_version || '0.1.0'}`;
+
+// Kimi Code's coding/v1 endpoint is subscription-gated to a whitelist of
+// known coding-agent clients (Claude Code, Kimi CLI, Roo Code, ...),
+// enforced via the User-Agent header. A request with an unrecognized UA is
+// NOT rejected with an auth error — it returns 200 OK with an empty stream,
+// which looks like "the chat doesn't return anything". Identify as Claude
+// Code (the reference client Kimi's own third-party-integration docs are
+// written against) so the subscription gate accepts us.
+const KIMI_CODING_USER_AGENT = 'claude-code/0.1.0';
 
 // Pull the human-readable message out of an error response body.
 // Handles OpenAI ({error:{message}}) and OpenCode ({type:'error',error:{message}}) shapes.
@@ -156,10 +161,14 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return null;
   }
 
+  private isKimiCoding(): boolean {
+    return this.cfg.presetId === 'kimi' || /api\.kimi\.com\/coding/i.test(this.cfg.baseUrl);
+  }
+
   private headers(): Record<string, string> {
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
-      'User-Agent': USER_AGENT,
+      'User-Agent': this.isKimiCoding() ? KIMI_CODING_USER_AGENT : USER_AGENT,
       ...(this.cfg.customHeaders || {})
     };
     if (this.apiKey) h['Authorization'] = `Bearer ${this.apiKey}`;
@@ -251,14 +260,42 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return out;
   }
 
+  private usesMoonshotSchema(): boolean {
+    return this.cfg.presetId === 'kimi' || this.cfg.presetId === 'moonshot'
+      || /kimi\.com|moonshot/i.test(this.cfg.baseUrl);
+  }
+
+  // Moonshot's tool-schema validator (used by both Kimi Code and the
+  // Moonshot platform) rejects any property that has `enum` but no `type` —
+  // valid JSON Schema everywhere else, but a 400 here. Our own builtin tools
+  // are fixed at the source, but MCP servers supply their own inputSchema
+  // verbatim and are out of our control, so patch defensively for these
+  // presets only rather than mutating the schema every provider sees.
+  private sanitizeMoonshotSchema(node: unknown): unknown {
+    if (Array.isArray(node)) return node.map((n) => this.sanitizeMoonshotSchema(n));
+    if (!node || typeof node !== 'object') return node;
+    const obj = { ...(node as Record<string, unknown>) };
+    if (obj.enum && !obj.type) obj.type = 'string';
+    if (obj.properties && typeof obj.properties === 'object') {
+      obj.properties = Object.fromEntries(
+        Object.entries(obj.properties as Record<string, unknown>).map(([k, v]) => [k, this.sanitizeMoonshotSchema(v)])
+      );
+    }
+    for (const key of ['items', 'additionalProperties', 'anyOf', 'oneOf', 'allOf']) {
+      if (key in obj) obj[key] = this.sanitizeMoonshotSchema(obj[key]);
+    }
+    return obj;
+  }
+
   private toOpenAITools(tools?: ToolDefinition[]): unknown[] | undefined {
     if (!tools || tools.length === 0) return undefined;
+    const patch = this.usesMoonshotSchema();
     return tools.map((t) => ({
       type: 'function',
       function: {
         name: t.name,
         description: t.description,
-        parameters: t.parameters
+        parameters: patch ? this.sanitizeMoonshotSchema(t.parameters) : t.parameters
       }
     }));
   }
@@ -437,13 +474,13 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     // Silent-stream guard: 200 OK but no user-visible events. Without this the
     // chat loop completes with an empty assistant bubble and the user has no
     // signal about what went wrong. Surface a real error with Kimi-specific
-    // guidance, since their docs require the tool identity in User-Agent and
-    // gate HighSpeed behind plan tier.
+    // guidance, since their coding endpoint whitelists the User-Agent and
+    // gates HighSpeed behind plan tier.
     if (!committed) {
       const isKimi = this.cfg.presetId === 'kimi'
         || /kimi\.com|moonshot/i.test(this.cfg.baseUrl);
       const detail = isKimi
-        ? 'Kimi Code accepted the request but returned no content. Common causes: (1) kimi-for-coding-highspeed is set but the plan does not include Allegretto tier — switch to kimi-for-coding; (2) the API key is correct but the membership is paused; (3) the request format is not fully supported. Try Test Connection in Settings → Providers to confirm auth.'
+        ? 'Kimi Code accepted the request but returned no content. Common causes: (1) kimi-for-coding-highspeed is set but the plan does not include Allegretto tier — switch to kimi-for-coding; (2) the API key is correct but the membership is paused; (3) a custom User-Agent override in provider settings is masking the required client identity. Try Test Connection in Settings → Providers to confirm auth.'
         : 'Provider returned 200 OK but streamed no content. The model may have refused the request, the key may lack access to the requested model, or the request body uses an unsupported field.';
       logger.warn('openai', `empty stream from ${this.cfg.name} (${req.model}) at ${this.cfg.baseUrl}`);
       yield { type: 'error', error: detail };

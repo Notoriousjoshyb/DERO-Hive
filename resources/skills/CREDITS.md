@@ -1,6 +1,6 @@
 # Bundled Skill Credits
 
-DERO Hive ships with seven opencode-style skills pre-installed. Each skill is
+DERO Hive ships with nine opencode-style skills pre-installed. Each skill is
 licensed MIT and aggregates material from public DERO ecosystem sources. This
 file preserves attribution and points users to the canonical sources for
 up-to-date material — Hive bundles snapshots that may drift as upstream docs
@@ -17,6 +17,8 @@ evolve.
 | `tela-javascript` | `/tela-javascript` | 16 KB | tela.derod.org |
 | `wallet-rpc-api` | `/wallet-rpc-api` | 7 KB | deroproject/derohe (`rpc/wallet_rpc.go`), derod.org |
 | `dero-native-dev` | `/dero-native-dev` | 145 KB (incl. references) | deroproject/derohe, civilware/Gnomon, civilware/tela, DHEBP, DEROFDN, derod.org |
+| `dero-research` | `/dero-research` | 3 KB | Obsidian MCP, dero-mcp-server, codebase-memory MCP |
+| `self-evolve` | `/self-evolve` | 4 KB | OpenCode autonomous agent prompt |
 
 ## Source projects
 
