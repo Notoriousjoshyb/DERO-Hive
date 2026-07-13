@@ -56,3 +56,6 @@ assert.deepEqual(cycle99?.args, ['', 'tail']);
 // Cycle 101: exact command names outrank every fuzzy alternative.
 assert.equal(filterCommandItems('/theme')[0]?.name, 'theme');
 assert.equal(filterCommandItems('/model')[0]?.name, 'model');
+// Cycle 102: exact aliases resolve to their canonical command first.
+assert.equal(filterCommandItems('/exit')[0]?.name, 'quit');
+assert.equal(filterCommandItems('/rewind')[0]?.name, 'undo');
