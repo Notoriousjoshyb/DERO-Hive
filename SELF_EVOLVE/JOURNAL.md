@@ -1102,3 +1102,21 @@
 - Verification: `npm run build` -> exit 0 / passed / 10.0s; `npm run typecheck` -> exit 0 / passed / 8.5s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 4.1s; `npm run test:cli` -> exit 0 / passed / 4.3s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 316.
+
+
+## Cycle 316 — Non-finite memory-limit fallback coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 315; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for non-finite memory-limit fallback coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 9.9s; `npm run typecheck` -> exit 0 / passed / 7.4s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.7s; `npm run test:cli` -> exit 0 / passed / 4.0s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 317.
+
+
+## Cycle 317 — Negative memory-score threshold coverage — 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 316; targeted inspection continued the local-first agent-memory reliability surface.
+- Chosen: Add focused coverage for negative memory-score threshold coverage. (score V3/F5/E1/R1).
+- Changed: Extended `cli/src/utils/agentMemory.test.ts` with one focused executable regression block; runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed / 9.6s; `npm run typecheck` -> exit 0 / passed / 7.5s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.7s; `npm run test:cli` -> exit 0 / passed / 4.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-271-320`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 318.

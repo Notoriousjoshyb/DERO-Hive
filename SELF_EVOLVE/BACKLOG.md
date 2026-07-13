@@ -123,3 +123,5 @@
 | 313 | Memory-context truncation coverage | verified — all required gates green |
 | 314 | Memory-context result-limit coverage | verified — all required gates green |
 | 315 | HEALTH - full gate cadence | verified — all required gates green |
+| 316 | Memory-context token-budget coverage | verified — all required gates green |
+| 317 | Updated-at memory filtering coverage | verified — all required gates green |

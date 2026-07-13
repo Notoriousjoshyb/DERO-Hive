@@ -221,4 +221,17 @@ assert.deepEqual(cycle314Query.phrases, []);
 // Cycle 316: non-finite result limits use the bounded default rather than leaking all results.
 const cycle316Entries = Array.from({ length: 12 }, (_, index) => memory(String(index), 'same'));
 assert.equal(memoryUtils.rankMemories(cycle316Entries, '', { limit: Number.POSITIVE_INFINITY, now: NOW }).length, 10);
+// Cycle 317: negative score thresholds clamp to zero without hiding valid entries.
+const cycle317Ranked = memoryUtils.rankMemories([memory('a', 'unrelated')], 'query', {
+  now: NOW,
+  minScore: -10,
+  weights: { lexical: 1, recency: 0, tags: 0, pinned: 0 }
+});
+assert.deepEqual(cycle317Ranked.map(({ entry }) => entry.id), ['a']);
+// Cycle 318: invalid weight values recover to the balanced default profile.
+const cycle318Score = memoryUtils.scoreMemory(memory('a', 'same'), 'same', {
+  now: NOW,
+  weights: { lexical: Number.NaN, recency: -1, tags: -1, pinned: -1 }
+});
+assert.equal(Math.abs(cycle318Score.score - 0.75) < 1e-12, true);
 console.log('agentMemory.test.ts — all assertions passed');
