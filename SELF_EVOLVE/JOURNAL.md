@@ -34,3 +34,15 @@
 - Discovered or parked: 003 focused Vision helper coverage and 004 persisted gallery filters; web discovery used React and TypeScript official documentation only.
 - Dependency decisions: none.
 - Next: Add focused pure-function coverage for Vision artifact rendering and state helpers.
+
+## Cycle 3 - Vision artifact helper coverage - 2026-07-13
+
+- Chosen: Add focused pure-function coverage for Vision artifact rendering and state helpers (score 16: V4 F5 E2 R1). Discovery: local review found `renderVisionHtml`, `artifactGroupKey`, and `artifactLabel` are shared gallery behavior without direct coverage; React's official testing guidance treats UI interactions as testable units, and TypeScript's official function guidance supports explicit function contracts. Other candidate: persist gallery filters (score 9: V3 F4 E2 R2).
+- Definition of Done: Add dependency-free focused assertions covering each visual render branch, unsupported code fallback, React export transformation, HTML escaping, stable artifact grouping, and human-readable labels. Acceptance: the Vision focused command passes with honest assertion count; no runtime behavior or dependencies change. Full gates: build, typecheck, lint plus CLI lint, focused Vision tests, and full CLI suite pass. Documentation: update self-evolve state only. Protected-path check: planned test, package manifest, and state edits are outside configured protected paths; no auth, secrets, payment, deployment, migration, or external-service change. Smoke: not configured because the Electron application is interactive.
+- Changed: Added `visionArtifacts.test.ts` with 14 renderer and artifact-helper assertions, and included it in `test:vision`; existing viewer-key coverage contributes 3 assertions. Runtime source and dependencies are unchanged.
+- Verification: `npm.cmd run build` -> exit 0 / passed / 9.9s; `npm.cmd run typecheck` -> exit 0 / passed / 7.9s (node, web, and CLI); `npm.cmd run lint` and `npm.cmd run lint:cli` -> exit 0 / passed / 4.0s total; `npm.cmd run test:vision` -> exit 0 / passed / 1.3s (17 assertions); `npm.cmd run test:cli` -> exit 0 / passed / 3.5s (4 CLI test scripts). Smoke: not configured (interactive Electron application). `git diff --check` passed; protected-path review passed.
+- Final regression after state finalisation: `npm.cmd run build`, `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run lint:cli`, `npm.cmd run test:vision` (17 assertions), and `npm.cmd run test:cli` (4 CLI test scripts) -> all exit 0 / passed / 25.3s total.
+- Result: verified (managed driver integration pending)
+- Discovered or parked: 004 persisted gallery filters remains next; web discovery used React and TypeScript official documentation only.
+- Dependency decisions: none.
+- Next: Persist Vision gallery filter choices between visits.
