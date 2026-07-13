@@ -193,3 +193,35 @@ const theme139 = await import('./themes.js');
 const frozen139 = theme139.resolveTheme('nord');
 assert.ok(Object.isFrozen(frozen139));
 assert.ok(Object.isFrozen(frozen139.palette));
+// Cycle 141: nextTheme tolerates whitespace-padded ids just like resolveTheme.
+const theme141 = await import('./themes.js');
+assert.equal(theme141.nextTheme('  dark  '), 'light');
+assert.equal(theme141.nextTheme('\tnord\n'), 'catppuccin');
+// Cycle 142: prefersDark explicitly set in environment always wins over hints.
+const theme142 = await import('./themes.js');
+assert.equal(theme142.resolveTheme('system', { prefersDark: true, HIVE_COLOR_SCHEME: 'light' }).resolvedId, 'dark');
+assert.equal(theme142.resolveTheme('system', { prefersDark: false, COLORFGBG: '0;15' }).resolvedId, 'light');
+// Cycle 143: an invalid HIVE_THEME falls back to system rather than throwing.
+const theme143 = await import('./themes.js');
+assert.equal(theme143.resolveTheme(undefined, { HIVE_THEME: 'not-a-theme' }).id, 'system');
+// Cycle 144: HIVE_THEME + accent color stack together without breaking either.
+const theme144 = await import('./themes.js');
+const accent144 = theme144.resolveTheme(undefined, { HIVE_THEME: 'catppuccin', accentColor: '#abcdef' });
+assert.equal(accent144.id, 'catppuccin');
+assert.equal(accent144.palette.accent, '#abcdef');
+// Cycle 146: invalid HIVE_ACCENT_COLOR does not corrupt the resolved accent.
+const theme146 = await import('./themes.js');
+const accent146 = theme146.resolveTheme('dark', { accentColor: '#000', HIVE_ACCENT_COLOR: 'definitely-not-a-hex' });
+assert.notEqual(accent146.palette.accent, '#000');
+// Cycle 147: null and undefined theme ids fall back to system without throwing.
+const theme147 = await import('./themes.js');
+assert.equal(theme147.resolveTheme(null).id, 'system');
+assert.equal(theme147.resolveTheme(undefined).id, 'system');
+// Cycle 148: empty-string accent is rejected, leaving the original palette.
+const theme148 = await import('./themes.js');
+const accent148 = theme148.resolveTheme('dark', { accentColor: '' });
+assert.notEqual(accent148.palette.accent, '');
+// Cycle 149: six-digit numbers without # prefix also normalise correctly.
+const theme149 = await import('./themes.js');
+const accent149 = theme149.resolveTheme('dark', { accentColor: '123456' });
+assert.equal(accent149.palette.accent, '#123456');
