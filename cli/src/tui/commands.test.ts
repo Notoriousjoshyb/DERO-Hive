@@ -41,3 +41,8 @@ assert.deepEqual(cycle94?.args, ['say "hello"', 'C:\\tmp']);
 // Cycle 96: unfinished user quotes remain usable instead of crashing autocomplete.
 const cycle96 = parseSlashCommand('/new "unfinished phrase');
 assert.deepEqual(cycle96?.args, ['unfinished phrase']);
+// Cycle 97: unknown commands are represented without pretending to be built-ins.
+const cycle97 = parseSlashCommand('/mystery alpha beta');
+assert.equal(cycle97?.command, 'mystery');
+assert.equal(cycle97?.item, undefined);
+assert.deepEqual(cycle97?.args, ['alpha', 'beta']);
