@@ -131,3 +131,9 @@ assert.equal(theme123.resolveTheme('system', { TERM_BACKGROUND: 'dark' }).resolv
 const theme124 = await import('./themes.js');
 assert.equal(theme124.resolveTheme('system', { COLORFGBG: '15;0' }).resolvedId, 'dark');
 assert.equal(theme124.resolveTheme('system', { COLORFGBG: '0;15' }).resolvedId, 'light');
+// Cycle 126: explicit accents take precedence and normalise to lowercase hex.
+const theme126 = await import('./themes.js');
+const accent126 = theme126.resolveTheme('dark', { accentColor: 'ABCDEF', HIVE_ACCENT_COLOR: '#123456' });
+assert.equal(accent126.palette.accent, '#abcdef');
+assert.match(accent126.palette.accentHover, /^rgb\(\d+, \d+, \d+\)$/);
+assert.match(accent126.palette.accentGlow, /^rgba\(171, 205, 239, 0\.28\)$/);
