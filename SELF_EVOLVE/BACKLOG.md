@@ -87,3 +87,4 @@
 | 114 | Zero suggestion-limit boundary coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 115 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
 | 116 | Negative suggestion-limit boundary coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 117 | Fractional suggestion-limit normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

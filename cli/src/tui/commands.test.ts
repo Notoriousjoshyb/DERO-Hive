@@ -100,3 +100,5 @@ assert.equal(cycle113?.source, 'skill');
 assert.deepEqual(commandSuggestions('/', [], 0), []);
 // Cycle 116: negative limits are clamped rather than passed to Array.slice.
 assert.deepEqual(commandSuggestions('/', [], -9), []);
+// Cycle 117: fractional limits are floored to a deterministic row count.
+assert.equal(commandSuggestions('/', [], 1.9).length, 1);
