@@ -635,3 +635,12 @@
 - Verification: `npm run test:cli` → exit 0 (8 scripts including new file); other gates previously green in cycle 174 baseline.
 - Result: verified; no protected paths or dependencies changed.
 - Next: cycle 176 — pick another pure-function target.
+
+## Cycle 176 — agentMemoryOps test coverage — 2026-07-13
+
+- Chosen: Add comprehensive pure-function coverage for the agent-memory subsystem in `cli/src/utils/agentMemory.ts` (score V4/F5/E1/R1). Discovery: the existing `agentMemory.test.ts` only covered `normalizeMemoryText` and `tokenizeMemoryText` (5 assertions), leaving jaccard, tag-overlap, recency, summarisation, query parsing, filtering, ranking, dedup, budget selection, and context-building untested.
+- Definition of Done: A new `agentMemoryOps.test.ts` exhaustively exercises `mergeMemoryTags`, `memoryFingerprint`, `jaccardSimilarity`, `tagOverlapScore`, `memoryRecencyScore`, `summarizeMemoryContent`, `parseMemorySearchQuery`, `filterMemories`, `scoreMemory`, `rankMemories`, `deduplicateMemories`, `estimateMemoryTokens`, `selectMemoriesForBudget`, and `buildMemoryContext`. Acceptance: all assertions pass; runtime source unchanged.
+- Changed: Added `cli/src/utils/agentMemoryOps.test.ts` (~43 assertions covering edge cases like control-char dropping, half-life recency halving, query-field parsing, tag/score tie-breaking, budget clamping); registered it in `test:cli`.
+- Verification: `npm run test:cli` → exit 0 (10 scripts including the new file); other gates previously green in cycle 174 baseline.
+- Result: verified; no protected paths or dependencies changed.
+- Next: cycle 177 — another meaningful target.

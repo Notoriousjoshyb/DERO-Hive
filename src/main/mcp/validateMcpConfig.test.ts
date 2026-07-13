@@ -28,7 +28,7 @@ const baseStdio: McpServerConfig = {
   id: 'a', name: 'A', enabled: true, transport: 'stdio', command: 'echo', args: []
 };
 const baseHttp: McpServerConfig = {
-  id: 'a', name: 'A', transport: 'http', url: 'http://127.0.0.1:8000/mcp'
+  id: 'a', name: 'A', enabled: true, transport: 'http', url: 'http://127.0.0.1:8000/mcp'
 };
 
 // ── happy paths ───────────────────────────────────────────────────
@@ -41,15 +41,15 @@ t('http: loopback http url passes', () => {
 });
 
 t('http: https url passes', () => {
-  validateMcpConfig({ id: 'a', name: 'A', transport: 'http', url: 'https://mcp.example.com/sse' });
+  validateMcpConfig({ id: 'a', name: 'A', enabled: true, transport: 'http', url: 'https://mcp.example.com/sse' });
 });
 
 t('stdio: with args array passes', () => {
-  validateMcpConfig({ id: 'x', name: 'X', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-server'] });
+  validateMcpConfig({ id: 'x', name: 'X', enabled: true, transport: 'stdio', command: 'npx', args: ['-y', 'mcp-server'] });
 });
 
 t('stdio: with cwd inside workspace passes', () => {
-  validateMcpConfig({ id: 'a', name: 'A', transport: 'stdio', command: 'node', args: [], cwd: workspace });
+  validateMcpConfig({ id: 'a', name: 'A', enabled: true, transport: 'stdio', command: 'node', args: [], cwd: workspace });
 });
 
 // ── id / name validation ──────────────────────────────────────────
@@ -84,7 +84,7 @@ t('http: remote http (non-loopback) throws', () => {
 });
 
 t('http: https to non-loopback passes', () => {
-  validateMcpConfig({ id: 'a', name: 'A', transport: 'http', url: 'https://mcp.example.com/x' });
+  validateMcpConfig({ id: 'a', name: 'A', enabled: true, transport: 'http', url: 'https://mcp.example.com/x' });
 });
 
 t('http: credentials in url throws', () => {
@@ -92,7 +92,7 @@ t('http: credentials in url throws', () => {
 });
 
 t('http: localhost accepted as loopback', () => {
-  validateMcpConfig({ id: 'a', name: 'A', transport: 'http', url: 'http://localhost:8080/x' });
+  validateMcpConfig({ id: 'a', name: 'A', enabled: true, transport: 'http', url: 'http://localhost:8080/x' });
 });
 
 // ── stdio-specific validation ──────────────────────────────────────

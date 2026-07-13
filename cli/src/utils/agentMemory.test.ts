@@ -23,4 +23,9 @@ assert.equal(memory('fixture', 'ready').content, 'ready');
 assert.deepEqual(memoryUtils.tokenizeMemoryText('Deploy wallet_rpc v2 — café 42!'), ['deploy', 'wallet_rpc', 'v2', 'café', '42']);
 assert.deepEqual(memoryUtils.tokenizeMemoryText('  !!!  '), []);
 
+// Cycle 271: tokenization is Unicode-aware and keeps useful intra-token separators.
+assert.deepEqual(
+  memoryUtils.tokenizeMemoryText("Déro_hive's RPC-v2 + １２３"),
+  ["déro_hive's", 'rpc-v2', '123']
+);
 console.log('agentMemory.test.ts — all assertions passed');

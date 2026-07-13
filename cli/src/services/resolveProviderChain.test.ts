@@ -12,14 +12,14 @@ const providers: ProviderConfig[] = [
   {
     id: 'openai', name: 'OpenAI', enabled: true, baseUrl: '',
     models: [
-      { id: 'gpt-4o', label: 'GPT-4o', contextWindow: 128000, supportsTools: true, supportsVision: false },
-      { id: 'gpt-3.5', label: 'GPT-3.5', contextWindow: 16000, supportsTools: false, supportsVision: false }
+      { id: 'gpt-4o', name: 'GPT-4o', contextWindow: 128000, supportsTools: true, supportsVision: false },
+      { id: 'gpt-3.5', name: 'GPT-3.5', contextWindow: 16000, supportsTools: false, supportsVision: false }
     ]
   },
   {
     id: 'anthropic', name: 'Anthropic', enabled: true, baseUrl: '',
     models: [
-      { id: 'claude-3', label: 'Claude 3', contextWindow: 200000, supportsTools: true, supportsVision: true }
+      { id: 'claude-3', name: 'Claude 3', contextWindow: 200000, supportsTools: true, supportsVision: true }
     ]
   },
   {
