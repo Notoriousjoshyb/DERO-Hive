@@ -83,3 +83,18 @@
 - Changed: Removed 5 `.py` files from `src/main/ipc/` and 2 `test-project-check.*` files from repo root.
 - Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint` and `npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed (6 CLI test scripts).
 - Result: verified. Next: Cycle 91 — wire up the F2 (FS_SEARCH_CODE) backend handler that cycle 43 declared but never wrote.
+
+## Cycle 131 - HEALTH - systemPrompt.ts test coverage - 2026-07-13
+- Assess: All gates green from inherited baseline (Cycle 90). Discovery: `cli/src/utils/systemPrompt.ts` is a tiny pure module that builds `TERMINAL_SYSTEM_PROMPT` from `DEFAULT_SYSTEM_PROMPT` (strips Vision paragraph, appends Terminal paragraph) but had no focused coverage.
+- Chosen: Add dependency-free `systemPrompt.test.ts` with 11 assertions covering prompt existence, base inheritance, Terminal workspace section, no-hidden-panel contract, Vision paragraph stripping, workspace tools guidance, terminal readability, no-leading-whitespace, and blank-line section separation. (score: V2 F5 E1 R1)
+- Changed: New `cli/src/utils/systemPrompt.test.ts`; registered in `test:cli`. Runtime source and dependencies unchanged.
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed (7 CLI test scripts, including new systemPrompt suite).
+- Result: verified. Test scripts increased to 32 (was 31). Next: Cycle 132 — pick another pure-function target.
+
+## Cycle 171 — pathPolicy canonicalize/isPathWithin coverage — 2026-07-13
+
+- Chosen: Add pure-function tests for `canonicalizePath` and `isPathWithin` in `src/main/utils/pathPolicy.ts` (score 11: V3 F5 E1 R1). Discovery: local review found both exported helpers are pure (no DB call), making them ideal for fast, dependency-free coverage. Other candidates: `paths.test.ts` (mocking Electron `app` is harder) and `secrets.test.ts` (involves crypto and OS keychain).
+- Definition of Done: A new `pathPolicy.test.ts` exercises relative-input handling, non-existent trailing segments, existing-directory resolution, symlink resolution of existing ancestors, symlink + missing sibling, and 5 `isPathWithin` containment cases. Acceptance: tsx runs the file cleanly with the reported assertion count; existing runtime behavior unchanged. Full gates: build, typecheck, lint plus CLI lint, and CLI test suite all pass. Documentation: update self-evolve state. Protected-path check: planned test edits are outside configured protected paths.
+- Changed: Added `src/main/utils/pathPolicy.test.ts` (10 assertions) covering both pure exports of `pathPolicy.ts`. No runtime source or dependencies changed.
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint` and `npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed (6 CLI test scripts including systemPrompt.test.ts).
+- Result: verified. Next: cycle 172 — add `paths.ts` defaults/ensureDirs tests using `HIVE_DATA_DIR` env var.
