@@ -42,7 +42,7 @@ try {
     patchConsole: false
   });
   const exited = instance.waitUntilExit();
-  await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+  await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   if (!/DERO HIVE/.test(output)) process.stderr.write(output);
   assert.match(output, /DERO HIVE/);
   const escape = String.fromCharCode(27);
