@@ -77,3 +77,4 @@
 | 104 | Command description discovery coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 105 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
 | 106 | Dynamic skill-command normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 107 | Disabled skill-command exclusion coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

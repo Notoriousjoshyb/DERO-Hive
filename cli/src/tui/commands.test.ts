@@ -69,3 +69,5 @@ assert.equal(filterCommandItems('/colour')[0]?.name, 'theme');
 const cycle106 = filterCommandItems('/aud', [{ name: 'Audit Helper', slashCommand: '///AuDiT' }]);
 assert.equal(cycle106[0]?.name, 'audit');
 assert.equal(cycle106[0]?.source, 'skill');
+// Cycle 107: disabled skills never leak into the command catalog.
+assert.equal(filterCommandItems('/hidden', [{ name: 'hidden', enabled: false }]).length, 0);
