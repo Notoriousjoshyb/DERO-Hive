@@ -84,3 +84,4 @@
 | 111 | Built-in command collision protection coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 112 | Skill-command fallback metadata coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 113 | Structured command-suggestion projection coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 114 | Zero suggestion-limit boundary coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

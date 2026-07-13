@@ -96,3 +96,5 @@ assert.equal(cycle113?.id, 'skill:review');
 assert.equal(cycle113?.label, '/review');
 assert.equal(cycle113?.value, '/review');
 assert.equal(cycle113?.source, 'skill');
+// Cycle 114: an explicit zero limit produces no suggestions.
+assert.deepEqual(commandSuggestions('/', [], 0), []);
