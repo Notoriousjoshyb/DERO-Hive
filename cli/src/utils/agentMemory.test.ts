@@ -163,4 +163,53 @@ const cycle302Deduped = memoryUtils.deduplicateMemories([
   memory('new', 'same', { createdAt: NOW })
 ]);
 assert.deepEqual(cycle302Deduped.map((entry) => entry.id), ['pinned']);
+// Cycle 333: hyphenated tokens are kept intact for stable retrieval.
+assert.deepEqual(memoryUtils.tokenizeMemoryText('local-first agent-memory'), ['local-first', 'agent-memory']);
+// Cycle 303: exact duplicate ties select the lexicographically stable id.
+const cycle303Deduped = memoryUtils.deduplicateMemories([memory('b', 'same'), memory('a', 'same')]);
+assert.deepEqual(cycle303Deduped.map((entry) => entry.id), ['a']);
+// Cycle 334: numeric-only tokens are retained for versioned identifiers.
+assert.deepEqual(memoryUtils.tokenizeMemoryText('v2.0.1 42 7'), ['v2', '0', '1', '42', '7']);
+// Cycle 304: token estimates are empty-safe and conservatively rounded up.
+assert.equal(memoryUtils.estimateMemoryTokens('   '), 0);
+assert.equal(memoryUtils.estimateMemoryTokens('1234'), 1);
+assert.equal(memoryUtils.estimateMemoryTokens('12345'), 2);
+// Cycle 306: ranked memories are selected in order without exceeding budget.
+const cycle306Ranked = [
+  memoryUtils.scoreMemory(memory('a', 'aaaa'), 'aaaa', { now: NOW }),
+  memoryUtils.scoreMemory(memory('b', 'bbbb'), 'bbbb', { now: NOW })
+];
+assert.deepEqual(memoryUtils.selectMemoriesForBudget(cycle306Ranked, 1).map(({ entry }) => entry.id), ['a']);
+// Cycle 307: an oversized leading memory does not prevent a later small memory from fitting.
+const cycle307Ranked = [
+  memoryUtils.scoreMemory(memory('large', '12345678901234567890'), 'large', { now: NOW }),
+  memoryUtils.scoreMemory(memory('small', 'tiny'), 'small', { now: NOW })
+];
+assert.deepEqual(memoryUtils.selectMemoriesForBudget(cycle307Ranked, 2).map(({ entry }) => entry.id), ['small']);
+// Cycle 308: context output exposes source and normalized tags for inspection.
+const cycle308Context = memoryUtils.buildMemoryContext(
+  [memory('a', 'DERO wallet', { source: 'CLI', tags: ['dero', 'core'] })],
+  'DERO wallet',
+  { now: NOW, weights: { lexical: 1, recency: 0, tags: 0, pinned: 0 } }
+);
+assert.equal(cycle308Context, '- [cli] DERO wallet (tags: core, dero)');
+// Cycle 309: context rendering honors the per-memory content bound.
+const cycle309Context = memoryUtils.buildMemoryContext(
+  [memory('a', 'alpha beta gamma', { source: 'memory' })],
+  'alpha beta gamma',
+  { now: NOW, maxContentChars: 8, weights: { lexical: 1, recency: 0, tags: 0, pinned: 0 } }
+);
+assert.equal(cycle309Context, '- [memory] alpha…');
+// Cycle 311: updatedAt, when valid, is the timestamp used for recency scoring.
+const cycle311Score = memoryUtils.scoreMemory(
+  memory('updated', 'same', { createdAt: NOW - 30 * DAY, updatedAt: NOW }),
+  '',
+  { now: NOW, weights: { lexical: 0, recency: 1, tags: 0, pinned: 0 } }
+);
+assert.equal(cycle311Score.recencyScore, 1);
+// Cycle 312: empty memories remain isolated by id instead of collapsing together.
+assert.notEqual(
+  memoryUtils.memoryFingerprint({ id: 'empty-a', content: '' }),
+  memoryUtils.memoryFingerprint({ id: 'empty-b', content: '   ' })
+);
 console.log('agentMemory.test.ts — all assertions passed');

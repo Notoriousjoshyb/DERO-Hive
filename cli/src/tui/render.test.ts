@@ -39,7 +39,8 @@ try {
     stdout,
     stderr: process.stderr,
     exitOnCtrlC: false,
-    patchConsole: false
+    patchConsole: false,
+    debug: true
   });
   const exited = instance.waitUntilExit();
   const deadline = Date.now() + 3_000;
