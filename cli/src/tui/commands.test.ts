@@ -74,3 +74,10 @@ assert.equal(filterCommandItems('/hidden', [{ name: 'hidden', enabled: false }])
 // Cycle 108: malformed skill slash commands are rejected by the safe-name policy.
 assert.equal(filterCommandItems('/bad', [{ name: 'bad', slashCommand: '/bad command' }]).length, 0);
 assert.equal(filterCommandItems('/bad', [{ name: 'bad', slashCommand: '/-bad' }]).length, 0);
+// Cycle 109: duplicate dynamic command names are de-duplicated deterministically.
+const cycle109 = filterCommandItems('/review', [
+  { name: 'first', slashCommand: '/review' },
+  { name: 'second', slashCommand: '/review' }
+]);
+assert.equal(cycle109.filter((item) => item.name === 'review').length, 1);
+assert.match(cycle109.find((item) => item.name === 'review')?.description ?? '', /first/);
