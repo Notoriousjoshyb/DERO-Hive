@@ -259,3 +259,13 @@
 - Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 6.7s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 3.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 106: Dynamic skill-command normalisation coverage.
+
+## Cycle 106 - Dynamic skill-command normalisation coverage - 2026-07-13
+
+- Assess: Fresh journal read confirmed Cycle 105. Targeted inspection identified an uncovered boundary in the CLI command/theme/format pure-function surface.
+- Chosen: Dynamic skill-command normalisation coverage (score V3/F5/E1/R1); deterministic coverage gives the highest bounded reliability value without dependencies.
+- Definition of Done: Add a focused executable regression case (and the smallest source correction where required); all four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts`.
+- Verification: `npm run build` -> exit 0 / passed / 8.3s; `npm run typecheck` -> exit 0 / passed / 6.7s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 3.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 107: Disabled skill-command exclusion coverage.

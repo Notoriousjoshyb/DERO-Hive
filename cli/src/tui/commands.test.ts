@@ -65,3 +65,7 @@ assert.equal(filterCommandItems('/sandbox')[0]?.name, 'permissions');
 // Cycle 104: descriptive prose participates in command discovery as the final tier.
 assert.equal(filterCommandItems('/safely')[0]?.name, 'quit');
 assert.equal(filterCommandItems('/colour')[0]?.name, 'theme');
+// Cycle 106: dynamic skill commands strip slashes and normalise case.
+const cycle106 = filterCommandItems('/aud', [{ name: 'Audit Helper', slashCommand: '///AuDiT' }]);
+assert.equal(cycle106[0]?.name, 'audit');
+assert.equal(cycle106[0]?.source, 'skill');
