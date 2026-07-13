@@ -127,3 +127,7 @@ assert.equal(theme122.resolveTheme(null, { HIVE_THEME: 'gruvbox' }).resolvedId, 
 const theme123 = await import('./themes.js');
 assert.equal(theme123.resolveTheme('system', { HIVE_COLOR_SCHEME: 'light' }).resolvedId, 'light');
 assert.equal(theme123.resolveTheme('system', { TERM_BACKGROUND: 'dark' }).resolvedId, 'dark');
+// Cycle 124: conventional COLORFGBG values drive a deterministic system palette.
+const theme124 = await import('./themes.js');
+assert.equal(theme124.resolveTheme('system', { COLORFGBG: '15;0' }).resolvedId, 'dark');
+assert.equal(theme124.resolveTheme('system', { COLORFGBG: '0;15' }).resolvedId, 'light');
