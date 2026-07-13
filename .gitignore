@@ -34,3 +34,7 @@ resources/mcp/*/hive-mcp.json
 
 # DERO simulator is built from DEROFDN/derohe on postinstall (see scripts/setup-simulator.mjs)
 resources/simulator/bin/
+
+# Self-evolve driver controls (local-only sentinels)
+/SELF_EVOLVE/STOP
+/SELF_EVOLVE/PAUSE

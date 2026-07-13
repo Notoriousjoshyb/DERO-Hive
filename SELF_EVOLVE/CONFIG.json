@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "base_branch": "main",
+  "integration_mode": "driver",
+  "health_cadence": 5,
+  "fix_attempt_cap": 3,
+  "feature_scope": "meaningful-but-self-contained",
+  "discovery_bias": "balanced",
+  "web_search": true,
+  "remote_writes": false,
+  "commands": {
+    "build": "npm run build",
+    "typecheck": "npm run typecheck",
+    "lint": "npm run lint && npm run lint:cli",
+    "test": "npm run test:cli",
+    "smoke": null
+  },
+  "protected_paths": [
+    ".env",
+    ".env.*",
+    "**/*.key",
+    "**/*.pem",
+    "**/*credential*",
+    "**/*secret*",
+    "**/auth/**",
+    "**/payment/**",
+    "**/payments/**",
+    "**/transfer/**",
+    "**/migrations/**",
+    ".github/workflows/**",
+    ".gitlab-ci.yml",
+    "**/deploy/**",
+    "**/infra/**",
+    "**/terraform/**"
+  ]
+}
