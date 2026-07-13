@@ -98,3 +98,11 @@
 - Changed: Added `src/main/utils/pathPolicy.test.ts` (10 assertions) covering both pure exports of `pathPolicy.ts`. No runtime source or dependencies changed.
 - Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint` and `npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed (6 CLI test scripts including systemPrompt.test.ts).
 - Result: verified. Next: cycle 172 — add `paths.ts` defaults/ensureDirs tests using `HIVE_DATA_DIR` env var.
+
+## Cycle 172 — paths.ts coverage — 2026-07-13
+
+- Chosen: Add pure-function coverage for `paths.ts` (score 10: V2 F5 E1 R2). Discovery: `paths.ts` exports `resourcesRoot`, the `paths` getter object, `getDefaultWorkspace`, and `ensureDirs`. All honour `HIVE_DATA_DIR`/`HIVE_WORKSPACE`/`HIVE_RESOURCES` env vars in headless mode, so we can run them without an Electron shim. Other candidate: `logger.ts` (calls into a singleton logger; trivial).
+- Definition of Done: A new `paths.test.ts` exercises all `paths.*` getters, `getDefaultWorkspace` env-override, `ensureDirs` directory creation, and idempotency. Acceptance: tsx passes all assertions; runtime source unchanged.
+- Changed: Added `src/main/utils/paths.test.ts` (10 assertions).
+- Verification: full gates green; `npm run test:cli` -> exit 0 (6 scripts).
+- Result: verified. Next: cycle 173 — silent-catch lint sweep in `src/main/ipc`.
