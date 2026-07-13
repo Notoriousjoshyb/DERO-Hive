@@ -113,3 +113,9 @@ for (const item of cycle119.COMMAND_ITEMS) {
   assert.equal(parseSlashCommand(item.command)?.command, item.name);
   assert.ok(item.usage.startsWith(item.command));
 }
+// Cycle 121: friendly terminal theme aliases resolve to canonical options.
+const theme121 = await import('./themes.js');
+assert.equal(theme121.resolveTheme('auto', { prefersDark: false }).id, 'system');
+assert.equal(theme121.resolveTheme('default', { prefersDark: true }).id, 'system');
+assert.equal(theme121.resolveTheme('hive-dark', {}).resolvedId, 'dark');
+assert.equal(theme121.resolveTheme('hive-light', {}).resolvedId, 'light');
