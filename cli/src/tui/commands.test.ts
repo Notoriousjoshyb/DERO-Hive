@@ -85,3 +85,8 @@ assert.match(cycle109.find((item) => item.name === 'review')?.description ?? '',
 const cycle111 = filterCommandItems('/help', [{ name: 'shadow', slashCommand: '/help' }]);
 assert.equal(cycle111.filter((item) => item.name === 'help').length, 1);
 assert.equal(cycle111[0]?.source, 'builtin');
+// Cycle 112: dynamic skills receive useful fallback descriptions and usage metadata.
+const cycle112 = filterCommandItems('/quality-review', [{ name: 'Quality Review', slashCommand: '/quality-review' }])[0];
+assert.equal(cycle112?.description, 'Run the Quality Review skill');
+assert.equal(cycle112?.usage, '/quality-review');
+assert.equal(cycle112?.category, 'skill');

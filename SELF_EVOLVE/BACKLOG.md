@@ -82,3 +82,4 @@
 | 109 | Duplicate skill-command de-duplication coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 110 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
 | 111 | Built-in command collision protection coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 112 | Skill-command fallback metadata coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
