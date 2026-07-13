@@ -489,3 +489,66 @@
 - Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 6.6s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.2s; `npm run test:cli` -> exit 0 / passed / 3.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 129: Ragged CLI table formatting support.
+## Cycle 129 - Terminal ragged table alignment coverage - 2026-07-13
+- Assess: Fresh journal read confirmed Cycle 128. Local inspection of `cli/src/utils/format.ts` showed `table()` already aligns ragged input by padding the widest present column, but the behaviour was only loosely asserted in `format.test.ts`. A dedicated assertion in the rolling commands test surface locks the ragged-row contract next to the other deterministic boundaries.
+- Chosen: Terminal ragged table alignment coverage (score V3/F5/E1/R1); deterministic coverage gives the highest bounded reliability value without dependencies. No runtime source change was required, so the existing format.ts implementation remains authoritative.
+- Definition of Done: Add a focused executable regression case for ragged `format.table()` rows (single-column projection, multi-row uniformity, and a fully ragged row with `admin` as the final cell) to `cli/src/tui/commands.test.ts`. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-129 assertions only).
+- Verification: `npm run build` -> exit 0 / passed / 7.1s; `npm run typecheck` -> exit 0 / passed / 9.2s (node + web + CLI); `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 2.9s (7 CLI test scripts including the new ragged-table assertions). Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 130: HEALTH - full gate cadence.
+## Cycle 130 - HEALTH - full gate cadence - 2026-07-13
+- Assess: Cycle 129 is documented and all required gates were green after a small TS-narrowing cleanup in `commands.test.ts`. Cadence requires a health-only cycle.
+- Chosen: Run the complete mandated gate sequence without net-new product behavior (score V1/F5/E5/R1).
+- Definition of Done: Build, node/web/CLI typecheck, renderer lint followed by CLI lint, and every CLI test script pass in the required order; document immediately before proceeding.
+- Changed: No runtime or test source changes for cycle 130 itself; self-evolve state only.
+- Verification: `npm run build` -> exit 0 / passed / 7.0s; `npm run typecheck` -> exit 0 / passed / 9.0s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.2s; `npm run test:cli` -> exit 0 / passed / 2.9s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 131: ...
+## Cycle 131 - Legacy COLOR_SCHEME environment detection coverage - 2026-07-13
+- Assess: Cycle 130 is documented. Local inspection of `systemUsesDarkPalette` in `cli/src/tui/themes.ts` confirmed that `COLOR_SCHEME` is documented as a legacy environment variable alias, but the rolling tests only exercised `HIVE_COLOR_SCHEME` and `TERM_BACKGROUND`.
+- Chosen: Legacy COLOR_SCHEME environment detection coverage (score V3/F5/E1/R1); deterministic coverage of an under-asserted environment alias.
+- Definition of Done: Add focused executable regression cases verifying that `COLOR_SCHEME=LIGHT` resolves a light system theme and `COLOR_SCHEME=Dark` resolves a dark system theme. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-131 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 132: ...
+
+## Cycle 132 - HIVE_ACCENT environment precedence coverage - 2026-07-13
+- Assess: Cycle 131 is documented. Local inspection of `normaliseAccent` and the accent selection chain in `themes.ts` showed `HIVE_ACCENT` is the lowest-precedence of the three accent sources, but no focused assertion verified the fall-through path.
+- Chosen: HIVE_ACCENT environment precedence coverage (score V3/F5/E1/R1); the fallback chain otherwise has no tight regression coverage.
+- Definition of Done: Add a single focused executable regression case verifying that supplying `HIVE_ACCENT` alone yields a non-default accent. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-132 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 133: ...
+
+## Cycle 133 - Theme id whitespace normalisation coverage - 2026-07-13
+- Assess: Cycle 132 is documented. Local inspection of `normaliseThemeId` in `themes.ts` confirmed the helper trims and lower-cases input, but the rolling tests did not exercise whitespace-padded strings.
+- Chosen: Theme id whitespace normalisation coverage (score V3/F5/E1/R1); tightens the contract for callers that read user-typed theme ids from environment or config.
+- Definition of Done: Add focused executable regression cases verifying that `'  dark  '` resolves to dark and `'\tnord\n'` resolves to nord. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-133 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 134: ...
+
+## Cycle 134 - Accent hex normalisation tolerance coverage - 2026-07-13
+- Assess: Cycle 133 is documented. Local inspection of `normaliseAccent` confirmed it accepts a six-digit hex with or without leading `#` and trims surrounding whitespace, but no focused assertion covered these tolerant paths.
+- Chosen: Accent hex normalisation tolerance coverage (score V3/F5/E1/R1); locks the tolerant contract to prevent accidental tightening.
+- Definition of Done: Add focused executable regression cases verifying that `'aabbcc'` and `'  #ddeeff  '` both yield normalised hex accents on the dark palette. All four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts` (cycle-134 assertion block).
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed; `npm run lint && npm run lint:cli` -> exit 0 / passed; `npm run test:cli` -> exit 0 / passed.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 135: HEALTH - full gate cadence.
+
+
+
+
+## Cycle 173 — secrets.ts test coverage + commands.test.ts string-literal fix — 2026-07-13
+
+- Chosen: Add pure-function coverage for `setSecret`/`getSecret`/`deleteSecret`/`initSecrets` in `src/main/utils/secrets.ts` (score V3/F5/E1/R1). Discovery: secrets.ts had no focused test; the v1/v2 prefix scheme, legacy AES-GCM path, migration on read, and corrupt-record handling were untested. Other candidates: `config.ts` (DB-bound), `init.ts` (DB-bound).
+- Pre-fix: A pre-existing test artifact at `cli/src/tui/commands.test.ts:155` (introduced when a sibling subagent patched the cycle-129 ragged-table block) shipped an unterminated multi-line string literal that broke `test:cli` and surfaced a TS2339 narrowing error in the same block. Health-gate rule requires all gates green before documentation, so this cycle also repairs that one regression.
+- Definition of Done: A new `secrets.test.ts` exercises headless `initSecrets`, v1-prefix legacy write, round-trip, unknown key, corrupted payload, untagged legacy record, migration, delete, multi-key, unicode/long values, unparseable store, idempotency, and empty-string round-trip. The commands.test.ts literal repair restores the original escaped `\n` sequence on a single line. Acceptance: tsx runs both files cleanly with reported assertion counts; runtime source unchanged.
+- Changed: Added `src/main/utils/secrets.test.ts` (14 assertions); registered it in `test:shared`; restored the escaped newline in `cli/src/tui/commands.test.ts:155`. No runtime source or dependencies changed.
+- Verification: `npm run build` -> exit 0 / passed; `npm run typecheck` -> exit 0 / passed (node + web + CLI); `npm run lint` and `npm run lint:cli` -> exit 0 / passed; `npm run test:shared` -> exit 0 / passed (19 scripts including new secrets.test.ts); `npm run test:cli` -> exit 0 / passed (7 scripts).
+- Result: verified. Next: cycle 174 — pick another small pure-function target or do a health cadence cycle.

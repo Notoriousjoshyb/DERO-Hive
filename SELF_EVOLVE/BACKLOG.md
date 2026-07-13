@@ -99,3 +99,9 @@
 | 126 | Terminal accent precedence and normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 127 | Terminal palette completeness and immutability coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 128 | Terminal theme cycling boundary coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 129 | Terminal ragged table alignment coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 130 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
+| 131 | Legacy COLOR_SCHEME environment detection coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 132 | HIVE_ACCENT environment precedence coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 133 | Theme id whitespace normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 134 | Accent hex normalisation tolerance coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
