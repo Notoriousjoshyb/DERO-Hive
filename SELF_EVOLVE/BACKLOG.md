@@ -68,3 +68,4 @@
 | 95 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
 | 96 | Unterminated quoted-argument resilience coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 97 | Unknown slash-command preservation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 98 | Slash-command argument-text fidelity coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

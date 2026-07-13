@@ -46,3 +46,7 @@ const cycle97 = parseSlashCommand('/mystery alpha beta');
 assert.equal(cycle97?.command, 'mystery');
 assert.equal(cycle97?.item, undefined);
 assert.deepEqual(cycle97?.args, ['alpha', 'beta']);
+// Cycle 98: raw argument text retains meaningful internal spacing.
+const cycle98 = parseSlashCommand('  /goal   keep   exact spacing  ');
+assert.equal(cycle98?.argumentText, 'keep   exact spacing');
+assert.deepEqual(cycle98?.args, ['keep', 'exact', 'spacing']);

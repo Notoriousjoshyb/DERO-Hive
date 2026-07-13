@@ -179,3 +179,13 @@
 - Verification: `npm run build` -> exit 0 / passed / 8.4s; `npm run typecheck` -> exit 0 / passed / 6.7s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 3.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
 - Result: verified; protected paths and dependencies unchanged.
 - Next: Re-read JOURNAL.md and begin Cycle 98: Slash-command argument-text fidelity coverage.
+
+## Cycle 98 - Slash-command argument-text fidelity coverage - 2026-07-13
+
+- Assess: Fresh journal read confirmed Cycle 97. Targeted inspection identified an uncovered boundary in the CLI command/theme/format pure-function surface.
+- Chosen: Slash-command argument-text fidelity coverage (score V3/F5/E1/R1); deterministic coverage gives the highest bounded reliability value without dependencies.
+- Definition of Done: Add a focused executable regression case (and the smallest source correction where required); all four mandated health-gate groups pass in order before documentation.
+- Changed: `cli/src/tui/commands.test.ts`.
+- Verification: `npm run build` -> exit 0 / passed / 8.2s; `npm run typecheck` -> exit 0 / passed / 7.0s; `npm run lint && npm run lint:cli` -> exit 0 / passed / 3.3s; `npm run test:cli` -> exit 0 / passed / 3.1s. Gate logs: `C:\Users\joshu\AppData\Local\Temp\dero-hive-cycles-91-130`.
+- Result: verified; protected paths and dependencies unchanged.
+- Next: Re-read JOURNAL.md and begin Cycle 99: Preserve explicitly empty quoted arguments.
