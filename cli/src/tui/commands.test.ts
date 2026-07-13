@@ -81,3 +81,7 @@ const cycle109 = filterCommandItems('/review', [
 ]);
 assert.equal(cycle109.filter((item) => item.name === 'review').length, 1);
 assert.match(cycle109.find((item) => item.name === 'review')?.description ?? '', /first/);
+// Cycle 111: skills cannot shadow a safety-relevant built-in command.
+const cycle111 = filterCommandItems('/help', [{ name: 'shadow', slashCommand: '/help' }]);
+assert.equal(cycle111.filter((item) => item.name === 'help').length, 1);
+assert.equal(cycle111[0]?.source, 'builtin');
