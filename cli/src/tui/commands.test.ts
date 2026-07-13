@@ -105,3 +105,11 @@ assert.equal(commandSuggestions('/', [], 1.9).length, 1);
 // Cycle 118: non-finite limits fall back to the documented default of ten.
 assert.equal(commandSuggestions('/', [], Number.POSITIVE_INFINITY).length, 10);
 assert.equal(commandSuggestions('/', [], Number.NaN).length, 10);
+// Cycle 119: every built-in remains unique, executable, and parseable to itself.
+const cycle119 = await import('./commands.js');
+assert.equal(new Set(cycle119.COMMAND_ITEMS.map((item) => item.name)).size, cycle119.COMMAND_ITEMS.length);
+for (const item of cycle119.COMMAND_ITEMS) {
+  assert.equal(item.command, `/${item.name}`);
+  assert.equal(parseSlashCommand(item.command)?.command, item.name);
+  assert.ok(item.usage.startsWith(item.command));
+}

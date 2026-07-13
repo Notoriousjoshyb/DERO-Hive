@@ -89,3 +89,4 @@
 | 116 | Negative suggestion-limit boundary coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 117 | Fractional suggestion-limit normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 118 | Non-finite suggestion-limit fallback coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 119 | Built-in command catalog integrity coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
