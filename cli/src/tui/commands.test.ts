@@ -123,3 +123,7 @@ assert.equal(theme121.resolveTheme('hive-light', {}).resolvedId, 'light');
 const theme122 = await import('./themes.js');
 assert.equal(theme122.resolveTheme(undefined, { HIVE_THEME: 'nord' }).id, 'nord');
 assert.equal(theme122.resolveTheme(null, { HIVE_THEME: 'gruvbox' }).resolvedId, 'gruvbox');
+// Cycle 123: explicit terminal colour-scheme hints resolve the system theme.
+const theme123 = await import('./themes.js');
+assert.equal(theme123.resolveTheme('system', { HIVE_COLOR_SCHEME: 'light' }).resolvedId, 'light');
+assert.equal(theme123.resolveTheme('system', { TERM_BACKGROUND: 'dark' }).resolvedId, 'dark');
