@@ -50,3 +50,6 @@ assert.deepEqual(cycle97?.args, ['alpha', 'beta']);
 const cycle98 = parseSlashCommand('  /goal   keep   exact spacing  ');
 assert.equal(cycle98?.argumentText, 'keep   exact spacing');
 assert.deepEqual(cycle98?.args, ['keep', 'exact', 'spacing']);
+// Cycle 99: explicit empty quoted arguments are preserved for command handlers.
+const cycle99 = parseSlashCommand('/system "" tail');
+assert.deepEqual(cycle99?.args, ['', 'tail']);

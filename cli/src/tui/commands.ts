@@ -411,6 +411,7 @@ for (const item of COMMAND_ITEMS) {
 function tokeniseArguments(input: string): string[] {
   const tokens: string[] = [];
   let token = '';
+  let tokenStarted = false;
   let quote: '"' | "'" | undefined;
 
   for (let index = 0; index < input.length; index += 1) {
@@ -429,17 +430,20 @@ function tokeniseArguments(input: string): string[] {
 
     if (character === '"' || character === "'") {
       quote = character;
+      tokenStarted = true;
     } else if (/\s/.test(character)) {
-      if (token) {
+      if (tokenStarted) {
         tokens.push(token);
         token = '';
+        tokenStarted = false;
       }
     } else {
       token += character;
+      tokenStarted = true;
     }
   }
 
-  if (token) tokens.push(token);
+  if (tokenStarted) tokens.push(token);
   return tokens;
 }
 
