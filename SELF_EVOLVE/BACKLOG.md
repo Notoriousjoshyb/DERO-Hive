@@ -44,6 +44,8 @@
 | 041 | conversations.ts silent JSON.parse catch blocks → logger.warn | verified | 8 (1/3/1/1) | Cycle 41: 2 silent catch blocks now log warnings. |
 | 042 | FEATURE DISCOVERY — web search competitors/adjacent tools, synthesised 5 feature candidates | discovery | 8 (1/3/1/1) | Cycle 42: candidates: (1) NL DB query, (2) AI agent file tree, (3) project-wide refactor, (4) inline code explanation, (5) diff narrator. |
 | 043-084 | in progress | pending | — | Remaining cycles 43-84. |
+| 131 | Add focused systemPrompt.ts test coverage | verified | 9 (2/5/1/1) | Cycle 131: 11 assertions covering TERMINAL_SYSTEM_PROMPT inheritance, section presence, and Vision paragraph stripping. |
+| 131+ | in progress (Agent 2) | pending | — | Remaining cycles 132-170. |
 
 ## Feature Candidates (from Cycle 42 Discover)
 

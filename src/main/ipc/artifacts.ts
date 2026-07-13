@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDb } from '../db/client';
+import { logger } from '../utils/logger';
 
 const EXPORT_EXT: Record<string, string> = {
   html: 'html',
@@ -32,7 +33,9 @@ export function registerArtifactHandlers(): void {
         GROUP BY a.message_id, a.type, a.content
       )
     `).run();
-  } catch { /* best-effort */ }
+  } catch (err) {
+    logger.warn('artifacts', 'dedup sweep failed', err);
+  }
 
   ipcMain.handle(IPC.ARTIFACT_SAVE, (_e, a: { conversationId: string; messageId: string; type: string; content: string; language?: string; title?: string }) => {
     // Idempotent: re-rendering a message re-extracts its artifacts, so an

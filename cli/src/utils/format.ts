@@ -48,10 +48,7 @@ export function formatProvider(p: ProviderConfig): string {
 
 export function table(rows: string[][]): string {
   if (rows.length === 0) return '';
-  const colWidths = rows[0].map((_, i) => Math.max(...rows.map((r) => (r[i] || '').length)));
-  return rows
-    .map((row) =>
-      row.map((cell, i) => cell.padEnd(colWidths[i])).join('  ')
-    )
-    .join('\n');
+  const colCount = Math.max(...rows.map((r) => r.length));
+  const widths = Array.from({ length: colCount }, (_, i) => Math.max(...rows.map((r) => (r[i] ?? '').length)));
+  return rows.map((r) => widths.map((w, i) => i === widths.length - 1 ? (r[i] ?? '') : (r[i] ?? '').padEnd(w + 2)).join('')).join('\n');
 }
