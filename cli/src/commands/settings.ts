@@ -3,7 +3,7 @@ import { input } from '@inquirer/prompts';
 import { getDb } from '../../../src/main/db/client.js';
 import * as format from '../utils/format.js';
 
-export function settingsCommand(): Command {
+export function settingsCommand() {
   const cmd = new Command('settings').description('Manage Hive settings');
 
   cmd

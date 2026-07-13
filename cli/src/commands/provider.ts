@@ -27,7 +27,7 @@ function safeJson<T>(s: string | null | undefined, fallback: T): T {
   try { return JSON.parse(s) as T; } catch { return fallback; }
 }
 
-export function providerCommand(): Command {
+export function providerCommand() {
   const cmd = new Command('provider')
     .description('Manage AI providers');
 
@@ -57,7 +57,7 @@ export function providerCommand(): Command {
     .option('--api-key <key>', 'API key')
     .option('--model <model>', 'Default model')
     .option('--enabled', 'Enable provider', true)
-    .action(async (options) => {
+    .action(async (options: { preset?: string; id?: string; name?: string; baseUrl?: string; apiKey?: string; model?: string; enabled?: boolean }) => {
       const { PROVIDER_PRESETS, findPreset } = await import('../../../src/shared/presets.js');
       let preset = options.preset ? findPreset(options.preset) : undefined;
       if (!preset) {

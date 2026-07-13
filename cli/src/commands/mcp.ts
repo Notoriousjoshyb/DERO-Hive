@@ -5,7 +5,7 @@ import { getContext } from '../utils/init.js';
 import * as format from '../utils/format.js';
 import type { McpServerConfig } from '../../../src/shared/types.js';
 
-export function mcpCommand(): Command {
+export function mcpCommand() {
   const cmd = new Command('mcp').description('Manage MCP servers');
 
   cmd

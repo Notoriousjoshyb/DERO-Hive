@@ -6,7 +6,7 @@ import { lintDvmBasic } from '../../../src/shared/dvm.js';
 import * as format from '../utils/format.js';
 import { readFileSync } from 'node:fs';
 
-export function simulatorCommand(): Command {
+export function simulatorCommand() {
   const cmd = new Command('simulator').alias('sim').description('DERO blockchain simulator controls');
   const manager = new SimulatorManager();
 

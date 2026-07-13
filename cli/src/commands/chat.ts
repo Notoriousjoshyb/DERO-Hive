@@ -365,7 +365,7 @@ export function chatCommand(): Command {
     .option('--system <prompt>', 'System prompt')
     .option('--conversation <id>', 'Resume a conversation')
     .option('-C, --cwd <path>', 'Workspace directory')
-    .action(async (prompt: string | undefined, options) => {
+    .action(async (prompt: string | undefined, options: NonNullable<Parameters<typeof startChatRepl>[1]>) => {
       await startChatRepl(prompt, options);
     });
 }

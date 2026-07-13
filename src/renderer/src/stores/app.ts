@@ -146,14 +146,14 @@ interface AppState {
   setChatError: (msg: string | null) => void;
   lastStreamErrorAt?: number;
   lastStreamSuccessAt?: number;
-  pendingToolResults: Map<string, { result: string; isError: boolean; durationMs: number }>;
+  pendingToolResults: Map<string, { result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }>;
   startStreaming: (id: string) => void;
   abortChat: () => Promise<void>;
   appendStreamDelta: (content: string) => void;
   appendStreamReasoning: (r: string) => void;
   setStreamingMessageId: (id?: string) => void;
   finishStreaming: () => void;
-  recordToolResult: (messageId: string, toolCallId: string, result: string, isError: boolean, durationMs: number) => void;
+  recordToolResult: (messageId: string, toolCallId: string, result: string, isError: boolean, durationMs: number, meta?: Record<string, unknown>) => void;
 
   // Messages typed while the model is working, queued for the next tool boundary.
   pendingUserMessages: Message[];
@@ -216,6 +216,7 @@ interface AppState {
   // UI state
   sidebarOpen: boolean;
   visionOpen: boolean;
+  visionMode: 'artifacts' | 'media';
   companionOpen: boolean;
   settingsOpen: boolean;
   settingsInitialTab?: string;
@@ -224,6 +225,7 @@ interface AppState {
   toggleSidebar: () => void;
   toggleVision: () => void;
   setVisionOpen: (open: boolean) => void;
+  setVisionMode: (mode: 'artifacts' | 'media') => void;
   toggleCompanion: () => void;
   setSettingsOpen: (open: boolean) => void;
   toggleRightSidebar: () => void;
@@ -534,9 +536,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingUserMessages: []
     });
   },
-  recordToolResult: (messageId, toolCallId, result, isError, durationMs) => {
+  recordToolResult: (messageId, toolCallId, result, isError, durationMs, meta) => {
     const map = new Map(get().pendingToolResults);
-    map.set(`${messageId}:${toolCallId}`, { result, isError, durationMs });
+    map.set(`${messageId}:${toolCallId}`, { result, isError, durationMs, meta });
     set({ pendingToolResults: map });
   },
 
@@ -679,6 +681,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sidebarOpen: true,
   visionOpen: false,
+  visionMode: 'artifacts',
   companionOpen: false,
   settingsOpen: false,
   rightSidebarOpen: false,
@@ -686,6 +689,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   toggleVision: () => set((s) => ({ visionOpen: !s.visionOpen, companionOpen: s.visionOpen ? s.companionOpen : false })),
   setVisionOpen: (open) => set({ visionOpen: open, companionOpen: open ? false : get().companionOpen }),
+  setVisionMode: (mode) => set({ visionMode: mode }),
   toggleCompanion: () => set((s) => ({ companionOpen: !s.companionOpen, visionOpen: s.companionOpen ? s.visionOpen : false })),
   setSettingsOpen: (open) => set({ settingsOpen: open, ...(open ? {} : { settingsInitialTab: undefined }) }),
 

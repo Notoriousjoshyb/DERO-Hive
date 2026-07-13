@@ -5,7 +5,7 @@ import * as projectService from '../services/project.js';
 import * as format from '../utils/format.js';
 import { getDb } from '../../../src/main/db/client.js';
 
-export function projectCommand(): Command {
+export function projectCommand() {
   const cmd = new Command('project').description('Manage project folders');
 
   cmd

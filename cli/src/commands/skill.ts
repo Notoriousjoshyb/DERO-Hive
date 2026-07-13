@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { loadBundledSkills, loadUserSkills, inspectSkillDirectory } from '../../../src/main/skills/loader.js';
 import * as format from '../utils/format.js';
 
-export function skillCommand(): Command {
+export function skillCommand() {
   const cmd = new Command('skill').description('Manage Agent Skills');
 
   cmd

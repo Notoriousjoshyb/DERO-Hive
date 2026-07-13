@@ -751,7 +751,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   },
 
-  async discover_contracts(args, ctx) {
+  async discover_contracts(args) {
     const query = typeof (args as { query?: unknown }).query === 'string' ? (args as { query: string }).query : '';
     const kind = (typeof (args as { kind?: unknown }).kind === 'string' ? (args as { kind: string }).kind : 'similar-contracts') as IndexQuery['kind'];
 

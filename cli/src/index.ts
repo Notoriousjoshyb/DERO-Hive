@@ -87,7 +87,7 @@ program
     program.help();
   });
 
-program.hook('preAction', async (thisCommand, actionCommand) => {
+program.hook('preAction', async (thisCommand: Command, actionCommand: Command) => {
   const opts = thisCommand.opts();
   if (opts.dataDir) process.env.HIVE_DATA_DIR = resolvePath(opts.dataDir);
 

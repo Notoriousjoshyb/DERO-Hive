@@ -3,7 +3,6 @@ import { useAppStore } from '../stores/app';
 import type {
   MediaArtifactRecord,
   MediaGenerationRequest,
-  MediaKind,
   MediaModelOption,
   MediaProviderConfig,
   MediaProviderPreset,

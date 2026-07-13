@@ -4,7 +4,7 @@ import { getContext } from '../utils/init.js';
 import * as format from '../utils/format.js';
 import { getDefaultWorkspace } from '../../../src/main/utils/paths.js';
 
-export function toolCommand(): Command {
+export function toolCommand() {
   const cmd = new Command('tool').description('Manage and run tools');
 
   cmd

@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import * as conversationService from '../services/conversation.js';
 import * as format from '../utils/format.js';
 
-export function conversationCommand(): Command {
+export function conversationCommand() {
   const cmd = new Command('conversation')
     .alias('conv')
     .description('Manage conversations');
