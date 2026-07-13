@@ -149,3 +149,10 @@ const theme128 = await import('./themes.js');
 assert.equal(theme128.nextTheme('unknown'), 'system');
 assert.equal(theme128.nextTheme('light', -1), 'dark');
 assert.equal(theme128.nextTheme('system', -1), 'gruvbox');
+// Cycle 129: ragged tables align present cells to the widest present column.
+const format129 = await import('../utils/format.js');
+assert.equal(format129.table([['Name'], ['Alice']]), 'Name\nAlice');
+assert.equal(format129.table([['a'], ['b'], ['c']]), 'a\nb\nc');
+const ragged129 = format129.table([['name'], ['Alice', '30'], ['Bob', '25', 'admin']]);
+assert.equal(ragged129, 'name       \nAlice  30  \nBob    25  admin');
+assert.ok(ragged129.includes('admin'));
