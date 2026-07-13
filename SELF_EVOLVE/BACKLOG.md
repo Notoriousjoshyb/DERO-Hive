@@ -97,3 +97,4 @@
 | 124 | COLORFGBG terminal detection coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 125 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
 | 126 | Terminal accent precedence and normalisation coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 127 | Terminal palette completeness and immutability coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |

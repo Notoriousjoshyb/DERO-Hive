@@ -137,3 +137,10 @@ const accent126 = theme126.resolveTheme('dark', { accentColor: 'ABCDEF', HIVE_AC
 assert.equal(accent126.palette.accent, '#abcdef');
 assert.match(accent126.palette.accentHover, /^rgb\(\d+, \d+, \d+\)$/);
 assert.match(accent126.palette.accentGlow, /^rgba\(171, 205, 239, 0\.28\)$/);
+// Cycle 127: every concrete palette is complete, non-empty, and immutable.
+const theme127 = await import('./themes.js');
+for (const id of theme127.TERMINAL_THEME_IDS.filter((value) => value !== 'system')) {
+  const resolved = theme127.resolveTheme(id);
+  assert.ok(Object.values(resolved.palette).every((value) => typeof value === 'string' && value.length > 0));
+  assert.ok(Object.isFrozen(resolved.palette));
+}
