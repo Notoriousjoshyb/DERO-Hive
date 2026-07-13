@@ -95,3 +95,4 @@
 | 122 | Environment-selected terminal theme coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 123 | Terminal colour-scheme hint coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
 | 124 | COLORFGBG terminal detection coverage | verified - focused regression/source improvement | V3/F5/E1/R1 |
+| 125 | HEALTH - full gate cadence | verified - health gates only | V1/F5/E5/R1 |
