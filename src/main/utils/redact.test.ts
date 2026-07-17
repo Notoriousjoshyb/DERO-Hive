@@ -29,8 +29,10 @@ assertRedacted(`or key: ${orKey}`, [orKey]);
 // AWS access key id
 assertRedacted('aws_access_key_id = AKIAIOSFODNN7EXAMPLE', ['AKIAIOSFODNN7EXAMPLE']);
 
-// GCP API key
-assertRedacted('gcp key: AIzaSyD4iE2xampleSp8erSizeKeyThatIs35ca', ['AIzaSyD4iE2xampleSp8erSizeKeyThatIs35ca']);
+// GCP API key. Assembled at runtime for the same reason as the OpenRouter
+// fixture above — as a literal it trips GitHub's secret scanner.
+const gcpKey = `AIza${'SyD4iE2xampleSp8erSizeKeyThatIs35ca'}`;
+assertRedacted(`gcp key: ${gcpKey}`, [gcpKey]);
 
 // Bearer tokens (header style and inside JSON)
 assertRedacted('Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig', ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig']);
@@ -86,12 +88,12 @@ for (const key of ['api_key', 'apiKey', 'authorization', 'token', 'API_KEY']) {
   const out = redactArgs({
     cmd: 'curl',
     headers: { Authorization: 'Bearer tok_abc123def456ghi789' },
-    config: { nested: { api_key: 'gcp-AIzaSyD4iE2xampleSp8erSizeKeyThatIs35ca' } },
+    config: { nested: { api_key: `gcp-${gcpKey}` } },
     note: `using key ${openaiKey}`
   });
   assert.ok(!out.includes(openaiKey), out);
   assert.ok(!out.includes('tok_abc123def456ghi789'), out);
-  assert.ok(!out.includes('AIzaSyD4iE2xampleSp8erSizeKeyThatIs35ca'), out);
+  assert.ok(!out.includes(gcpKey), out);
   assert.ok(out.includes('[REDACTED]'), out);
   // key names survive for debuggability
   assert.ok(out.includes('api_key'), out);
