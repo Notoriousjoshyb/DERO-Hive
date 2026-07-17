@@ -219,12 +219,13 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     if (usage) {
       const cachedTokens = anthropicCachedTokens(usage);
+      const promptTokens = anthropicPromptTokens(usage);
       yield {
         type: 'usage',
         usage: {
-          promptTokens: usage.input_tokens || 0,
+          promptTokens,
           completionTokens: usage.output_tokens || 0,
-          totalTokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+          totalTokens: promptTokens + (usage.output_tokens || 0),
           ...(cachedTokens !== undefined ? { cachedTokens } : {})
         }
       };
@@ -237,14 +238,35 @@ function safeJsonParse(s: string): unknown {
   try { return JSON.parse(s); } catch { return {}; }
 }
 
-// Anthropic reports prompt-cache activity as separate counters on usage:
-// cache_read_input_tokens (served from cache) and cache_creation_input_tokens
-// (written to cache). Both are cached prompt tokens — sum them into
-// TokenUsage.cachedTokens. Returns undefined when no caching happened so the
-// field stays absent rather than a misleading 0.
-export function anthropicCachedTokens(u: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number }): number | undefined {
-  const sum = (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-  return sum > 0 ? sum : undefined;
+// Anthropic reports prompt-cache activity as two separate counters, and
+// neither is included in input_tokens (total prompt = input_tokens +
+// cache_read + cache_creation).
+//
+// Only cache_read_input_tokens matches TokenUsage.cachedTokens, which is
+// documented as prompt tokens *served* from cache (~0.1x price).
+// cache_creation_input_tokens is the opposite: tokens *written* to cache, at a
+// ~1.25x premium. Summing them would report a cache write as a cheap cache hit
+// and inflate the ratio against promptTokens. Returns undefined when nothing
+// was read from cache, so the field stays absent rather than a misleading 0.
+export function anthropicCachedTokens(
+  u: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
+): number | undefined {
+  // cache_creation_input_tokens is accepted (callers pass the whole usage
+  // object) but deliberately ignored — see above.
+  const read = u.cache_read_input_tokens || 0;
+  return read > 0 ? read : undefined;
+}
+
+// Anthropic excludes the cache counters from input_tokens; OpenAI's
+// prompt_tokens already includes its cached_tokens. Normalize to the OpenAI
+// shape (cachedTokens is a subset of promptTokens) so cost and totals are
+// comparable across adapters.
+export function anthropicPromptTokens(u: {
+  input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}): number {
+  return (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
 }
 
 // Anthropic error bodies are {type:'error',error:{type,message}} — pull the

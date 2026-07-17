@@ -257,34 +257,6 @@ export function ProjectsPanel(): JSX.Element {
         ))}
       </div>
 
-      <style>{`
-        .input {
-          background: var(--bg-input);
-          border: 1px solid var(--border);
-          color: var(--fg);
-          padding: 6px 10px;
-          border-radius: 6px;
-          font-size: 13px;
-        }
-        .input:focus { outline: none; border-color: var(--accent); }
-        .btn-primary {
-          background: var(--accent);
-          color: white;
-          padding: 6px 12px;
-          border-radius: 6px;
-          font-size: 13px;
-        }
-        .btn-primary:hover { opacity: 0.9; }
-        .btn-secondary {
-          background: var(--bg-input);
-          border: 1px solid var(--border);
-          color: var(--fg);
-          padding: 6px 12px;
-          border-radius: 6px;
-          font-size: 13px;
-        }
-        .btn-secondary:hover { background: var(--bg-elev); }
-      `}</style>
     </div>
   );
 }

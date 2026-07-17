@@ -82,13 +82,6 @@ export function SkillsPanel(): JSX.Element {
         />
       )}
 
-      <style>{`
-        .btn-primary { background: #d97757; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; }
-        .btn-secondary { background: #333230; border: 1px solid #3a3936; color: #faf9f5; padding: 5px 10px; border-radius: 6px; font-size: 11px; }
-        .btn-secondary:hover { background: var(--bg-elev); }
-        .input { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-        .input:focus { outline: none; border-color: var(--accent); }
-      `}</style>
     </div>
   );
 }
@@ -111,12 +104,6 @@ function SkillEditor({ skill, onClose, onSave }: { skill: Skill; onClose: () => 
           <button onClick={() => void onSave(s)} className="btn-primary">Save</button>
         </div>
       </div>
-      <style>{`
-        .input { background: #1f1e1c; border: 1px solid #3a3936; color: #faf9f5; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-        .input:focus { outline: none; border-color: #d97757; }
-        .btn-secondary { background: #333230; border: 1px solid #3a3936; color: #faf9f5; padding: 5px 12px; border-radius: 6px; font-size: 12px; }
-        .btn-primary { background: #d97757; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; }
-      `}</style>
     </div>
   );
 }

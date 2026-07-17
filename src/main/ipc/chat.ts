@@ -40,11 +40,29 @@ function hiveErrorOf(error: unknown, ctx: { providerId?: string; model?: string 
   return carried ?? toHiveError(error, ctx);
 }
 
-// Whether the fallback chain may advance to the next target for this error.
-// auth/quota/invalid_request will not succeed on other targets either —
-// continuing masks the real problem, so the chain aborts immediately.
-export function shouldAbortFallbackChain(info: HiveErrorInfo): boolean {
-  return info.kind === 'auth' || info.kind === 'quota' || info.kind === 'invalid_request';
+// Whether the fallback chain must stop rather than advance to `next`.
+//
+// The decision is per-target, not per-kind: an error that is fatal for one
+// target may be irrelevant to the next one.
+//   - invalid_request is target-specific (unknown model id, unsupported
+//     params). A different target may accept the same request, so never abort
+//     on it — some gateways (OpenCode Zen) even answer an unknown model with
+//     401, which lands here as `auth`.
+//   - auth/quota are provider-scoped (credentials, billing). They will repeat
+//     identically on another target from the *same* provider, but say nothing
+//     about a different provider — abort only when the next hop shares the
+//     provider, otherwise the fallback the user configured is pointless.
+// Everything else (rate_limit, overloaded, network, unknown) may advance.
+export function shouldAbortFallbackChain(
+  info: HiveErrorInfo,
+  current?: ProviderFallback,
+  next?: ProviderFallback
+): boolean {
+  if (info.kind !== 'auth' && info.kind !== 'quota') return false;
+  // Without a next hop to compare against, keep the conservative behavior of
+  // surfacing the credential/billing failure as-is.
+  if (!current || !next) return true;
+  return next.providerId === current.providerId;
 }
 
 // Backoff before a same-target retry. Rate limits carry a provider hint
@@ -206,10 +224,10 @@ async function* streamWithFallback<T extends ProviderFallback>(
       if (signal.aborted) throw error;
       const info = hiveErrorOf(error, { providerId: target.providerId, model: target.model });
       failures.push(`${target.providerId}/${target.model}: ${error instanceof Error ? error.message : String(error)}`);
-      // auth/quota/invalid_request cannot succeed on other targets — abort
-      // the chain immediately instead of masking the real problem.
-      if (shouldAbortFallbackChain(info)) throw error;
       const hasNext = index + 1 < targets.length;
+      // A provider-scoped credential/billing failure that the next hop would
+      // hit identically aborts now, instead of masking the real problem.
+      if (shouldAbortFallbackChain(info, target, hasNext ? targets[index + 1] : undefined)) throw error;
       if (committed || !fallbackAllowed() || !hasNext) {
         if (!committed && fallbackAllowed() && failures.length > 1) {
           const exhausted: ErrorWithInfo = new Error(`Provider fallback chain exhausted: ${failures.join(' | ')}`, { cause: error });

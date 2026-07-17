@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from './stores/app';
+import { useScheduledTasks } from './hooks/useScheduledTasks';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
@@ -25,6 +26,10 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
 
 export default function App(): JSX.Element {
+  // Mounted here rather than in the settings panel: the runner has to outlive
+  // the tab that configures it.
+  useScheduledTasks();
+
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const visionOpen = useAppStore((s) => s.visionOpen);
   const companionOpen = useAppStore((s) => s.companionOpen);

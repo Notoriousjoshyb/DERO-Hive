@@ -466,27 +466,6 @@ export function GeneralPanel(): JSX.Element {
         </div>
       </Section>
 
-      <style>{`
-        .input {
-          background: var(--bg-input);
-          border: 1px solid var(--border);
-          color: var(--fg);
-          padding: 6px 10px;
-          border-radius: 6px;
-          font-size: 13px;
-        }
-        .input:focus { outline: none; border-color: var(--accent); }
-        .input:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-secondary {
-          background: var(--bg-input);
-          border: 1px solid var(--border);
-          color: var(--fg);
-          padding: 6px 12px;
-          border-radius: 6px;
-          font-size: 13px;
-        }
-        .btn-secondary:hover { background: var(--bg-elev); }
-      `}</style>
     </div>
   );
 }

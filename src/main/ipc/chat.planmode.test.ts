@@ -54,16 +54,35 @@ function tool(name: string, source: ToolDefinition['source'] = 'builtin'): ToolD
 
 // ─── shouldAbortFallbackChain ───────────────────────────────────────────────
 
-// auth / quota / invalid_request abort the chain — retrying other targets
-// cannot help and masks the real problem
+const openai = { providerId: 'openai', model: 'gpt-4o' };
+const openaiAlt = { providerId: 'openai', model: 'gpt-4o-mini' };
+const anthropic = { providerId: 'anthropic', model: 'claude-sonnet-4-5' };
+
+// auth / quota are provider-scoped: the next hop on the SAME provider would
+// fail identically, so abort rather than mask the credential/billing problem
 for (const [input, expected] of [
   [{ status: 401, message: 'Invalid API key' }, 'auth'],
-  [{ status: 402, message: 'Payment required' }, 'quota'],
-  [{ status: 400, message: 'messages: field required' }, 'invalid_request']
+  [{ status: 402, message: 'Payment required' }, 'quota']
 ] as const) {
   const info = classifyProviderError(input);
   assert.equal(info.kind, expected);
+  assert.equal(shouldAbortFallbackChain(info, openai, openaiAlt), true, expected);
+  // ...but a DIFFERENT provider knows nothing about this one's credentials,
+  // so the configured fallback must still be tried.
+  assert.equal(shouldAbortFallbackChain(info, openai, anthropic), false, expected);
+  // No next hop: surface the real error as-is.
+  assert.equal(shouldAbortFallbackChain(info, openai, undefined), true, expected);
   assert.equal(shouldAbortFallbackChain(info), true, expected);
+}
+
+// invalid_request is target-specific (unknown model id / unsupported params) —
+// another target may well accept the same request, even on the same provider
+{
+  const info = classifyProviderError({ status: 400, message: 'messages: field required' });
+  assert.equal(info.kind, 'invalid_request');
+  assert.equal(shouldAbortFallbackChain(info, openai, openaiAlt), false);
+  assert.equal(shouldAbortFallbackChain(info, openai, anthropic), false);
+  assert.equal(shouldAbortFallbackChain(info), false);
 }
 
 // rate_limit / overloaded / network / unknown proceed to the next target
@@ -75,7 +94,8 @@ for (const [input, expected] of [
 ] as const) {
   const info = classifyProviderError(input);
   assert.equal(info.kind, expected);
-  assert.equal(shouldAbortFallbackChain(info), false, expected);
+  assert.equal(shouldAbortFallbackChain(info, openai, openaiAlt), false, expected);
+  assert.equal(shouldAbortFallbackChain(info, openai, anthropic), false, expected);
 }
 
 // ─── retryDelayForError ─────────────────────────────────────────────────────

@@ -1,27 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/app';
-
-interface ScheduledTask {
-  id: string;
-  name: string;
-  prompt: string;
-  schedule: string; // cron-like: 'daily', 'weekly', 'hourly', or interval in minutes
-  providerId: string;
-  model: string;
-  enabled: boolean;
-  lastRunAt?: number;
-  nextRunAt?: number;
-  projectId?: string;
-}
-
-const SCHEDULE_PRESETS = [
-  { label: 'Every hour', value: '60' },
-  { label: 'Every 6 hours', value: '360' },
-  { label: 'Daily', value: 'daily' },
-  { label: 'Weekdays', value: 'weekdays' },
-  { label: 'Weekly (Mon)', value: 'weekly-mon' },
-  { label: 'Custom (minutes)', value: 'custom' },
-];
+import { ipcErrorMessage } from '../../lib/ipcError';
+import {
+  SCHEDULE_PRESETS,
+  computeNextRunAt,
+  formatSchedule,
+  loadScheduledTasks,
+  markRan,
+  saveScheduledTasks,
+  type ScheduledTask
+} from '../../lib/scheduledTasks';
 
 export function ScheduledTasksPanel(): JSX.Element {
   const providers = useAppStore((s) => s.providers);
@@ -31,18 +19,14 @@ export function ScheduledTasksPanel(): JSX.Element {
   const [editing, setEditing] = useState<Partial<ScheduledTask> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Load from localStorage (simple persistence for now)
   const loadTasks = useCallback(() => {
-    try {
-      const raw = localStorage.getItem('hive-scheduled-tasks');
-      setTasks(raw ? JSON.parse(raw) : []);
-    } catch { setTasks([]); }
+    setTasks(loadScheduledTasks());
     setLoading(false);
   }, []);
 
   const saveTasks = useCallback((updated: ScheduledTask[]) => {
     setTasks(updated);
-    localStorage.setItem('hive-scheduled-tasks', JSON.stringify(updated));
+    saveScheduledTasks(updated);
   }, []);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
@@ -82,9 +66,17 @@ export function ScheduledTasksPanel(): JSX.Element {
       model: editing.model || providers[0]?.models[0]?.id || '',
       enabled: editing.enabled ?? true,
       lastRunAt: editing.lastRunAt,
-      nextRunAt: editing.nextRunAt,
+      nextRunAt: undefined,
       projectId: editing.projectId,
     };
+    // Reschedule from now whenever the schedule changes (or the task is new);
+    // otherwise keep the pending slot so editing a name doesn't delay a run.
+    const prior = tasks.find((t) => t.id === task.id);
+    task.nextRunAt = task.enabled
+      ? (prior && prior.schedule === task.schedule && typeof prior.nextRunAt === 'number'
+          ? prior.nextRunAt
+          : computeNextRunAt(task.schedule, Date.now()))
+      : undefined;
     if (existing >= 0) {
       const updated = [...tasks];
       updated[existing] = task;
@@ -101,7 +93,11 @@ export function ScheduledTasksPanel(): JSX.Element {
   };
 
   const handleToggle = (id: string): void => {
-    saveTasks(tasks.map((t) => t.id === id ? { ...t, enabled: !t.enabled } : t));
+    saveTasks(tasks.map((t) => {
+      if (t.id !== id) return t;
+      const enabled = !t.enabled;
+      return { ...t, enabled, nextRunAt: enabled ? computeNextRunAt(t.schedule, Date.now()) : undefined };
+    }));
   };
 
   const handleRunNow = async (task: ScheduledTask): Promise<void> => {
@@ -113,27 +109,20 @@ export function ScheduledTasksPanel(): JSX.Element {
         model: task.model,
         messages: [{ id: crypto.randomUUID(), role: 'user', content: task.prompt, createdAt: Date.now() }],
       });
-      const updated = tasks.map((t) => t.id === task.id ? { ...t, lastRunAt: Date.now() } : t);
-      saveTasks(updated);
+      const now = Date.now();
+      saveTasks(tasks.map((t) => (t.id === task.id ? markRan(t, now) : t)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to run task');
+      setError(ipcErrorMessage(err));
     }
   };
 
   const formatDate = (ts?: number): string => ts ? new Date(ts).toLocaleString() : 'Never';
-  const formatSchedule = (s: string): string => {
-    const p = SCHEDULE_PRESETS.find((x) => x.value === s);
-    if (p) return p.label;
-    const n = parseInt(s, 10);
-    return n ? `Every ${n} minutes` : s;
-  };
-
   return (
     <div className="p-4 max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Scheduled Tasks</h2>
-          <p className="text-sm text-fg-subtle mt-1">Recurring prompts that run automatically</p>
+          <p className="text-sm text-fg-subtle mt-1">Recurring prompts. They run only while DERO Hive is open.</p>
         </div>
         <button onClick={handleAdd} className="bg-accent text-white px-3 py-1.5 rounded-lg text-sm hover:bg-accent-hover">Add Task</button>
       </div>
@@ -214,7 +203,7 @@ export function ScheduledTasksPanel(): JSX.Element {
                 <span className="text-[10px] text-fg-muted font-normal">{formatSchedule(task.schedule)}</span>
               </div>
               <div className="text-xs text-fg-subtle truncate mt-0.5">{task.prompt.slice(0, 80)}</div>
-              <div className="text-[10px] text-fg-muted mt-0.5">Last run: {formatDate(task.lastRunAt)}</div>
+              <div className="text-[10px] text-fg-muted mt-0.5">Last run: {formatDate(task.lastRunAt)} · Next: {task.enabled ? formatDate(task.nextRunAt) : 'Paused'}</div>
             </div>
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
               <button onClick={() => void handleRunNow(task)} disabled={!task.enabled}

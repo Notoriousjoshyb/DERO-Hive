@@ -280,16 +280,6 @@ export function ProvidersPanel(): JSX.Element {
         </div>
       )}
 
-      <style>{`
-        .input { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-        .input:focus { outline: none; border-color: var(--accent); }
-        .btn-secondary { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 5px 10px; border-radius: 6px; font-size: 12px; }
-        .btn-secondary:hover:not(:disabled) { background: var(--bg-elev); }
-        .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-primary { background: var(--accent); color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; }
-        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-      `}</style>
     </div>
   );
 }
