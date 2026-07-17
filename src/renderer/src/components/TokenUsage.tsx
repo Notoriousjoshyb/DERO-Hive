@@ -35,6 +35,7 @@ export function TokenUsageBar(): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const compactionHistory = useAppStore((s) => s.compactionHistory);
   const fileChanges = useAppStore((s) => s.fileChanges);
+  const liveUsage = useAppStore((s) => s.liveUsage);
 
   const totals: SessionTotals = useMemo(() => {
     // Sum completion tokens across turns (each turn's completion is independent).
@@ -102,6 +103,19 @@ export function TokenUsageBar(): JSX.Element {
       <span title={totals.hasPricing ? `Input: ${formatCost(totals.inputCost)} · Output: ${formatCost(totals.outputCost)}` : 'No pricing info for this model'}>
         {totals.hasPricing ? formatCost(totals.totalCost) : '—'}
       </span>
+      {liveUsage.reports > 0 && (
+        <>
+          <span className="text-fg-subtle/50">·</span>
+          <span
+            className="text-accent/90 tabular-nums"
+            title={`This turn so far: ${liveUsage.promptTokens.toLocaleString()} in / ${liveUsage.completionTokens.toLocaleString()} out across ${liveUsage.reports} call${liveUsage.reports === 1 ? '' : 's'}`}
+          >
+            turn {formatTokenCount(liveUsage.promptTokens + liveUsage.completionTokens)}
+            {liveUsage.estimatedCost !== undefined && ` · ${formatCost(liveUsage.estimatedCost)}`}
+            {liveUsage.cachedTokens > 0 && ` · ${formatTokenCount(liveUsage.cachedTokens)} cached`}
+          </span>
+        </>
+      )}
       {fileChanges.length > 0 && (
         <>
           <span className="text-fg-subtle/50">·</span>

@@ -28,6 +28,15 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   const setSelection = useAppStore((s) => s.setSelection);
   const toggleFavourite = useAppStore((s) => s.toggleFavourite);
   const favourites = useAppStore((s) => s.settings.favouriteModels || EMPTY_FAVS);
+  const projects = useAppStore((s) => s.projects);
+  const conversations = useAppStore((s) => s.conversations);
+  const currentConversationId = useAppStore((s) => s.currentConversationId);
+
+  // Active conversation's project trust (absent config = standard). Untrusted
+  // projects force a prompt for every tool call in main, so the "never ask"
+  // mode is a lie there — hide it and say why.
+  const activeProject = projects.find((p) => p.id === conversations.find((c) => c.id === currentConversationId)?.projectId);
+  const projectUntrusted = activeProject?.config?.trust === 'untrusted';
 
   const planMode = useAppStore((s) => s.composerPlanMode);
   const togglePlan = useAppStore((s) => s.toggleComposerPlan);
@@ -93,9 +102,9 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
   }, []);
 
   const cyclePermMode = async (): Promise<void> => {
-    const order: ToolApprovalMode[] = ['always', 'session', 'project', 'never'];
+    const order: ToolApprovalMode[] = projectUntrusted ? ['always', 'session', 'project'] : ['always', 'session', 'project', 'never'];
     const cur = settings.toolApprovalMode || 'always';
-    const next = order[(order.indexOf(cur) + 1) % order.length];
+    const next = order[(order.indexOf(cur) + 1) % order.length] || order[0];
     await useAppStore.getState().updateSettings({ toolApprovalMode: next });
   };
 
@@ -148,15 +157,17 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
           <button
             type="button"
             onClick={() => toggleMenu('perm')}
-            title="Tool approval"
-            className={`p-1.5 rounded transition ${settings.toolApprovalMode === 'never' ? 'text-warn bg-warn/10' : 'text-fg-muted hover:text-fg hover:bg-bg-elev'}`}
+            title={projectUntrusted ? 'Tool approval (project is untrusted — every tool call asks)' : 'Tool approval'}
+            className={`p-1.5 rounded transition ${settings.toolApprovalMode === 'never' || projectUntrusted ? 'text-warn bg-warn/10' : 'text-fg-muted hover:text-fg hover:bg-bg-elev'}`}
           >
             <ShieldIcon />
           </button>
           {permMenuOpen && (
             <div className="absolute bottom-full left-0 mb-1 menu-panel overflow-hidden min-w-52 z-50">
               <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-fg-subtle border-b border-border/50">Tool approval</div>
-              {(['always', 'session', 'project', 'never'] as const).map((mode) => (
+              {(['always', 'session', 'project', 'never'] as const)
+                .filter((mode) => !(projectUntrusted && mode === 'never'))
+                .map((mode) => (
                 <button
                   key={mode}
                   onClick={async () => { await useAppStore.getState().updateSettings({ toolApprovalMode: mode }); closeAll(); }}
@@ -166,6 +177,15 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
                   {settings.toolApprovalMode === mode && <CheckMark />}
                 </button>
               ))}
+              {projectUntrusted && (
+                <div className="px-3 py-1.5 text-[10px] text-warn flex items-center gap-1.5 border-t border-border/50">
+                  <LockIcon />
+                  <span>
+                    Project is untrusted — every tool call asks.
+                    {settings.toolApprovalMode === 'never' && ' "Never ask" is set, but prompts will still appear.'}
+                  </span>
+                </div>
+              )}
               <button
                 onClick={async () => { await cyclePermMode(); closeAll(); }}
                 className="w-full text-left px-3 py-1.5 text-[10px] text-fg-subtle hover:bg-bg-input border-t border-border/50"
@@ -446,6 +466,9 @@ function FocusIcon({ on }: { on: boolean }): JSX.Element {
 }
 function ShieldIcon(): JSX.Element {
   return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 2l5 2v4c0 3-2 5-5 6-3-1-5-3-5-6V4l5-2z" /></svg>;
+}
+function LockIcon(): JSX.Element {
+  return <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="flex-shrink-0"><rect x="3.5" y="7" width="9" height="6" rx="1" /><path d="M5.5 7V5a2.5 2.5 0 015 0v2" /></svg>;
 }
 function AgentIcon(): JSX.Element {
   return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="2" /><circle cx="11" cy="10" r="2" /><path d="M8 8l1 1" /></svg>;

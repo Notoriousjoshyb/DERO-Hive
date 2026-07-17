@@ -47,6 +47,8 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Prompt tokens served from the provider's cache (cheaper / faster). */
+  cachedTokens?: number;
 }
 
 export interface ToolCall {
@@ -90,13 +92,29 @@ export interface ChatRequest {
   skipUserPersist?: boolean;
 }
 
+// Structured error taxonomy (Phase 1). `StreamEvent.error` stays a plain
+// string for compatibility; `errorInfo` carries the classified detail.
+export type HiveErrorCategory = 'provider' | 'tool' | 'harness';
+export type HiveErrorKind = 'rate_limit' | 'auth' | 'quota' | 'overloaded' | 'network' | 'invalid_request' | 'unknown';
+
+export interface HiveErrorInfo {
+  category: HiveErrorCategory;
+  kind: HiveErrorKind;
+  retriable: boolean;
+  retryAfterMs?: number;
+  providerId?: string;
+  model?: string;
+  message: string;
+}
+
 export type StreamEvent =
   | { type: 'start'; conversationId: string; messageId: string }
   | { type: 'delta'; conversationId: string; messageId: string; content?: string; reasoning?: string }
   | { type: 'tool_calls'; conversationId: string; messageId: string; toolCalls: ToolCall[] }
   | { type: 'usage'; conversationId: string; messageId: string; usage: TokenUsage }
   | { type: 'done'; conversationId: string; messageId: string }
-  | { type: 'error'; conversationId: string; messageId: string; error: string };
+  | { type: 'error'; conversationId: string; messageId: string; error: string; errorInfo?: HiveErrorInfo }
+  | { type: 'fallback'; conversationId: string; from: { providerId: string; model: string }; to: { providerId: string; model: string }; reason: string };
 
 // Provider preset definition (built-in)
 export interface ProviderPreset {
@@ -263,6 +281,8 @@ export interface ProjectConfig {
     allowAutomationWrites?: boolean;
   };
   mcpServerIds?: string[];
+  /** Trust level for tool automation. Absent means 'standard' (consumers default). */
+  trust?: 'untrusted' | 'standard' | 'trusted';
 }
 
 export type KnowledgeCapability = 'list' | 'read' | 'search' | 'write' | 'append' | 'patch' | 'open';
@@ -391,6 +411,12 @@ export function normalizeProjectConfig(value: unknown): ProjectConfig {
     if (input.kind !== 'general' && input.kind !== 'dero') throw new Error('Invalid project kind');
     config.kind = input.kind;
   }
+  if (input.trust !== undefined) {
+    if (input.trust !== 'untrusted' && input.trust !== 'standard' && input.trust !== 'trusted') {
+      throw new Error('Invalid project trust level');
+    }
+    config.trust = input.trust;
+  }
   if (input.mcpServerIds !== undefined) {
     if (!Array.isArray(input.mcpServerIds) || input.mcpServerIds.some((id) => typeof id !== 'string' || !id.trim())) {
       throw new Error('Project MCP server ids must be non-empty strings');
@@ -444,6 +470,36 @@ export interface PermissionRule {
   action: 'allow' | 'deny' | 'ask';
   scope?: 'project' | 'global';
   projectPath?: string;
+}
+
+// Tool-execution audit row (tool_executions table). `argsRedacted` is
+// pre-redacted JSON (see src/main/utils/redact.ts), `filesTouched` a decoded
+// JSON array of paths.
+export interface ToolExecutionRecord {
+  id: string;
+  conversationId: string;
+  tool: string;
+  argsRedacted: string;
+  decision: 'allow' | 'deny';
+  durationMs: number;
+  status: 'success' | 'error' | 'denied';
+  filesTouched: string[];
+  createdAt: number;
+}
+
+// File-edit checkpoint row (file_checkpoints table). Hashes reference blobs in
+// the checkpoint store; `beforeHash` is undefined for newly-created files and
+// `revertedAt` is set once the checkpoint has been rolled back.
+export interface FileCheckpoint {
+  id: string;
+  conversationId: string;
+  toolCallId?: string;
+  path: string;
+  beforeHash?: string;
+  afterHash?: string;
+  sizeBytes: number;
+  createdAt: number;
+  revertedAt?: number;
 }
 
 export type ToolApprovalMode = 'always' | 'session' | 'project' | 'never';
@@ -531,6 +587,7 @@ export interface UsageModelRow {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cachedTokens?: number;
 }
 
 export interface UsageStats {
@@ -568,6 +625,11 @@ export const IPC = {
   CONV_COMPACT: 'conv:compact',
   CONV_COMPACTED: 'conv:compacted',
   CONV_TITLE_GENERATED: 'conv:title-generated',
+  CONV_EXPORT: 'conv:export',
+  CONV_IMPORT: 'conv:import',
+  CONV_ARCHIVE: 'conv:archive',
+  CONV_UNARCHIVE: 'conv:unarchive',
+  CONV_LIST_ARCHIVED: 'conv:listArchived',
 
   // Usage / cost dashboard
   USAGE_STATS: 'usage:stats',
@@ -640,6 +702,19 @@ export const IPC = {
   TOOL_LIST: 'tool:list',
   TOOL_PERMISSION_DECIDE: 'tool:permission:decide',
   TOOL_PERMISSION_REQUEST: 'tool:permission:request', // event
+
+  // Tool-execution audit log
+  AUDIT_LIST: 'audit:list',
+
+  // File-edit checkpoints
+  CHECKPOINT_LIST: 'checkpoint:list',
+  CHECKPOINT_REVERT: 'checkpoint:revert',
+  CHECKPOINT_REVERT_ALL: 'checkpoint:revert-all',
+
+  // Permission rules (shared table with the CLI)
+  PERMISSION_RULE_LIST: 'permission-rule:list',
+  PERMISSION_RULE_ADD: 'permission-rule:add',
+  PERMISSION_RULE_REMOVE: 'permission-rule:remove',
 
   // FS / Shell
   FS_READ: 'fs:read',

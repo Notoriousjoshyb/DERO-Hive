@@ -31,9 +31,10 @@ export function useChat(): void {
   }, []);
 
   useEffect(() => {
-    // Clear stale todos, compaction history, and file-change counters when switching
+    // Clear stale todos, compaction/fallback notices, and file-change counters when switching
     useAppStore.getState().clearTodos();
     useAppStore.getState().clearCompactionHistory();
+    useAppStore.getState().clearFallbackHistory();
     useAppStore.getState().clearFileChanges();
 
     // Listen for auto-compaction events from the main process
@@ -47,12 +48,27 @@ export function useChat(): void {
     const offStream = window.hive.onChatStream((evt: StreamEvent) => {
       if (evt.conversationId !== currentId) return;
       switch (evt.type) {
+        case 'start':
+          // `start` fires once per agentic round (chat.ts:519), not per user
+          // turn — beginLiveTurn only resets the live tally when idle.
+          useAppStore.getState().beginLiveTurn();
+          break;
         case 'delta':
           if (evt.content) appendDelta(evt.content);
           if (evt.reasoning) appendReasoning(evt.reasoning);
           break;
         case 'tool_calls':
+          break;
         case 'usage':
+          if (evt.usage) useAppStore.getState().recordLiveUsage(evt.usage);
+          break;
+        case 'fallback':
+          useAppStore.getState().recordFallback({
+            conversationId: evt.conversationId,
+            from: evt.from,
+            to: evt.to,
+            reason: evt.reason
+          });
           break;
         case 'done':
           finish();
@@ -61,7 +77,7 @@ export function useChat(): void {
           break;
         case 'error':
           finish();
-          useAppStore.getState().setChatError(evt.error || 'Streaming error');
+          useAppStore.getState().setChatError(evt.error || 'Streaming error', evt.errorInfo ?? null);
           if (currentId) void useAppStore.getState().selectConversation(currentId);
           break;
       }
@@ -92,6 +108,7 @@ export function useChat(): void {
           beforeTruncated?: boolean;
           afterTruncated?: boolean;
           hunkStartLine?: number;
+          checkpointId?: string;
         };
         if (m.path && m.kind) {
           useAppStore.getState().recordFileChange({
@@ -105,7 +122,8 @@ export function useChat(): void {
             after: m.after,
             beforeTruncated: m.beforeTruncated,
             afterTruncated: m.afterTruncated,
-            hunkStartLine: m.hunkStartLine
+            hunkStartLine: m.hunkStartLine,
+            checkpointId: m.checkpointId
           });
         }
       }

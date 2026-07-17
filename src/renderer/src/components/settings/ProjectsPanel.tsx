@@ -157,6 +157,26 @@ export function ProjectsPanel(): JSX.Element {
             <p className="mt-1 text-[11px] text-fg-subtle">DERO projects show the Contract Studio, simulator controls, and development prompts in their cockpit.</p>
           </div>
 
+          <div>
+            <label className="text-sm text-fg-subtle">Trust level</label>
+            <select
+              value={editing.config?.trust || 'standard'}
+              onChange={(e) => setEditing({ ...editing, config: { ...editing.config, trust: e.target.value as 'untrusted' | 'standard' | 'trusted' } })}
+              className="input w-full mt-1"
+            >
+              <option value="untrusted">Untrusted</option>
+              <option value="standard">Standard</option>
+              <option value="trusted">Trusted</option>
+            </select>
+            <p className="mt-1 text-[11px] text-fg-subtle">
+              {(editing.config?.trust || 'standard') === 'untrusted'
+                ? 'Every tool call asks — autopilot and allow rules are disabled; deny rules still apply.'
+                : (editing.config?.trust || 'standard') === 'trusted'
+                ? 'Trusted — autopilot may be offered for this project.'
+                : 'Standard — your global approval mode applies.'}
+            </p>
+          </div>
+
           {editing.config?.kind === 'dero' && (
             <fieldset className="rounded-lg border border-border p-3 space-y-2">
               <legend className="px-1 text-sm font-medium text-fg">DERO MCP context</legend>

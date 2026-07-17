@@ -277,7 +277,7 @@ CREATE INDEX IF NOT EXISTS idx_media_artifacts_conv ON media_artifacts(conversat
 CREATE INDEX IF NOT EXISTS idx_media_artifacts_status ON media_artifacts(status, created_at DESC);
 `;
 
-const CURRENT_SCHEMA_VERSION = 13;
+const CURRENT_SCHEMA_VERSION = 15;
 
 export async function initDb(): Promise<void> {
   const dir = dirname(paths.db);
@@ -566,6 +566,46 @@ const MIGRATIONS: Migration[] = [
           CREATE INDEX IF NOT EXISTS idx_media_artifacts_status ON media_artifacts(status, created_at DESC);
         `);
       }
+    }
+  },
+  {
+    version: 14,
+    description: 'Add tool execution audit log',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS tool_executions (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          tool TEXT NOT NULL,
+          args_redacted TEXT,
+          decision TEXT NOT NULL,
+          duration_ms INTEGER,
+          status TEXT NOT NULL,
+          files_touched TEXT,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_executions_conv ON tool_executions(conversation_id, created_at);
+      `);
+    }
+  },
+  {
+    version: 15,
+    description: 'Add file-edit checkpoints',
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS file_checkpoints (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          tool_call_id TEXT,
+          path TEXT NOT NULL,
+          before_hash TEXT,
+          after_hash TEXT,
+          size_bytes INTEGER,
+          created_at INTEGER NOT NULL,
+          reverted_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_checkpoints_conv ON file_checkpoints(conversation_id, created_at);
+      `);
     }
   }
 ];

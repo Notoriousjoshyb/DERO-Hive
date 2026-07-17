@@ -14,6 +14,7 @@ const PERIODS: Array<{ id: Period; label: string }> = [
 // usage; prices come from the configured providers' model metadata ($/1M tokens).
 export function UsagePanel(): JSX.Element {
   const providers = useAppStore((s) => s.providers);
+  const lastStreamFinishedAt = useAppStore((s) => s.lastStreamFinishedAt);
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [period, setPeriod] = useState<Period>('today');
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +25,8 @@ export function UsagePanel(): JSX.Element {
       .then((s) => { if (!cancelled) setStats(s); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
-  }, []);
+    // Refetch when a stream finishes so the just-persisted usage shows up.
+  }, [lastStreamFinishedAt]);
 
   const priceFor = useMemo(() => {
     // Keyed by provider+model, with a model-only fallback for usage rows whose
@@ -103,6 +105,8 @@ export function UsagePanel(): JSX.Element {
             <div className="space-y-1.5">
               {rows.map((r) => {
                 const cost = costOf(r);
+                // cachedTokens isn't aggregated by the USAGE_STATS SQL yet — render only when present.
+                const cached = (r as UsageModelRow & { cachedTokens?: number }).cachedTokens ?? 0;
                 return (
                   <div key={`${r.provider}:${r.model}`} className="px-2.5 py-2 rounded-lg border border-border/60 bg-bg-elev/50">
                     <div className="flex items-center justify-between gap-2 mb-1">
@@ -116,7 +120,7 @@ export function UsagePanel(): JSX.Element {
                     </div>
                     <div className="flex items-center justify-between text-[9px] text-fg-subtle tabular-nums">
                       <span>{fmt(r.totalTokens)} tok · {r.messages} msg{r.messages === 1 ? '' : 's'}</span>
-                      <span>{fmt(r.promptTokens)} in / {fmt(r.completionTokens)} out</span>
+                      <span>{fmt(r.promptTokens)} in / {fmt(r.completionTokens)} out{cached > 0 ? ` · ${fmt(cached)} cached` : ''}</span>
                     </div>
                   </div>
                 );

@@ -9,6 +9,9 @@ export interface LiveModelDetail {
   supportsVision?: boolean;
   supportsTools?: boolean;
   supportsReasoning?: boolean;
+  // $/1M tokens, parsed from OpenRouter's pricing field
+  inputPrice?: number;
+  outputPrice?: number;
 }
 
 export interface LiveModelsResult {
@@ -132,9 +135,31 @@ function extractModels(data: unknown): { ids: string[]; details: Record<string, 
   return { ids, details };
 }
 
+// OpenRouter's /models catalog reports pricing as USD-per-token decimal strings
+// (pricing.prompt / pricing.completion). Convert to $/1M tokens to match
+// ProviderModel.inputPrice/outputPrice. Missing, non-numeric, or zero values
+// stay undefined — writing 0 would render as "free" in the cost dashboard.
+export function parseOpenRouterPricing(raw: unknown): { inputPrice?: number; outputPrice?: number } {
+  if (!raw || typeof raw !== 'object') return {};
+  const p = raw as Record<string, unknown>;
+  const out: { inputPrice?: number; outputPrice?: number } = {};
+  const inputPrice = perTokenToPerMillion(p.prompt);
+  const outputPrice = perTokenToPerMillion(p.completion);
+  if (inputPrice !== undefined) out.inputPrice = inputPrice;
+  if (outputPrice !== undefined) out.outputPrice = outputPrice;
+  return out;
+}
+
+function perTokenToPerMillion(v: unknown): number | undefined {
+  const n = typeof v === 'string' || typeof v === 'number' ? Number(v) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  // Round to micro-dollars to guard against float noise in n * 1e6.
+  return Math.round(n * 1e6 * 1e6) / 1e6;
+}
+
 // Pull whatever metadata the provider volunteers. Field names verified against
 // OpenRouter (context_length, top_provider.max_completion_tokens, architecture,
-// supported_parameters), Anthropic (display_name) and Ollama (capabilities).
+// supported_parameters, pricing), Anthropic (display_name) and Ollama (capabilities).
 function extractDetail(o: Record<string, unknown>, id: string): LiveModelDetail | null {
   const detail: LiveModelDetail = {};
 
@@ -158,6 +183,11 @@ function extractDetail(o: Record<string, unknown>, id: string): LiveModelDetail 
     detail.supportsTools = params.includes('tools');
     detail.supportsReasoning = params.includes('reasoning') || params.includes('include_reasoning');
   }
+
+  // OpenRouter pricing: USD-per-token decimal strings → $/1M numbers.
+  const pricing = parseOpenRouterPricing(o.pricing);
+  if (pricing.inputPrice !== undefined) detail.inputPrice = pricing.inputPrice;
+  if (pricing.outputPrice !== undefined) detail.outputPrice = pricing.outputPrice;
 
   // Ollama /api/tags: capabilities: ["completion","tools","thinking","vision"]
   const caps = o.capabilities as string[] | undefined;

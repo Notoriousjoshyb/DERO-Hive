@@ -7,11 +7,21 @@ export interface ModelMetadata {
   supportsTools?: boolean;
   supportsAudio?: boolean;
   supportsReasoning?: boolean;
+  /** $/1M tokens (list-price fallbacks — see KNOWN_MODELS header). */
+  inputPrice?: number;
+  outputPrice?: number;
 }
 
 // Context windows / max output verified against OpenRouter's live catalog
 // (2026-07). These are fallbacks for gateways that report no metadata (OpenCode);
 // providers that DO report it live (OpenRouter, Ollama) override these values.
+//
+// inputPrice/outputPrice are $/1M-token list prices from the public OpenAI,
+// Anthropic and Google pricing pages, as of H1-2026. Only models with
+// widely-published flat list prices are priced; anything tiered, regional or
+// uncertain is left unpriced on purpose — live OpenRouter pricing (parsed in
+// providers/models.ts) is the primary source and always wins via the ?? merge
+// in applyKnownMetadata.
 export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   // OpenAI
   'gpt-5.5': { contextWindow: 1_050_000, maxOutput: 128_000, supportsVision: true, supportsTools: true },
@@ -35,35 +45,35 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   // xAI Grok
   'grok-4.5': { contextWindow: 500_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
   'grok-build-0.1': { contextWindow: 256_000, supportsTools: true },
-  'gpt-4o': { contextWindow: 128_000, maxOutput: 16_384, supportsVision: true, supportsTools: true },
-  'gpt-4o-mini': { contextWindow: 128_000, maxOutput: 16_384, supportsVision: true, supportsTools: true },
-  'gpt-4-turbo': { contextWindow: 128_000, maxOutput: 4_096, supportsVision: true, supportsTools: true },
-  'gpt-4': { contextWindow: 8_192, maxOutput: 4_096, supportsVision: false, supportsTools: true },
-  'gpt-3.5-turbo': { contextWindow: 16_385, maxOutput: 4_096, supportsVision: false, supportsTools: true },
+  'gpt-4o': { contextWindow: 128_000, maxOutput: 16_384, supportsVision: true, supportsTools: true, inputPrice: 2.5, outputPrice: 10 },
+  'gpt-4o-mini': { contextWindow: 128_000, maxOutput: 16_384, supportsVision: true, supportsTools: true, inputPrice: 0.15, outputPrice: 0.6 },
+  'gpt-4-turbo': { contextWindow: 128_000, maxOutput: 4_096, supportsVision: true, supportsTools: true, inputPrice: 10, outputPrice: 30 },
+  'gpt-4': { contextWindow: 8_192, maxOutput: 4_096, supportsVision: false, supportsTools: true, inputPrice: 30, outputPrice: 60 },
+  'gpt-3.5-turbo': { contextWindow: 16_385, maxOutput: 4_096, supportsVision: false, supportsTools: true, inputPrice: 0.5, outputPrice: 1.5 },
 
   // Anthropic
   'claude-fable-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
   'claude-opus-4.8': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
   'claude-opus-4.7': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
   'claude-opus-4.6': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-opus-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-opus-4.1': { contextWindow: 200_000, maxOutput: 32_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
+  'claude-opus-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
+  'claude-opus-4.1': { contextWindow: 200_000, maxOutput: 32_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 15, outputPrice: 75 },
   'claude-sonnet-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
   'claude-sonnet-4.6': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
   // sonnet 4 / 4.5: a 1M-context beta exists but needs an opt-in header — assume the standard 200k
-  'claude-sonnet-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-sonnet-4': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-haiku-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-3-5-sonnet-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-3-5-haiku-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-3-opus-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-3-sonnet-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-3-haiku-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true },
+  'claude-sonnet-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
+  'claude-sonnet-4': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
+  'claude-haiku-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 1, outputPrice: 5 },
+  'claude-3-5-sonnet-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
+  'claude-3-5-haiku-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 0.8, outputPrice: 4 },
+  'claude-3-opus-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 15, outputPrice: 75 },
+  'claude-3-sonnet-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
+  'claude-3-haiku-latest': { contextWindow: 200_000, maxOutput: 8_192, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 0.25, outputPrice: 1.25 },
 
   // Google Gemini
   'gemini-2.5-pro': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true },
-  'gemini-2.5-flash': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true },
-  'gemini-2.0-flash': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true },
+  'gemini-2.5-flash': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true, inputPrice: 0.3, outputPrice: 2.5 },
+  'gemini-2.0-flash': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true, inputPrice: 0.1, outputPrice: 0.4 },
   'gemini-1.5-flash': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true },
   'gemini-1.5-pro': { contextWindow: 2_097_152, maxOutput: 8_192, supportsVision: true, supportsTools: true },
   'gemini-1.5-flash-8b': { contextWindow: 1_048_576, maxOutput: 8_192, supportsVision: true, supportsTools: true },
@@ -186,7 +196,9 @@ export function applyKnownMetadata(models: ProviderModel[]): ProviderModel[] {
       supportsVision: withMedia.supportsVision ?? known.supportsVision,
       supportsTools: withMedia.supportsTools ?? known.supportsTools,
       supportsAudio: withMedia.supportsAudio ?? known.supportsAudio,
-      supportsReasoning: withMedia.supportsReasoning ?? known.supportsReasoning
+      supportsReasoning: withMedia.supportsReasoning ?? known.supportsReasoning,
+      inputPrice: withMedia.inputPrice ?? known.inputPrice,
+      outputPrice: withMedia.outputPrice ?? known.outputPrice
     };
   });
 }

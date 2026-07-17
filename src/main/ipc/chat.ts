@@ -2,7 +2,8 @@ import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel } from '@shared/types';
+import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel, type HiveErrorInfo, type ToolDefinition } from '@shared/types';
+import { classifyProviderError, toHiveError } from '@shared/errors';
 import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
 import { getAdapter, listProviders } from '../providers/registry';
@@ -23,6 +24,55 @@ const queuedUserMessages = new Map<string, Message[]>();
 const streamObservers = new Set<(event: StreamEvent) => void>();
 const MAX_STREAM_RETRIES = 2;
 const STREAM_RETRY_BASE_DELAY_MS = 800;
+// Provider Retry-After hints are honored for rate limits, but capped so a
+// hostile or buggy hint cannot stall a turn indefinitely.
+const MAX_RATE_LIMIT_DELAY_MS = 60_000;
+
+// Structured error info rides on thrown errors so classification survives the
+// trip from the adapter/inline error event up to the terminal stream event.
+type ErrorWithInfo = Error & { errorInfo?: HiveErrorInfo };
+
+// Pull structured error info off a thrown value. Provider error events and
+// adapters may already carry a classified `errorInfo` — pass it through;
+// otherwise classify from status/code/message.
+function hiveErrorOf(error: unknown, ctx: { providerId?: string; model?: string } = {}): HiveErrorInfo {
+  const carried = (error as { errorInfo?: HiveErrorInfo } | null)?.errorInfo;
+  return carried ?? toHiveError(error, ctx);
+}
+
+// Whether the fallback chain may advance to the next target for this error.
+// auth/quota/invalid_request will not succeed on other targets either —
+// continuing masks the real problem, so the chain aborts immediately.
+export function shouldAbortFallbackChain(info: HiveErrorInfo): boolean {
+  return info.kind === 'auth' || info.kind === 'quota' || info.kind === 'invalid_request';
+}
+
+// Backoff before a same-target retry. Rate limits carry a provider hint
+// (Retry-After); honor it, capped at MAX_RATE_LIMIT_DELAY_MS.
+export function retryDelayForError(info: HiveErrorInfo, attempt: number, baseDelayMs = STREAM_RETRY_BASE_DELAY_MS): number {
+  if (info.kind === 'rate_limit' && typeof info.retryAfterMs === 'number' && info.retryAfterMs > 0) {
+    return Math.min(info.retryAfterMs, MAX_RATE_LIMIT_DELAY_MS);
+  }
+  return baseDelayMs * attempt;
+}
+
+// Plan mode (workstream 1F): read-only inspection tools the model may use
+// while planning. Mirrors the CLI's safe set (cli/src/services/chat.ts).
+const PLAN_SAFE_TOOL_NAMES = new Set([
+  'read_file',
+  'list_directory',
+  'glob_files',
+  'grep_files',
+  'lint_dvm_basic',
+  'get_simulator_chain_info'
+]);
+
+// Advertised-tool filter for plan mode: built-in, read-only tools only —
+// mutating, shell, media-generation, and third-party MCP tools are never
+// offered to the model.
+export function filterPlanSafeTools(tools: ToolDefinition[]): ToolDefinition[] {
+  return tools.filter((tool) => tool.source === 'builtin' && PLAN_SAFE_TOOL_NAMES.has(tool.name));
+}
 
 // Used by the loopback Browser Companion bridge. Observers only receive the
 // same normalized stream events already sent to the renderer.
@@ -33,6 +83,7 @@ export function onChatStreamEvent(observer: (event: StreamEvent) => void): () =>
 
 // Retry a streaming adapter if it fails before producing any events. This
 // smooths over transient network blips without duplicating partial content.
+// Rate-limit failures back off per the provider's Retry-After hint (capped).
 async function* streamWithRetry<T>(
   makeStream: () => AsyncIterable<T>,
   signal: AbortSignal,
@@ -54,7 +105,7 @@ async function* streamWithRetry<T>(
       if (signal.aborted) throw err;
       if (produced || !retryAllowed() || attempt >= maxRetries) throw err;
       attempt++;
-      await new Promise((r) => setTimeout(r, baseDelayMs * attempt));
+      await new Promise((r) => setTimeout(r, retryDelayForError(hiveErrorOf(err), attempt, baseDelayMs)));
     }
   }
 }
@@ -119,12 +170,15 @@ function commitsProviderOutput(event: ProviderStreamEvent): boolean {
 // Stream from the first target; on failure before any committed output, fall
 // through to the next target in the chain. `fallbackAllowed` lets the caller
 // veto fallback once a side effect (e.g. a tool permission prompt) has fired.
+// Errors are classified (workstream 1B): auth/quota/invalid_request abort the
+// whole chain, and `onFallback` fires whenever the chain advances a target.
 async function* streamWithFallback<T extends ProviderFallback>(
   targets: readonly T[],
   makeStream: (target: T) => AsyncIterable<ProviderStreamEvent>,
   signal: AbortSignal,
   fallbackAllowed: () => boolean = () => true,
   retryAllowed: () => boolean = () => true,
+  onFallback?: (from: T, to: T, reason: string) => void,
   maxRetries = MAX_STREAM_RETRIES,
   baseDelayMs = STREAM_RETRY_BASE_DELAY_MS
 ): AsyncGenerator<{ target: T; event: ProviderStreamEvent }> {
@@ -137,20 +191,34 @@ async function* streamWithFallback<T extends ProviderFallback>(
         () => makeStream(target), signal, maxRetries, baseDelayMs, retryAllowed
       )) {
         if (commitsProviderOutput(event)) committed = true;
-        if (event.type === 'error') throw new Error(event.error || 'Provider stream failed');
+        if (event.type === 'error') {
+          // Inline provider error event: pass through its classified errorInfo
+          // when present, otherwise classify the message text.
+          const err: ErrorWithInfo = new Error(event.error || 'Provider stream failed');
+          err.errorInfo = event.errorInfo
+            ?? classifyProviderError({ message: err.message, providerId: target.providerId, model: target.model });
+          throw err;
+        }
         yield { target, event };
       }
       return;
     } catch (error) {
       if (signal.aborted) throw error;
+      const info = hiveErrorOf(error, { providerId: target.providerId, model: target.model });
       failures.push(`${target.providerId}/${target.model}: ${error instanceof Error ? error.message : String(error)}`);
+      // auth/quota/invalid_request cannot succeed on other targets — abort
+      // the chain immediately instead of masking the real problem.
+      if (shouldAbortFallbackChain(info)) throw error;
       const hasNext = index + 1 < targets.length;
       if (committed || !fallbackAllowed() || !hasNext) {
         if (!committed && fallbackAllowed() && failures.length > 1) {
-          throw new Error(`Provider fallback chain exhausted: ${failures.join(' | ')}`, { cause: error });
+          const exhausted: ErrorWithInfo = new Error(`Provider fallback chain exhausted: ${failures.join(' | ')}`, { cause: error });
+          exhausted.errorInfo = info;
+          throw exhausted;
         }
         throw error;
       }
+      onFallback?.(target, targets[index + 1], info.kind);
     }
   }
 }
@@ -264,6 +332,11 @@ async function runChat(
     win?.webContents.send(IPC.CHAT_STREAM, evt);
     for (const observer of streamObservers) observer(evt);
   };
+
+  // Tracks the round currently streaming. Declared out here so the outer
+  // catch stamps the error onto the round that actually failed rather than
+  // onto round 0's (already persisted, successful) row.
+  let lastTurnId = messageId;
 
   // Run async without blocking the invoke response
   (async () => {
@@ -424,13 +497,14 @@ async function runChat(
       // Multi-turn agentic loop. Each round lets the model inspect its tool
       // results and decide the next action. Keep it bounded so a mistaken or
       // repetitive plan cannot run indefinitely.
-      const availableTools = tools.listTools();
+      // Plan mode (workstream 1F) only advertises the CLI's read-only safe
+      // set — mutating, shell, media, and MCP tools are never offered.
+      const availableTools = req.planMode ? filterPlanSafeTools(tools.listTools()) : tools.listTools();
       const configuredRounds = req.maxAgenticRounds ?? appSettings?.maxAgenticRounds ?? 20;
       const maxAgenticRounds = Number.isFinite(configuredRounds)
         ? Math.min(50, Math.max(1, Math.floor(configuredRounds)))
         : 20;
 
-      let lastTurnId = messageId;
       let selectedTarget = activeTargets[0];
       // Once a round has committed output or triggered a side effect (e.g. a
       // tool permission prompt), switching providers mid-conversation could
@@ -458,7 +532,7 @@ async function runChat(
         const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
         let assistantContent = '';
         let assistantReasoning = '';
-        const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        const roundUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0 };
         const preparedTargets = await Promise.all(activeTargets.map(async (target) => ({
           ...target,
           providerMessages: await hydrateAttachmentRefs(
@@ -487,16 +561,31 @@ async function runChat(
                 reasoning: req.reasoning,
                 planMode: req.planMode,
                 signal: abort.signal,
-                requestPermission: (permission) => {
-                  sideEffectOccurred = true;
-                  fallbackAllowed = false;
-                  return tools.requestPermission(permission, { cwd, conversationId: req.conversationId });
-                }
+                // Plan mode auto-denies permission prompts (mirrors the CLI):
+                // plan-safe tools never need approval, and nothing else runs.
+                requestPermission: req.planMode
+                  ? async () => false
+                  : (permission) => {
+                      sideEffectOccurred = true;
+                      fallbackAllowed = false;
+                      return tools.requestPermission(permission, { cwd, conversationId: req.conversationId });
+                    }
               });
             },
             abort.signal,
             () => fallbackAllowed,
-            () => !sideEffectOccurred
+            () => !sideEffectOccurred,
+            // Surface automatic provider failover so the UI can show
+            // "switched to X (rate limit)" instead of a silent retry.
+            (from, to, reason) => {
+              send({
+                type: 'fallback',
+                conversationId: req.conversationId,
+                from: { providerId: from.providerId, model: from.model },
+                to: { providerId: to.providerId, model: to.model },
+                reason
+              });
+            }
           )) {
             if (abort.signal.aborted) break;
             if (commitsProviderOutput(evt)) fallbackAllowed = false;
@@ -513,13 +602,16 @@ async function runChat(
               roundUsage.promptTokens += evt.usage.promptTokens;
               roundUsage.completionTokens += evt.usage.completionTokens;
               roundUsage.totalTokens += evt.usage.totalTokens;
+              roundUsage.cachedTokens += evt.usage.cachedTokens ?? 0;
               send({ type: 'usage', conversationId: req.conversationId, messageId: turnId, usage: evt.usage });
             }
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: errorMessage });
+          const errorInfo = hiveErrorOf(error, { providerId: selectedTarget.providerId, model: selectedTarget.model });
+          send({ type: 'error', conversationId: req.conversationId, messageId: turnId, error: errorMessage, errorInfo });
           send({ type: 'done', conversationId: req.conversationId, messageId: turnId });
+          persistTurnError(req.conversationId, turnId, errorInfo, selectedTarget);
           notifyStreamOutcome(win, 'error', errorMessage);
           return;
         }
@@ -567,7 +659,16 @@ async function runChat(
           createdAt: Date.now(),
           model: selectedTarget.model,
           provider: selectedTarget.providerId,
-          usage: roundUsage.totalTokens > 0 ? { ...roundUsage } : undefined
+          // cachedTokens only rides along when a provider actually reported
+          // cache hits — persisting a 0 would be noise in the usage JSON.
+          usage: roundUsage.totalTokens > 0
+            ? {
+                promptTokens: roundUsage.promptTokens,
+                completionTokens: roundUsage.completionTokens,
+                totalTokens: roundUsage.totalTokens,
+                ...(roundUsage.cachedTokens > 0 ? { cachedTokens: roundUsage.cachedTokens } : {})
+              }
+            : undefined
         };
         persistMessage(req.conversationId, assistantMsg);
         updateConversationTokens(req.conversationId, roundUsage.totalTokens);
@@ -605,7 +706,30 @@ async function runChat(
         for (const tc of validToolCalls) {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.arguments); } catch { /* leave empty */ }
-          const ctx = { cwd, conversationId: req.conversationId };
+          // Plan mode: a non-safe tool call that slips past the advertised
+          // filter is auto-denied with a tool error result — never executed,
+          // never an approval prompt.
+          if (req.planMode && !PLAN_SAFE_TOOL_NAMES.has(tc.name)) {
+            const denied = `Tool "${tc.name}" is not available in plan mode. Only read-only inspection tools (${[...PLAN_SAFE_TOOL_NAMES].join(', ')}) may run while planning. Present the plan and wait for the user to switch out of plan mode before making changes.`;
+            win?.webContents.send('chat:tool-result', {
+              messageId: turnId,
+              toolCallId: tc.id,
+              toolName: tc.name,
+              result: denied,
+              isError: true,
+              durationMs: 0
+            });
+            toolResults.push({
+              id: randomUUID(),
+              role: 'tool',
+              toolCallId: tc.id,
+              name: tc.name,
+              content: denied,
+              createdAt: Date.now()
+            });
+            continue;
+          }
+          const ctx = { cwd, conversationId: req.conversationId, toolCallId: tc.id };
           const start = Date.now();
           const result = await tools.execute(tc.name, args, ctx);
           const duration = Date.now() - start;
@@ -663,8 +787,10 @@ async function runChat(
         code: (err as { code?: string }).code
       });
       const errMsg = err instanceof Error ? err.message : String(err);
-      send({ type: 'error', conversationId: req.conversationId, messageId, error: errMsg });
-      send({ type: 'done', conversationId: req.conversationId, messageId });
+      const errorInfo = hiveErrorOf(err);
+      send({ type: 'error', conversationId: req.conversationId, messageId: lastTurnId, error: errMsg, errorInfo });
+      send({ type: 'done', conversationId: req.conversationId, messageId: lastTurnId });
+      persistTurnError(req.conversationId, lastTurnId, errorInfo);
       notifyStreamOutcome(win, 'error', errMsg);
     } finally {
       if (activeRequests.get(req.conversationId) === abort) activeRequests.delete(req.conversationId);
@@ -672,6 +798,33 @@ async function runChat(
   })();
 
   return { messageId };
+}
+
+// Stamp the turn's assistant row with the classified error so the renderer's
+// error badge has something to show. When the stream failed before the
+// turn's assistant message was persisted, write a minimal error-only row.
+function persistTurnError(
+  conversationId: string,
+  turnId: string,
+  info: HiveErrorInfo,
+  target?: ProviderFallback
+): void {
+  try {
+    const updated = getDb().prepare('UPDATE messages SET error = ? WHERE id = ?').run(info.message, turnId);
+    if (updated.changes === 0) {
+      persistMessage(conversationId, {
+        id: turnId,
+        role: 'assistant',
+        content: '',
+        createdAt: Date.now(),
+        model: target?.model,
+        provider: target?.providerId,
+        error: info.message
+      });
+    }
+  } catch (err) {
+    logger.warn('chat', 'failed to persist turn error', err);
+  }
 }
 
 function persistMessage(conversationId: string, msg: Message): void {

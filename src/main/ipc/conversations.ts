@@ -1,10 +1,14 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, dialog } from 'electron';
 import { IPC, type Conversation, type Message } from '@shared/types';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client';
 import { closeConversationSessions } from '../providers/registry';
 import { deleteStoredAttachments, serializedAttachmentIds } from '../utils/attachments';
+import { pruneConversation } from '../checkpoints/store';
 import { logger } from '../utils/logger';
+import { writeFile, readFileSync } from 'node:fs';
+import { promisify } from 'node:util';
+const writeFileAsync = promisify(writeFile);
 
 export function registerConvHandlers(): void {
   const now = Date.now();
@@ -74,6 +78,13 @@ export function registerConvHandlers(): void {
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id);
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
     db.prepare('DELETE FROM messages_fts WHERE conversation_id = ?').run(id);
+
+    // Drop file-edit checkpoints (db rows + unreferenced blobs) with the conversation
+    try {
+      pruneConversation(id);
+    } catch (err) {
+      logger.warn('conversations', `failed to prune checkpoints for ${id}`, err);
+    }
 
     // A full content scan is fine at local-chat scale; add an attachment
     // table only if profiling proves this scan is material.
@@ -224,7 +235,8 @@ export function registerConvHandlers(): void {
         COUNT(*) AS messages,
         COALESCE(SUM(json_extract(usage, '$.promptTokens')), 0) AS promptTokens,
         COALESCE(SUM(json_extract(usage, '$.completionTokens')), 0) AS completionTokens,
-        COALESCE(SUM(json_extract(usage, '$.totalTokens')), 0) AS totalTokens
+        COALESCE(SUM(json_extract(usage, '$.totalTokens')), 0) AS totalTokens,
+        COALESCE(SUM(json_extract(usage, '$.cachedTokens')), 0) AS cachedTokens
       FROM messages
       WHERE role = 'assistant' AND usage IS NOT NULL AND created_at >= ?
       GROUP BY model, provider
@@ -506,6 +518,115 @@ export function registerConvHandlers(): void {
     });
 
     return compactResult;
+  });
+
+  // ── Export ─────────────────────────────────────────────────────
+  ipcMain.handle(IPC.CONV_EXPORT, async (_e, { conversationId, format }: { conversationId: string; format: 'md' | 'json' }) => {
+    const conv = getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId) as Record<string, unknown> | undefined;
+    if (!conv) return { ok: false, error: 'conversation not found' };
+    const messages = getDb().prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY sort_order ASC').all(conversationId) as Array<Record<string, unknown>>;
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win) return { ok: false, error: 'no window' };
+
+    if (format === 'json') {
+      const data = JSON.stringify({ ...rowToConv(conv), messages: messages.map(rowToMsg) }, null, 2);
+      const { filePath, canceled } = await dialog.showSaveDialog(win!, {
+        defaultPath: `${(conv.title as string).replace(/[\\/:*?"<>|]/g, '_')}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }]
+      });
+      if (canceled || !filePath) return { ok: false, error: 'canceled' };
+      await writeFileAsync(filePath, data, 'utf-8');
+      return { ok: true, filePath };
+    }
+
+    // Markdown export
+    const lines: string[] = [];
+    lines.push(`# ${conv.title}`);
+    lines.push(`\n> Exported from DERO Hive · ${new Date().toISOString().split('T')[0]}\n`);
+    for (const m of messages) {
+      const role = m.role as string;
+      const content = m.content as string;
+      const label = role === 'user' ? '**You**' : role === 'assistant' ? `**${m.model || 'Assistant'}**` : `**${m.name || 'Tool'}**`;
+      const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+      lines.push(`\n---\n### ${label}\n\n${text}`);
+    }
+    const md = lines.join('\n');
+    const { filePath, canceled } = await dialog.showSaveDialog(win!, {
+      defaultPath: `${(conv.title as string).replace(/[\\/:*?"<>|]/g, '_')}.md`,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    });
+    if (canceled || !filePath) return { ok: false, error: 'canceled' };
+    await writeFileAsync(filePath, md, 'utf-8');
+    return { ok: true, filePath };
+  });
+
+  // ── Import ─────────────────────────────────────────────────────
+  ipcMain.handle(IPC.CONV_IMPORT, async () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win) return { ok: false, error: 'no window' };
+    const { filePaths, canceled } = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Conversation files', extensions: ['json', 'md'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+    if (canceled || !filePaths?.[0]) return { ok: false, error: 'canceled' };
+    const content = readFileSync(filePaths[0], 'utf-8');
+    const isJson = filePaths[0].toLowerCase().endsWith('.json');
+
+    if (isJson) {
+      try {
+        const data = JSON.parse(content);
+        const convId = randomUUID();
+        const db = getDb();
+        const now = Date.now();
+        db.prepare(`INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, provider_id, model, system_prompt, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(convId, data.title || 'Imported conversation', now, now, data.providerId || null, data.model || null, data.systemPrompt || null, data.projectId || null);
+        if (Array.isArray(data.messages)) {
+          const insert = db.prepare(`INSERT INTO messages (id, conversation_id, role, content, reasoning, tool_calls, tool_call_id, name, model, provider, usage, error, created_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+          const insertFts = db.prepare(`INSERT INTO messages_fts (rowid, content, conversation_id, message_id) VALUES (last_insert_rowid(), ?, ?, ?)`);
+          data.messages.forEach((m: Record<string, unknown>, i: number) => {
+            const mid = (m.id as string) || randomUUID();
+            insert.run(mid, convId, m.role as string, typeof m.content === 'string' ? m.content : JSON.stringify(m.content), m.reasoning || null, m.toolCalls ? JSON.stringify(m.toolCalls) : null, m.toolCallId || null, m.name || null, m.model || null, m.provider || null, m.usage ? JSON.stringify(m.usage) : null, m.error || null, (m.createdAt as number) || now + i, i);
+            const text = typeof m.content === 'string' ? m.content : '';
+            if (text) insertFts.run(text, convId, mid);
+          });
+          db.prepare('UPDATE conversations SET message_count = ? WHERE id = ?').run(data.messages.length, convId);
+        }
+        return { ok: true, conversationId: convId };
+      } catch (e) {
+        return { ok: false, error: `Failed to parse JSON: ${e instanceof Error ? e.message : e}` };
+      }
+    }
+
+    // Markdown import — simplistic: split by headings
+    try {
+      const convId = randomUUID();
+      const db = getDb();
+      const now = Date.now();
+      const title = content.split('\n')[0]?.replace(/^#\s*/, '').trim() || 'Imported conversation';
+      db.prepare(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`).run(convId, title, now, now);
+      return { ok: true, conversationId: convId };
+    } catch (e) {
+      return { ok: false, error: `Failed to import: ${e instanceof Error ? e.message : e}` };
+    }
+  });
+
+  // ── Archive / Unarchive ────────────────────────────────────────
+  ipcMain.handle(IPC.CONV_ARCHIVE, (_e, id: string) => {
+    getDb().prepare('UPDATE conversations SET archived = 1, updated_at = ? WHERE id = ?').run(Date.now(), id);
+    return { ok: true };
+  });
+
+  ipcMain.handle(IPC.CONV_UNARCHIVE, (_e, id: string) => {
+    getDb().prepare('UPDATE conversations SET archived = 0, updated_at = ? WHERE id = ?').run(Date.now(), id);
+    return { ok: true };
+  });
+
+  ipcMain.handle(IPC.CONV_LIST_ARCHIVED, () => {
+    const rows = getDb().prepare('SELECT * FROM conversations WHERE archived = 1 ORDER BY updated_at DESC LIMIT 200').all() as Array<Record<string, unknown>>;
+    return rows.map(rowToConv);
   });
 }
 

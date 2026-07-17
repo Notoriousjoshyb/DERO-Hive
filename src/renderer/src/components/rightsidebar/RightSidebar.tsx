@@ -4,13 +4,17 @@ import { FilesPanel } from './FilesPanel';
 import { ContextPanel } from './ContextPanel';
 import { UsagePanel } from './UsagePanel';
 import { ActivityPanel } from './ActivityPanel';
+import { AuditPanel } from './AuditPanel';
+import { GraphPanel } from './GraphPanel';
 
-type Tab = 'activity' | 'git' | 'files' | 'context' | 'usage';
+type Tab = 'activity' | 'audit' | 'git' | 'files' | 'context' | 'usage' | 'graph';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'activity', label: 'Activity' },
+  { id: 'audit', label: 'Audit' },
   { id: 'git', label: 'Git' },
   { id: 'files', label: 'Files' },
+  { id: 'graph', label: 'Graph' },
   { id: 'context', label: 'Context' },
   { id: 'usage', label: 'Usage' }
 ];
@@ -43,6 +47,8 @@ export function RightSidebar({ isOpen, onClose }: Props): JSX.Element | null {
 
       <div className="flex-1 overflow-y-auto">
         {tab === 'activity' && <ActivityPanel />}
+        {tab === 'audit' && <AuditPanel />}
+        {tab === 'graph' && <GraphPanel />}
         {tab === 'git' && <GitPanel />}
         {tab === 'files' && <FilesPanel />}
         {tab === 'context' && <ContextPanel />}

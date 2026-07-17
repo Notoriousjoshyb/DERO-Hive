@@ -2,6 +2,7 @@ import type { ProviderAdapter, ProviderStreamRequest, ProviderStreamEvent } from
 import { parseSSE } from './streaming';
 import type { ProviderConfig, Message, ToolDefinition, ContentPart } from '@shared/types';
 import { supportsOpenAIReasoningEffort } from '@shared/thinkingCapabilities';
+import { classifyProviderError } from '@shared/errors';
 import { logger } from '../utils/logger';
 
 // Generic identifier sent to every OpenAI-compatible request so gateways
@@ -28,6 +29,29 @@ function extractErrorMessage(body: string): string | null {
     if (j.message) return j.message;
   } catch { /* not JSON */ }
   return body ? body.slice(0, 200) : null;
+}
+
+// Usage shape across OpenAI-compatible providers: OpenAI-style
+// prompt_tokens_details.cached_tokens, DeepSeek-style prompt_cache_hit/miss.
+interface OpenAIUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+}
+
+// Prompt-cache hits arrive either as OpenAI's prompt_tokens_details.cached_tokens
+// or DeepSeek-style prompt_cache_hit_tokens (with prompt_cache_miss_tokens).
+// Returns undefined when the provider reported neither (or explicit zeros), so
+// cachedTokens stays absent rather than a misleading 0.
+export function openAICachedTokens(u: OpenAIUsage): number | undefined {
+  const detailed = u.prompt_tokens_details?.cached_tokens;
+  if (typeof detailed === 'number' && detailed > 0) return detailed;
+  const hit = u.prompt_cache_hit_tokens;
+  if (typeof hit === 'number' && hit > 0) return hit;
+  return undefined;
 }
 
 // OpenAI Chat Completions compatible adapter. Works with any service that
@@ -333,7 +357,16 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     if (!response.ok) {
       const errText = await response.text();
       logger.debug('openai', `response error ${response.status}: ${errText.slice(0, 500)}`);
-      yield { type: 'error', error: `${response.status} ${response.statusText}: ${errText.slice(0, 500)}` };
+      yield {
+        type: 'error',
+        error: `${response.status} ${response.statusText}: ${errText.slice(0, 500)}`,
+        errorInfo: classifyProviderError({
+          status: response.status,
+          message: extractErrorMessage(errText) || errText.slice(0, 200),
+          providerId: this.id,
+          model: req.model
+        })
+      };
       return;
     }
 
@@ -362,14 +395,16 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
             }))
           };
         }
-        const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+        const u = json.usage as OpenAIUsage | undefined;
         if (u) {
+          const cachedTokens = openAICachedTokens(u);
           yield {
             type: 'usage',
             usage: {
               promptTokens: u.prompt_tokens || 0,
               completionTokens: u.completion_tokens || 0,
-              totalTokens: u.total_tokens || 0
+              totalTokens: u.total_tokens || 0,
+              ...(cachedTokens !== undefined ? { cachedTokens } : {})
             }
           };
         }
@@ -382,7 +417,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
     // Aggregate tool calls by id as they stream in
     const toolAcc = new Map<string, { id: string; name: string; arguments: string }>();
-    let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+    let usage: OpenAIUsage | undefined;
     // Tracks whether the stream produced any user-visible output. If Kimi or
     // another OpenAI-compat gateway returns 200 OK with a body but no content
     // chunks (e.g. because the model declined silently or a request field is
@@ -398,7 +433,16 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       // OpenAI error in stream
       if (data.error) {
         const e = data.error as { message?: string; code?: string };
-        yield { type: 'error', error: e.message || JSON.stringify(e) };
+        yield {
+          type: 'error',
+          error: e.message || JSON.stringify(e),
+          errorInfo: classifyProviderError({
+            code: typeof e.code === 'string' ? e.code : undefined,
+            message: e.message,
+            providerId: this.id,
+            model: req.model
+          })
+        };
         return;
       }
 
@@ -461,12 +505,14 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     }
 
     if (usage) {
+      const cachedTokens = openAICachedTokens(usage);
       yield {
         type: 'usage',
         usage: {
           promptTokens: usage.prompt_tokens || 0,
           completionTokens: usage.completion_tokens || 0,
-          totalTokens: usage.total_tokens || 0
+          totalTokens: usage.total_tokens || 0,
+          ...(cachedTokens !== undefined ? { cachedTokens } : {})
         }
       };
     }
@@ -483,7 +529,15 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         ? 'Kimi Code accepted the request but returned no content. Common causes: (1) kimi-for-coding-highspeed is set but the plan does not include Allegretto tier — switch to kimi-for-coding; (2) the API key is correct but the membership is paused; (3) a custom User-Agent override in provider settings is masking the required client identity. Try Test Connection in Settings → Providers to confirm auth.'
         : 'Provider returned 200 OK but streamed no content. The model may have refused the request, the key may lack access to the requested model, or the request body uses an unsupported field.';
       logger.warn('openai', `empty stream from ${this.cfg.name} (${req.model}) at ${this.cfg.baseUrl}`);
-      yield { type: 'error', error: detail };
+      yield {
+        type: 'error',
+        error: detail,
+        errorInfo: classifyProviderError({
+          message: detail,
+          providerId: this.id,
+          model: req.model
+        })
+      };
     }
 
     yield { type: 'done' };

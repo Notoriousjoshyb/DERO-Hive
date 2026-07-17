@@ -3,6 +3,7 @@ import { parseSSE } from './streaming';
 import type { ProviderConfig, ContentPart } from '@shared/types';
 import { logger } from '../utils/logger';
 import { anthropicThinkingBudget, supportsAnthropicExtendedThinking } from '@shared/thinkingCapabilities';
+import { classifyProviderError } from '@shared/errors';
 
 // Anthropic Messages API adapter. Translates OpenAI-style internal types to Anthropic format.
 // Supports: system prompt, multi-modal (images), tools, prompt caching, extended thinking.
@@ -108,7 +109,8 @@ export class AnthropicAdapter implements ProviderAdapter {
     const hasAudio = req.messages.some((message) => Array.isArray(message.content)
       && message.content.some((part) => part.type === 'input_audio'));
     if (hasAudio) {
-      yield { type: 'error', error: 'This Anthropic adapter does not support audio attachments. Switch to an audio-capable model/provider or attach a transcript.' };
+      const error = 'This Anthropic adapter does not support audio attachments. Switch to an audio-capable model/provider or attach a transcript.';
+      yield { type: 'error', error, errorInfo: classifyProviderError({ message: error, providerId: this.id, model: req.model }) };
       return;
     }
     const url = `${this.cfg.baseUrl.replace(/\/$/, '')}/messages`;
@@ -150,12 +152,21 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errText = await response.text();
-      yield { type: 'error', error: `${response.status} ${response.statusText}: ${errText.slice(0, 500)}` };
+      yield {
+        type: 'error',
+        error: `${response.status} ${response.statusText}: ${errText.slice(0, 500)}`,
+        errorInfo: classifyProviderError({
+          status: response.status,
+          message: anthropicErrorMessage(errText),
+          providerId: this.id,
+          model: req.model
+        })
+      };
       return;
     }
 
     const toolAcc = new Map<string, { id: string; name: string; arguments: string }>();
-    let usage: { input_tokens?: number; output_tokens?: number } | undefined;
+    let usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined;
 
     for await (const evt of parseSSE(response, req.signal)) {
       const data = evt.data as Record<string, unknown> | undefined;
@@ -191,19 +202,30 @@ export class AnthropicAdapter implements ProviderAdapter {
         const m = data.message as { usage?: typeof usage };
         if (m?.usage) usage = { ...usage, ...m.usage };
       } else if (type === 'error') {
-        const e = data.error as { message?: string };
-        yield { type: 'error', error: e.message || JSON.stringify(data) };
+        const e = data.error as { type?: string; message?: string };
+        yield {
+          type: 'error',
+          error: e.message || JSON.stringify(data),
+          errorInfo: classifyProviderError({
+            code: e.type,
+            message: e.message,
+            providerId: this.id,
+            model: req.model
+          })
+        };
         return;
       }
     }
 
     if (usage) {
+      const cachedTokens = anthropicCachedTokens(usage);
       yield {
         type: 'usage',
         usage: {
           promptTokens: usage.input_tokens || 0,
           completionTokens: usage.output_tokens || 0,
-          totalTokens: (usage.input_tokens || 0) + (usage.output_tokens || 0)
+          totalTokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+          ...(cachedTokens !== undefined ? { cachedTokens } : {})
         }
       };
     }
@@ -214,3 +236,24 @@ export class AnthropicAdapter implements ProviderAdapter {
 function safeJsonParse(s: string): unknown {
   try { return JSON.parse(s); } catch { return {}; }
 }
+
+// Anthropic reports prompt-cache activity as separate counters on usage:
+// cache_read_input_tokens (served from cache) and cache_creation_input_tokens
+// (written to cache). Both are cached prompt tokens — sum them into
+// TokenUsage.cachedTokens. Returns undefined when no caching happened so the
+// field stays absent rather than a misleading 0.
+export function anthropicCachedTokens(u: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number }): number | undefined {
+  const sum = (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+  return sum > 0 ? sum : undefined;
+}
+
+// Anthropic error bodies are {type:'error',error:{type,message}} — pull the
+// human-readable message for classification; fall back to the raw body.
+function anthropicErrorMessage(body: string): string {
+  try {
+    const j = JSON.parse(body) as { error?: { message?: string; type?: string } };
+    if (j.error?.message) return j.error.message;
+  } catch { /* not JSON */ }
+  return body.slice(0, 200);
+}
+

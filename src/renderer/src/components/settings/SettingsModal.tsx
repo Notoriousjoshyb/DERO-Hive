@@ -8,19 +8,21 @@ import { ToolsPanel } from './ToolsPanel';
 import { ProjectsPanel } from './ProjectsPanel';
 import { PromptsPanel } from './PromptsPanel';
 import { MediaPanel } from './MediaPanel';
+import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { useAppStore } from '../../stores/app';
 
 interface Props {
   onClose: () => void;
 }
 
-type Tab = 'general' | 'providers' | 'mcp' | 'discover' | 'skills' | 'prompts' | 'tools' | 'projects' | 'media';
+type Tab = 'general' | 'providers' | 'mcp' | 'discover' | 'skills' | 'prompts' | 'tools' | 'projects' | 'media' | 'scheduled';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'providers', label: 'Providers' },
   { id: 'media', label: 'Media' },
   { id: 'projects', label: 'Projects' },
+  { id: 'scheduled', label: 'Scheduled' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'discover', label: 'Discover' },
   { id: 'skills', label: 'Skills' },
@@ -75,6 +77,7 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
             {tab === 'general' && <GeneralPanel />}
             {tab === 'providers' && <ProvidersPanel />}
             {tab === 'media' && <MediaPanel />}
+            {tab === 'scheduled' && <ScheduledTasksPanel />}
             {tab === 'projects' && <ProjectsPanel />}
             {tab === 'mcp' && <McpPanel />}
             {tab === 'discover' && <DiscoverPanel />}

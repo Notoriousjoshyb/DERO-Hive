@@ -1,9 +1,10 @@
 import { create } from 'zustand';
-import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, PromptTemplate, Skill, ToolDefinition, Attachment, ThinkingEffort } from '@shared/types';
+import type { AppSettings, Conversation, Message, McpServerStatus, ProviderConfig, ProviderPreset, Project, PromptTemplate, Skill, ToolDefinition, Attachment, ThinkingEffort, HiveErrorInfo } from '@shared/types';
 import { speak } from '../lib/speech';
 import type { CustomSlashCommand } from '../lib/customSlashCommands';
 import { loadCustomSlashCommands } from '../lib/customSlashCommands';
 import { DEFAULT_VISION_ARTIFACT_FILTERS, type VisionArtifactScope } from '../lib/visionFilters';
+import { applyUsageReport, emptyLiveUsage, type LiveUsage, type UsageReport } from '../lib/usageAccumulator';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -51,6 +52,14 @@ export interface TodoItem {
   active_form?: string;
 }
 
+export interface FallbackEvent {
+  conversationId: string;
+  from: { providerId: string; model: string };
+  to: { providerId: string; model: string };
+  reason: string;
+  at: number;
+}
+
 export interface CompactionEvent {
   conversationId: string;
   removedCount: number;
@@ -72,6 +81,8 @@ export interface FileChange {
   beforeTruncated?: boolean;
   afterTruncated?: boolean;
   hunkStartLine?: number;
+  /** Checkpoint captured before this edit (Phase 1E) - enables the Activity panel revert button. */
+  checkpointId?: string;
   at: number;
 }
 
@@ -144,7 +155,8 @@ interface AppState {
   streamingReasoning: string;
   streamingContent: string;
   chatError?: string;
-  setChatError: (msg: string | null) => void;
+  chatErrorInfo?: HiveErrorInfo;
+  setChatError: (msg: string | null, info?: HiveErrorInfo | null) => void;
   lastStreamErrorAt?: number;
   lastStreamSuccessAt?: number;
   pendingToolResults: Map<string, { result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }>;
@@ -155,6 +167,16 @@ interface AppState {
   setStreamingMessageId: (id?: string) => void;
   finishStreaming: () => void;
   recordToolResult: (messageId: string, toolCallId: string, result: string, isError: boolean, durationMs: number, meta?: Record<string, unknown>) => void;
+
+  // Live per-turn token usage (Phase 1A): accumulates `usage` stream events so
+  // TokenUsage can update during streaming. `start` fires once per agentic
+  // round — liveTurnActive brackets the whole user turn so the tally only
+  // resets on the first round after idle (mirrors the main process, which
+  // sums each round's usage and persists one assistant message per round).
+  liveUsage: LiveUsage;
+  liveTurnActive: boolean;
+  beginLiveTurn: () => void;
+  recordLiveUsage: (report: UsageReport) => void;
 
   // Messages typed while the model is working, queued for the next tool boundary.
   pendingUserMessages: Message[];
@@ -315,6 +337,14 @@ interface AppState {
   dismissLastCompaction: () => void;
   clearCompactionHistory: () => void;
 
+  // Provider fallback telemetry (Phase 1B): `fallback` stream events surface
+  // automatic failovers (rate limit, overloaded, …) as a toast + short history.
+  lastFallback: FallbackEvent | null;
+  fallbackHistory: FallbackEvent[];
+  recordFallback: (event: Omit<FallbackEvent, 'at'>) => void;
+  dismissLastFallback: () => void;
+  clearFallbackHistory: () => void;
+
   // File-change tracking (session-level, like a commit diff)
   fileChanges: FileChange[];
   recordFileChange: (change: Omit<FileChange, 'at'>) => void;
@@ -431,7 +461,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   selectConversation: async (id) => {
     if (!id) {
-      set({ currentConversationId: undefined, currentMessages: [], isStreaming: false, streamingContent: '', streamingReasoning: '', chatError: undefined });
+      set({ currentConversationId: undefined, currentMessages: [], isStreaming: false, streamingContent: '', streamingReasoning: '', chatError: undefined, chatErrorInfo: undefined, liveUsage: emptyLiveUsage(), liveTurnActive: false });
       return;
     }
     const conv = await window.hive.convGet(id);
@@ -449,7 +479,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         isStreaming: false,
         streamingContent: '',
         streamingReasoning: '',
-        chatError: undefined
+        chatError: undefined,
+        chatErrorInfo: undefined,
+        liveUsage: emptyLiveUsage(),
+        liveTurnActive: false
       });
     }
   },
@@ -506,8 +539,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   streamingContent: '',
   streamingReasoning: '',
   chatError: undefined,
-  setChatError: (msg) => set({
+  setChatError: (msg, info) => set({
     chatError: msg || undefined,
+    chatErrorInfo: msg ? (info ?? undefined) : undefined,
     lastStreamErrorAt: msg && navigator.onLine ? Date.now() : undefined
   }),
   pendingToolResults: new Map(),
@@ -517,8 +551,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     streamingContent: '',
     streamingReasoning: '',
     chatError: undefined,
+    chatErrorInfo: undefined,
     lastStreamErrorAt: undefined,
-    pendingToolResults: new Map()
+    pendingToolResults: new Map(),
+    liveUsage: emptyLiveUsage(),
+    liveTurnActive: true
   }),
   abortChat: async () => {
     const id = get().currentConversationId;
@@ -540,8 +577,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       streamingReasoning: '',
       lastStreamSuccessAt: Date.now(),
       lastStreamFinishedAt: Date.now(),
-      pendingUserMessages: []
+      pendingUserMessages: [],
+      liveTurnActive: false
     });
+  },
+  liveUsage: emptyLiveUsage(),
+  liveTurnActive: false,
+  beginLiveTurn: () => {
+    // `start` fires once per agentic round — only the first round after idle
+    // opens a new turn and resets the tally; later rounds keep accumulating.
+    if (!get().liveTurnActive) set({ liveTurnActive: true, liveUsage: emptyLiveUsage() });
+  },
+  recordLiveUsage: (report) => {
+    const state = get();
+    const provider = state.providers.find((p) => p.id === state.selectedProviderId);
+    const model = provider?.models.find((m) => m.id === state.selectedModel);
+    const prices = model && (model.inputPrice != null || model.outputPrice != null)
+      ? { input: model.inputPrice, output: model.outputPrice }
+      : undefined;
+    set({ liveUsage: applyUsageReport(state.liveUsage, report, prices) });
   },
   recordToolResult: (messageId, toolCallId, result, isError, durationMs, meta) => {
     const map = new Map(get().pendingToolResults);
@@ -781,6 +835,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
   dismissLastCompaction: () => set({ lastCompaction: null }),
   clearCompactionHistory: () => set({ compactionHistory: [], lastCompaction: null }),
+
+  lastFallback: null,
+  fallbackHistory: [],
+  recordFallback: (event) => set((s) => ({
+    lastFallback: { ...event, at: Date.now() },
+    fallbackHistory: [...s.fallbackHistory, { ...event, at: Date.now() }].slice(-10)
+  })),
+  dismissLastFallback: () => set({ lastFallback: null }),
+  clearFallbackHistory: () => set({ fallbackHistory: [], lastFallback: null }),
 
   fileChanges: [],
   recordFileChange: (change) => set((s) => ({

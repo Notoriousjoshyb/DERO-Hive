@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type MediaJobStatusEvent } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type MediaJobStatusEvent, type ToolExecutionRecord, type FileCheckpoint } from '../shared/types';
 import type { DvmLintResult } from '../shared/dvm';
 
 // Type-safe wrapper for renderer -> main IPC
@@ -28,6 +28,11 @@ const api = {
     ipcRenderer.invoke(IPC.CONV_REVERT, { conversationId, messageId }) as Promise<{ ok: boolean; error?: string; keptCount?: number }>,
   convFork: (conversationId: string, messageId?: string) => ipcRenderer.invoke(IPC.CONV_FORK, { conversationId, messageId }),
   convCompact: (conversationId: string) => ipcRenderer.invoke(IPC.CONV_COMPACT, conversationId),
+  convExport: (conversationId: string, format: 'md' | 'json') => ipcRenderer.invoke(IPC.CONV_EXPORT, { conversationId, format }),
+  convImport: () => ipcRenderer.invoke(IPC.CONV_IMPORT),
+  convArchive: (id: string) => ipcRenderer.invoke(IPC.CONV_ARCHIVE, id),
+  convUnarchive: (id: string) => ipcRenderer.invoke(IPC.CONV_UNARCHIVE, id),
+  convListArchived: () => ipcRenderer.invoke(IPC.CONV_LIST_ARCHIVED),
   usageStats: () => ipcRenderer.invoke(IPC.USAGE_STATS),
   msgBookmark: (messageId: string, bookmarked: boolean) => ipcRenderer.invoke(IPC.MSG_BOOKMARK, { messageId, bookmarked }),
   msgUpdate: (messageId: string, content: string) => ipcRenderer.invoke(IPC.MSG_UPDATE, { messageId, content }) as Promise<{ ok: boolean; error?: string }>,
@@ -115,6 +120,22 @@ const api = {
     ipcRenderer.on('chat:tool-result', l);
     return () => ipcRenderer.off('chat:tool-result', l);
   },
+
+  // Tool-execution audit log
+  auditList: (filter?: { conversationId?: string; limit?: number; offset?: number }) =>
+    ipcRenderer.invoke(IPC.AUDIT_LIST, filter) as Promise<ToolExecutionRecord[]>,
+
+  // File-edit checkpoints
+  checkpointList: (conversationId: string) => ipcRenderer.invoke(IPC.CHECKPOINT_LIST, conversationId) as Promise<FileCheckpoint[]>,
+  checkpointRevert: (id: string) => ipcRenderer.invoke(IPC.CHECKPOINT_REVERT, id) as Promise<{ ok: boolean; path?: string; restored?: 'content' | 'deleted'; error?: string }>,
+  checkpointRevertAll: (conversationId: string, since?: number) =>
+    ipcRenderer.invoke(IPC.CHECKPOINT_REVERT_ALL, { conversationId, since }) as Promise<{ ok: boolean; reverted?: number; failed?: Array<{ id: string; error: string }>; error?: string }>,
+
+  // Permission rules
+  permissionRuleList: () => ipcRenderer.invoke(IPC.PERMISSION_RULE_LIST) as Promise<PermissionRule[]>,
+  permissionRuleAdd: (rule: { toolName: string; action: 'allow' | 'deny' | 'ask'; pattern?: string; scope?: 'project' | 'global'; projectPath?: string }) =>
+    ipcRenderer.invoke(IPC.PERMISSION_RULE_ADD, rule) as Promise<PermissionRule>,
+  permissionRuleRemove: (id: string) => ipcRenderer.invoke(IPC.PERMISSION_RULE_REMOVE, id) as Promise<{ ok: boolean }>,
 
   // FS / Shell
   fsRead: (path: string, opts?: { encoding?: 'utf-8' | 'base64'; limit?: number }) =>

@@ -48,7 +48,10 @@ import type {
   MediaProviderConfig,
   MediaArtifactRecord,
   MediaGenerationRequest,
-  MediaJobRecord
+  MediaJobRecord,
+  PermissionRule,
+  ToolExecutionRecord,
+  FileCheckpoint
 } from '@shared/types';
 import type { DvmLintResult } from '@shared/dvm';
 
@@ -129,6 +132,14 @@ declare global {
       toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;
       onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => () => void;
       onToolResult: (cb: (data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => void) => () => void;
+
+      auditList: (filter?: { conversationId?: string; limit?: number; offset?: number }) => Promise<ToolExecutionRecord[]>;
+      checkpointList: (conversationId: string) => Promise<FileCheckpoint[]>;
+      checkpointRevert: (id: string) => Promise<{ ok: boolean; path?: string; restored?: 'content' | 'deleted'; error?: string }>;
+      checkpointRevertAll: (conversationId: string, since?: number) => Promise<{ ok: boolean; reverted?: number; failed?: Array<{ id: string; error: string }>; error?: string }>;
+      permissionRuleList: () => Promise<PermissionRule[]>;
+      permissionRuleAdd: (rule: { toolName: string; action: 'allow' | 'deny' | 'ask'; pattern?: string; scope?: 'project' | 'global'; projectPath?: string }) => Promise<PermissionRule>;
+      permissionRuleRemove: (id: string) => Promise<{ ok: boolean }>;
 
       fsRead: (path: string, opts?: { encoding?: 'utf-8' | 'base64'; limit?: number }) => Promise<{ content: string; encoding: string; size: number }>;
       fsWrite: (path: string, content: string) => Promise<{ ok: boolean; size: number }>;

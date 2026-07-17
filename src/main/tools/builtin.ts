@@ -12,6 +12,8 @@ import { getSimulatorManager } from '../simulator/instance';
 import { lintDvmBasic } from '@shared/dvm';
 import type { IndexQuery } from '@shared/gnomon';
 import { diffLines, diffCounts } from '@shared/diff';
+import { captureCheckpoint } from '../checkpoints/store';
+import { logger } from '../utils/logger';
 
 const execAsync = promisify(exec);
 
@@ -32,6 +34,25 @@ function snapshotForDiff(content: string): { text: string; truncated: boolean } 
     text: content.slice(0, DIFF_SNAPSHOT_MAX_BYTES),
     truncated: true
   };
+}
+
+// Persist a full-content checkpoint for an edit so it can be reverted later.
+// Unlike the display snapshot above this is NOT capped — the whole before/after
+// bytes go to the blob store. Best-effort: a capture failure must never fail or
+// block the file write itself, so we log and return undefined.
+function captureEditCheckpoint(ctx: ToolContext, abs: string, before: Buffer | null, after: Buffer): string | undefined {
+  try {
+    return captureCheckpoint({
+      conversationId: ctx.conversationId,
+      toolCallId: ctx.toolCallId,
+      path: abs,
+      before,
+      after
+    });
+  } catch (err) {
+    logger.warn('checkpoints', `failed to capture checkpoint for ${abs}: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
 }
 
 const READ_FILE_DEF: ToolDefinition = {
@@ -355,14 +376,17 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
   async write_file(args, ctx) {
     const { path, content } = args as { path: string; content: string };
     const abs = safeResolve(path, ctx.cwd);
+    let prevBytes: Buffer | null = null;
     let prevText = '';
     let isNewFile = true;
     try {
-      prevText = await readFile(abs, 'utf-8');
+      prevBytes = await readFile(abs);
+      prevText = prevBytes.toString('utf-8');
       isNewFile = false;
     } catch { /* new file */ }
     await mkdir(join(abs, '..'), { recursive: true });
     await writeFile(abs, content, 'utf-8');
+    const checkpointId = captureEditCheckpoint(ctx, abs, prevBytes, Buffer.from(content, 'utf-8'));
     const stats = diffCounts(diffLines(prevText, content));
     const beforeSnap = snapshotForDiff(prevText);
     const afterSnap = snapshotForDiff(content);
@@ -372,6 +396,7 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
         path: abs,
         kind: 'write',
         isNewFile,
+        checkpointId,
         bytesAdded: content.length - prevText.length,
         linesAdded: stats.added,
         linesRemoved: stats.removed,
@@ -388,7 +413,8 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
   async edit_file(args, ctx) {
     const { path, old_text, new_text } = args as { path: string; old_text: string; new_text: string };
     const abs = safeResolve(path, ctx.cwd);
-    const text = await readFile(abs, 'utf-8');
+    const prevBytes = await readFile(abs);
+    const text = prevBytes.toString('utf-8');
     const occurrences = text.split(old_text).length - 1;
     if (occurrences === 0) return { content: `Error: old_text not found in ${abs}`, isError: true };
     if (occurrences > 1) return { content: `Error: old_text matches ${occurrences} locations; make it unique.`, isError: true };
@@ -396,6 +422,7 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
     const updated = text.replace(old_text, () => new_text);
     const stats = diffCounts(diffLines(old_text, new_text));
     await writeFile(abs, updated, 'utf-8');
+    const checkpointId = captureEditCheckpoint(ctx, abs, prevBytes, Buffer.from(updated, 'utf-8'));
     // Build a hunk-level snapshot: 3 lines of context before + old_text +
     // 3 lines of context after, both sides — enough to give the renderer the
     // line numbers and surrounding context a `git diff`-style view needs.
@@ -419,6 +446,7 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
       meta: {
         path: abs,
         kind: 'edit',
+        checkpointId,
         bytesAdded: new_text.length - old_text.length,
         linesAdded: stats.added,
         linesRemoved: stats.removed,

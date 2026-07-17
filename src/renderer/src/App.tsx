@@ -19,6 +19,7 @@ import { CodeSearchDialog } from './components/CodeSearchDialog';
 import { ComparePanel } from './components/ComparePanel';
 import { SwarmModal } from './components/SwarmModal';
 import { CommandPalette } from './components/CommandPalette';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useChat } from './hooks/useChat';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { applyTheme, applyAppearance } from './lib/theme';
@@ -116,11 +117,13 @@ export default function App(): JSX.Element {
     <div className="flex flex-col h-screen bg-bg">
       <TitleBar />
       <div className="relative flex flex-1 overflow-hidden">
-        {sidebarOpen && <Sidebar />}
-        {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : projectCockpitId ? <ProjectCockpit key={projectCockpitId} projectId={projectCockpitId} /> : <ChatView />}
-        {visionOpen && <VisionPanel />}
-        {companionOpen && <HiveCompanionPanel />}
-        <RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} />
+        <ErrorBoundary name="Sidebar">{sidebarOpen && <Sidebar />}</ErrorBoundary>
+        <ErrorBoundary name="MainContent">
+          {codeTabOpen ? <CodeTab /> : visionTabOpen ? <VisionTab /> : projectCockpitId ? <ProjectCockpit key={projectCockpitId} projectId={projectCockpitId} /> : <ChatView />}
+        </ErrorBoundary>
+        <ErrorBoundary name="Vision">{visionOpen && <VisionPanel />}</ErrorBoundary>
+        <ErrorBoundary name="Companion">{companionOpen && <HiveCompanionPanel />}</ErrorBoundary>
+        <ErrorBoundary name="RightSidebar"><RightSidebar isOpen={rightSidebarOpen} onClose={toggleRightSidebar} /></ErrorBoundary>
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <PermissionDialog />

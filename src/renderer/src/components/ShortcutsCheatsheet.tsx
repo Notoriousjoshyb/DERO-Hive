@@ -20,12 +20,12 @@ const GROUPS: Group[] = [
     title: 'General',
     items: [
       { keys: [MOD, 'N'], label: 'New chat' },
-      { keys: [MOD, 'Shift', 'O'], label: 'New chat' },
+      { keys: [MOD, 'Shift', 'O'], label: 'New chat (alt)' },
       { keys: [MOD, ','], label: 'Open settings' },
-      { keys: [MOD, 'K'], label: 'Focus sidebar search' },
+      { keys: [MOD, 'K'], label: 'Command palette' },
       { keys: [MOD, 'Shift', 'F'], label: 'Search all conversations' },
       { keys: ['?'], label: 'Show this cheatsheet' },
-      { keys: ['Esc'], label: 'Stop response / close overlay' }
+      { keys: ['Esc'], label: 'Close overlay / stop response' }
     ]
   },
   {

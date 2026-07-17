@@ -1,4 +1,4 @@
-import type { Message, ProviderModel, ThinkingEffort, ToolDefinition, TokenUsage } from '@shared/types';
+import type { HiveErrorInfo, Message, ProviderModel, ThinkingEffort, ToolDefinition, TokenUsage } from '@shared/types';
 
 export interface ProviderStreamRequest {
   conversationId: string;
@@ -34,6 +34,7 @@ export interface ProviderStreamEvent {
   };
   usage?: TokenUsage;
   error?: string;
+  errorInfo?: HiveErrorInfo;
 }
 
 export interface ProviderAdapter {

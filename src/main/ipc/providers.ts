@@ -196,7 +196,9 @@ async function updateProviderModels(
       supportsVision: detail?.supportsVision,
       supportsTools: detail?.supportsTools,
       supportsReasoning: detail?.supportsReasoning,
-      thinkingOptions: detail?.thinkingOptions
+      thinkingOptions: detail?.thinkingOptions,
+      inputPrice: detail?.inputPrice,
+      outputPrice: detail?.outputPrice
     };
   });
   const merged = applyKnownMetadata(liveModels);
