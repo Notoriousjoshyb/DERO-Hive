@@ -81,7 +81,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     supportsTools: true,
     supportsVision: true,
     supportsReasoning: true,
-    notes: 'Native Anthropic Messages API. Model list fetched live when you save. Browser sign-in is not offered: Anthropic\'s terms restrict Claude Pro/Max OAuth to Claude Code and claude.ai, with server-side enforcement — an API key is required here.',
+    notes: 'Native Anthropic Messages API (API key billing). Model list fetched live when you save. To use a Claude Pro/Max subscription instead, add the "Claude Code (Anthropic subscription)" preset — direct OAuth is restricted by Anthropic to Claude Code and claude.ai.',
+    models: []
+  },
+  {
+    id: 'claude-code',
+    name: 'Claude Code (Anthropic subscription)',
+    baseUrl: '',
+    defaultModel: '',
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    notes: 'Use your Claude Pro/Max subscription through Anthropic\'s own Claude Code agent, driven over the Agent Client Protocol (the same sanctioned route Zed uses). Sign-in and tokens are handled entirely by Anthropic\'s tooling; an existing `claude` CLI login on this machine is picked up automatically, or run `claude /login` in a terminal.',
     models: []
   },
   {
@@ -148,4 +159,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
 
 export function findPreset(id: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((p) => p.id === id);
+}
+
+/**
+ * Presets backed by an ACP agent binary that owns its own auth and model
+ * discovery (no base URL, no API key, no HTTP /models probing).
+ */
+export function isAcpPreset(id?: string): boolean {
+  return id === 'codex' || id === 'claude-code';
 }

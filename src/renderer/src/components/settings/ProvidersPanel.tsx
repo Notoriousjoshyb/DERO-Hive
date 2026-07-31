@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../../stores/app';
+import { isAcpPreset } from '@shared/presets';
 import type { OAuthStatus, ProviderConfig } from '@shared/types';
 
 export function ProvidersPanel(): JSX.Element {
@@ -43,6 +44,73 @@ export function ProvidersPanel(): JSX.Element {
     setOauthFlow({ providerId, status });
   };
 
+  // Quick add via browser sign-in: create the provider from preset defaults
+  // (no API key), then launch the device flow. If a provider for this preset
+  // already exists, sign in on it instead of adding a duplicate.
+  const [quickSignInBusy, setQuickSignInBusy] = useState<string | null>(null);
+  const quickSignIn = async (presetId: string): Promise<void> => {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset || quickSignInBusy) return;
+    setQuickSignInBusy(presetId);
+    try {
+      const existing = providers.find((p) => p.presetId === presetId);
+      let id = existing?.id;
+      if (!id) {
+        const saved = await window.hive.providerSave({
+          id: '',
+          presetId: preset.id,
+          name: preset.name,
+          baseUrl: preset.baseUrl,
+          enabled: true,
+          models: preset.models || []
+        });
+        id = saved.id;
+        await loadProviders();
+      }
+      await startSignIn(id);
+    } finally {
+      setQuickSignInBusy(null);
+    }
+  };
+
+  // Quick add for ACP agents (Codex/ChatGPT, Claude Code): browser auth runs
+  // through the adapter's model discovery, not the generic OAuth device flow.
+  // Saving a new ACP provider auto-starts discovery (and opens the vendor's
+  // login); for an existing provider we trigger a refresh, which does the same.
+  const quickAcpSignIn = async (presetId: string): Promise<void> => {
+    if (quickSignInBusy) return;
+    setQuickSignInBusy(presetId);
+    try {
+      const preset = presets.find((p) => p.id === presetId);
+      const existing = providers.find((p) => p.presetId === presetId);
+      if (existing) {
+        const r = await window.hive.providerRefreshModels(existing.id);
+        if (!r.ok) alert(`Sign-in failed: ${r.error || 'unknown error'}`);
+      } else {
+        await window.hive.providerSave({
+          id: '',
+          presetId,
+          name: preset?.name || presetId,
+          baseUrl: '',
+          enabled: true,
+          models: []
+        });
+      }
+      await loadProviders();
+    } finally {
+      setQuickSignInBusy(null);
+    }
+  };
+
+  // Generic "sign in and grab a key" path for providers whose vendors don't
+  // permit third-party OAuth: open their key page (login happens there) and
+  // the add form together so the key can be pasted straight in.
+  const quickGetKey = (presetId: string): void => {
+    const preset = presets.find((p) => p.id === presetId);
+    if (preset?.apiKeyUrl) void window.hive.openExternal(preset.apiKeyUrl);
+    startNew(presetId);
+  };
+
   const signOut = async (providerId: string): Promise<void> => {
     await window.hive.providerOauthSignOut(providerId);
     setOauthFlow((cur) => (cur?.providerId === providerId ? null : cur));
@@ -67,7 +135,7 @@ export function ProvidersPanel(): JSX.Element {
   // Auto-probe models when baseUrl is present in the form
   useEffect(() => {
     if (!editing) return;
-    if (editing.presetId === 'codex') return; // Codex discovers models via ACP, not HTTP
+    if (isAcpPreset(editing.presetId)) return; // ACP agents discover models via their adapter, not HTTP
     if (!editing.baseUrl) return;
 
     if (probeTimer.current) clearTimeout(probeTimer.current);
@@ -262,6 +330,64 @@ export function ProvidersPanel(): JSX.Element {
                   <div className="text-[10px] text-fg-subtle font-mono mt-0.5 truncate">{preset.baseUrl || '(no URL — set manually)'}</div>
                   {preset.notes && <div className="text-xs text-fg-muted mt-1">{preset.notes}</div>}
                 </button>
+                {preset.supportsBrowserSignIn ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button
+                      onClick={() => void quickSignIn(preset.id)}
+                      disabled={quickSignInBusy === preset.id}
+                      className="btn-primary text-[11px]"
+                      title="Add this provider and sign in with your account in the browser — no API key needed"
+                    >
+                      {quickSignInBusy === preset.id ? 'Opening browser…' : 'Sign in with browser'}
+                    </button>
+                    <button
+                      onClick={() => startNew(preset.id)}
+                      className="btn-secondary text-[11px]"
+                      title="Add this provider with an API key instead"
+                    >
+                      Enter API key
+                    </button>
+                  </div>
+                ) : isAcpPreset(preset.id) ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button
+                      onClick={() => void quickAcpSignIn(preset.id)}
+                      disabled={quickSignInBusy === preset.id}
+                      className="btn-primary text-[11px]"
+                      title={preset.id === 'codex'
+                        ? 'Add this provider and log in with your ChatGPT account in the browser — no API key needed'
+                        : 'Add this provider and sign in with your Claude Pro/Max account via Anthropic\'s own Claude Code — no API key needed'}
+                    >
+                      {quickSignInBusy === preset.id
+                        ? 'Opening login…'
+                        : preset.id === 'codex' ? 'Sign in with ChatGPT' : 'Sign in with Claude'}
+                    </button>
+                    <button
+                      onClick={() => startNew(preset.id)}
+                      className="btn-secondary text-[11px]"
+                      title="Configure the adapter command path manually"
+                    >
+                      Manual setup
+                    </button>
+                  </div>
+                ) : preset.apiKeyUrl ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button
+                      onClick={() => quickGetKey(preset.id)}
+                      className="btn-primary text-[11px]"
+                      title="Sign in on the provider's site to create a key, and open the add form to paste it"
+                    >
+                      Get API key ↗
+                    </button>
+                    <button
+                      onClick={() => startNew(preset.id)}
+                      className="btn-secondary text-[11px]"
+                      title="Add this provider and paste a key you already have"
+                    >
+                      Enter API key
+                    </button>
+                  </div>
+                ) : null}
                 {preset.docsUrl && (
                   <button
                     onClick={(e) => { e.stopPropagation(); void window.hive.openExternal(preset.docsUrl!); }}
@@ -282,21 +408,27 @@ export function ProvidersPanel(): JSX.Element {
             <Field label="Name">
               <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} className="input w-full" />
             </Field>
-            {editing.presetId !== 'codex' && (
+            {!isAcpPreset(editing.presetId) && (
               <Field label="Base URL">
                 <input value={editing.baseUrl} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} className="input w-full font-mono text-xs" />
               </Field>
             )}
-            {editing.presetId === 'codex' && (
+            {isAcpPreset(editing.presetId) && (
               <>
                 <div className="text-xs text-fg-subtle bg-bg-input border border-border rounded p-2">
-                  Codex uses the <code className="font-mono text-[10px]">@agentclientprotocol/codex-acp</code> adapter. Save the provider, then click <b>Models</b> to open the ChatGPT login page and load the model list. No API key is required.
+                  {editing.presetId === 'codex' ? (
+                    <>Codex uses the <code className="font-mono text-[10px]">@agentclientprotocol/codex-acp</code> adapter. Save the provider, then click <b>Models</b> to open the ChatGPT login page and load the model list. No API key is required.</>
+                  ) : (
+                    <>Claude Code runs through the <code className="font-mono text-[10px]">@zed-industries/claude-code-acp</code> adapter and uses your Claude Pro/Max subscription. Save the provider, then click <b>Models</b> to sign in — an existing <code className="font-mono text-[10px]">claude</code> CLI login is picked up automatically, or run <code className="font-mono text-[10px]">claude /login</code> in a terminal. No API key is required.</>
+                  )}
                 </div>
-                <Field label="codex-acp command path" hint="Path to the codex-acp binary or 'npx'. Leave blank to use the bundled node_modules copy or npx fallback.">
+                <Field label="Adapter command path" hint="Path to the adapter binary or 'npx'. Leave blank to use the bundled node_modules copy or npx fallback.">
                   <input
                     value={editing.customHeaders?.commandPath || ''}
                     onChange={(e) => setEditing({ ...editing, customHeaders: { ...editing.customHeaders, commandPath: e.target.value } })}
-                    placeholder="node_modules/@agentclientprotocol/codex-acp/dist/index.js"
+                    placeholder={editing.presetId === 'codex'
+                      ? 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'
+                      : 'node_modules/@zed-industries/claude-code-acp/dist/index.js'}
                     className="input w-full font-mono text-xs"
                   />
                 </Field>
@@ -307,11 +439,11 @@ export function ProvidersPanel(): JSX.Element {
                     onChange={(e) => setEditing({ ...editing, customHeaders: { ...editing.customHeaders, noBrowser: e.target.checked ? '1' : '' } })}
                     className="accent-accent w-4 h-4"
                   />
-                  <span className="text-[10px] text-fg-subtle ml-2">Hide browser-based ChatGPT auth (e.g., for remote/headless setups)</span>
+                  <span className="text-[10px] text-fg-subtle ml-2">Hide browser-based auth (e.g., for remote/headless setups)</span>
                 </Field>
               </>
             )}
-            {editing.presetId !== 'codex' && (
+            {!isAcpPreset(editing.presetId) && (
               <Field
                 label="API key (optional)"
                 hint={

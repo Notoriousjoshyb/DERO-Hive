@@ -44,6 +44,7 @@
   "dependencies": {
     "@agentclientprotocol/codex-acp": "^1.1.2",
     "@agentclientprotocol/sdk": "^1.2.1",
+    "@zed-industries/claude-code-acp": "^0.16.2",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "better-sqlite3": "^11.3.0",
     "electron-store": "^10.0.0",
@@ -136,7 +137,9 @@
       "**/node_modules/@agentclientprotocol/codex-acp/**",
       "**/node_modules/@openai/codex/**",
       "**/node_modules/@openai/codex-win32-x64/**",
-      "**/node_modules/@openai/codex-win32-arm64/**"
+      "**/node_modules/@openai/codex-win32-arm64/**",
+      "**/node_modules/@zed-industries/claude-code-acp/**",
+      "**/node_modules/@anthropic-ai/claude-agent-sdk/**"
     ],
     "win": {
       "target": [
