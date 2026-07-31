@@ -3,7 +3,7 @@ import { IPC, type Attachment } from '@shared/types';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname, basename, relative, sep, extname } from 'node:path';
-import { resolveWithinAllowed, getWorkspaceRoot } from '../utils/pathPolicy';
+import { resolveWithinAllowed, getWorkspaceRoot, grantSessionRoot } from '../utils/pathPolicy';
 import { storeAttachment } from '../utils/attachments';
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -109,6 +109,10 @@ export function registerFsHandlers(): void {
     const win = BrowserWindow.fromWebContents(e.sender);
     const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] });
     if (r.canceled || !r.filePaths[0]) return null;
+    // Picking a directory in the OS dialog is explicit consent to work in it,
+    // even outside the workspace — otherwise every follow-up fsList/fsRead
+    // fails containment and the folder shows as empty.
+    grantSessionRoot(r.filePaths[0]);
     return r.filePaths[0];
   });
 
@@ -119,6 +123,8 @@ export function registerFsHandlers(): void {
       filters: filters || undefined
     });
     if (r.canceled || !r.filePaths[0]) return null;
+    // Grant exactly the picked file (a file "root" allows only itself).
+    grantSessionRoot(r.filePaths[0]);
     return r.filePaths[0];
   });
 

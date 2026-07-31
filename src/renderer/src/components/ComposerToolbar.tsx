@@ -68,7 +68,15 @@ export function ComposerToolbar({ isStreaming, onSend, onStop, onAttach, canSend
 
   // A model switch can invalidate the previously selected effort. Reset the
   // composer immediately so the label and the request stay in sync.
+  // When no thinking options exist (no model selected, or a model without
+  // extended thinking), the only valid state is 'off' — bumping to 'medium'
+  // here while the other branch resets to 'off' would oscillate forever,
+  // re-rendering and persisting settings in a tight loop.
   useEffect(() => {
+    if (thinkingOptions.length === 0) {
+      if (reasoning !== 'off') setReasoning('off');
+      return;
+    }
     if (usingDefaultThinking && reasoning === 'off') {
       setReasoning('medium');
     } else if (reasoning !== 'off' && !thinkingOptions.some((option) => option.id === reasoning)) {

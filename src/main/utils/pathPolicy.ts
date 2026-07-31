@@ -2,6 +2,28 @@ import { resolve, isAbsolute, relative, dirname, basename, join } from 'node:pat
 import { realpathSync } from 'node:fs';
 import { getSetting, getDb } from '../db/client';
 import { getDefaultWorkspace } from './paths';
+import type { AppSettings } from '@shared/types';
+
+/**
+ * Paths the user explicitly granted this session by picking them in an OS
+ * file dialog (Open Folder / Open File). The dialog itself is the consent:
+ * without this, a folder picked outside the workspace passes the dialog but
+ * every subsequent fs IPC on it fails containment and the UI reads as broken.
+ * Session-scoped on purpose — persistent grants go through settings/projects.
+ */
+const sessionRoots = new Set<string>();
+
+export function grantSessionRoot(p: string): void {
+  if (p && typeof p === 'string' && isAbsolute(p)) sessionRoots.add(resolve(p));
+}
+
+function getAppSettings(): Partial<AppSettings> {
+  try {
+    return getSetting<Partial<AppSettings>>('appSettings') || {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Resolve symlinks in `p`, keeping any trailing segments that do not exist yet.
@@ -31,7 +53,11 @@ export function canonicalizePath(p: string): string {
 
 export function getWorkspaceRoot(): string {
   try {
-    return getSetting<string>('workingDirectory') || getDefaultWorkspace();
+    // The renderer persists workingDirectory inside the appSettings blob;
+    // the bare 'workingDirectory' key is kept as a legacy fallback.
+    return getAppSettings().workingDirectory
+      || getSetting<string>('workingDirectory')
+      || getDefaultWorkspace();
   } catch {
     return getDefaultWorkspace();
   }
@@ -61,6 +87,10 @@ export function resolveAndValidate(input: string, root: string): string {
  */
 export function getAllowedRoots(): string[] {
   const roots = [getWorkspaceRoot()];
+  // The Code tab's persisted "Open Folder" choice survives restarts, so it
+  // must be a durable allowed root, not just a session grant.
+  const codeFolder = getAppSettings().codeFolder;
+  if (codeFolder && typeof codeFolder === 'string') roots.push(codeFolder);
   try {
     const rows = getDb().prepare('SELECT path FROM projects').all() as Array<{ path: string }>;
     for (const r of rows) {
@@ -69,6 +99,7 @@ export function getAllowedRoots(): string[] {
   } catch {
     // DB not ready — fall back to the workspace root only
   }
+  roots.push(...sessionRoots);
   return roots;
 }
 

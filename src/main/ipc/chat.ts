@@ -12,7 +12,7 @@ import { ToolRegistry } from '../tools/registry';
 import { McpManager } from '../mcp/manager';
 import { getDb } from '../db/client';
 import { getSetting } from '../db/client';
-import { getDefaultWorkspace } from '../utils/paths';
+import { getWorkspaceRoot } from '../utils/pathPolicy';
 import { truncateMessagesForContext } from '../utils/tokenBudget';
 import { hydrateAttachmentRefs, validateAttachmentRefs } from '../utils/attachments';
 
@@ -403,7 +403,7 @@ async function runChat(
         const proj = getDb().prepare('SELECT path FROM projects WHERE id = ?').get(conv.project_id) as { path?: string } | undefined;
         projectPath = proj?.path;
       }
-      const cwd = projectPath || getSetting<string>('workingDirectory') || getDefaultWorkspace();
+      const cwd = projectPath || getWorkspaceRoot();
       if (projectPath) {
         logger.info('chat', `using project cwd: ${projectPath}`);
       }
