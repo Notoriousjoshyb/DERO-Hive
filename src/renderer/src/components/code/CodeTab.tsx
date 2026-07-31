@@ -112,6 +112,7 @@ export function CodeTab(): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [childrenMap, setChildrenMap] = useState<Map<string, FileEntry[]>>(new Map());
   const [treeLoading, setTreeLoading] = useState(false);
+  const [treeError, setTreeError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -141,12 +142,17 @@ export function CodeTab(): JSX.Element {
       .sort((a, b) => (a.isDirectory !== b.isDirectory ? (a.isDirectory ? -1 : 1) : a.name.localeCompare(b.name)));
 
   useEffect(() => {
-    if (!projectPath) { setRootEntries([]); return; }
+    if (!projectPath) { setRootEntries([]); setTreeError(null); return; }
     let cancelled = false;
     setTreeLoading(true);
+    setTreeError(null);
     window.hive.fsList(projectPath)
       .then((entries: FileEntry[]) => { if (!cancelled) { setRootEntries(sortEntries(entries)); setExpanded(new Set()); setChildrenMap(new Map()); } })
-      .catch(() => { if (!cancelled) setRootEntries([]); })
+      .catch((err: unknown) => {
+        // Surface the failure — silently showing "Empty directory" made
+        // path-policy rejections look like an empty folder.
+        if (!cancelled) { setRootEntries([]); setTreeError(err instanceof Error ? err.message : String(err)); }
+      })
       .finally(() => { if (!cancelled) setTreeLoading(false); });
     return () => { cancelled = true; };
   }, [projectPath, refreshKey]);
@@ -417,6 +423,10 @@ export function CodeTab(): JSX.Element {
                   >
                     Open Folder
                   </button>
+                </div>
+              ) : treeError && !treeLoading ? (
+                <div className="px-3 py-4 text-center text-danger/80 text-[10px] break-words">
+                  Couldn't read this folder: {treeError}
                 </div>
               ) : rootEntries.length === 0 && !treeLoading ? (
                 <div className="px-3 py-4 text-center text-fg-subtle text-[10px]">Empty directory</div>

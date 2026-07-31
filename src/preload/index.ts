@@ -57,6 +57,9 @@ const api = {
   providerRefreshModels: (id: string) => ipcRenderer.invoke(IPC.PROVIDER_REFRESH_MODELS, id),
   providerProbeModels: (cfg: { baseUrl: string; apiKey: string; presetId?: string; customHeaders?: Record<string, string> }) =>
     ipcRenderer.invoke(IPC.PROVIDER_PROBE_MODELS, cfg),
+  providerOauthStart: (id: string) => ipcRenderer.invoke(IPC.PROVIDER_OAUTH_START, id),
+  providerOauthStatus: (id: string) => ipcRenderer.invoke(IPC.PROVIDER_OAUTH_STATUS, id),
+  providerOauthSignOut: (id: string) => ipcRenderer.invoke(IPC.PROVIDER_OAUTH_SIGNOUT, id),
 
   // MCP
   mcpList: () => ipcRenderer.invoke(IPC.MCP_LIST),

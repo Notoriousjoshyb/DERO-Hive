@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../../stores/app';
-import type { ProviderConfig } from '@shared/types';
+import type { OAuthStatus, ProviderConfig } from '@shared/types';
 
 export function ProvidersPanel(): JSX.Element {
   const providers = useAppStore((s) => s.providers);
@@ -18,6 +18,36 @@ export function ProvidersPanel(): JSX.Element {
   const [probeError, setProbeError] = useState<string | null>(null);
   const probeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const probeSeq = useRef(0);
+  // Browser sign-in (OAuth device flow) — at most one provider at a time.
+  const [oauthFlow, setOauthFlow] = useState<{ providerId: string; status: OAuthStatus } | null>(null);
+
+  // While a sign-in is pending, poll main for completion (the confirmation
+  // happens in the external browser, so there is no renderer-side event).
+  useEffect(() => {
+    if (oauthFlow?.status.state !== 'pending') return;
+    const providerId = oauthFlow.providerId;
+    const interval = setInterval(async () => {
+      try {
+        const status = await window.hive.providerOauthStatus(providerId);
+        setOauthFlow((cur) => (cur?.providerId === providerId ? { providerId, status } : cur));
+        if (status.state === 'signed-in') {
+          await loadProviders();
+        }
+      } catch { /* transient IPC failure — keep polling */ }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [oauthFlow?.status.state, oauthFlow?.providerId, loadProviders]);
+
+  const startSignIn = async (providerId: string): Promise<void> => {
+    const status = await window.hive.providerOauthStart(providerId);
+    setOauthFlow({ providerId, status });
+  };
+
+  const signOut = async (providerId: string): Promise<void> => {
+    await window.hive.providerOauthSignOut(providerId);
+    setOauthFlow((cur) => (cur?.providerId === providerId ? null : cur));
+    await loadProviders();
+  };
 
   const startNew = (presetId?: string): void => {
     const preset = presetId ? presets.find((p) => p.id === presetId) : undefined;
@@ -134,6 +164,7 @@ export function ProvidersPanel(): JSX.Element {
                       <span className="font-medium">{p.name}</span>
                       {!p.enabled && <span className="text-[10px] text-fg-subtle uppercase">(disabled)</span>}
                       {p.hasApiKey && <span className="text-[10px] text-success uppercase">key saved</span>}
+                      {p.hasOAuth && <span className="text-[10px] text-success uppercase">signed in</span>}
                       {p.modelsFetchedAt && <span className="text-[10px] text-accent uppercase">live models</span>}
                     </div>
                     <div className="text-xs text-fg-subtle font-mono truncate">{p.baseUrl}</div>
@@ -142,7 +173,7 @@ export function ProvidersPanel(): JSX.Element {
                       {p.modelsFetchedAt && (
                         <span className="text-fg-subtle"> · updated {timeAgo(p.modelsFetchedAt)}</span>
                       )}
-                      {!p.hasApiKey && (
+                      {!p.hasApiKey && !p.hasOAuth && (
                         <span className="text-warn"> · no API key</span>
                       )}
                     </div>
@@ -162,6 +193,22 @@ export function ProvidersPanel(): JSX.Element {
                     })()}
                   </div>
                   <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
+                    {presets.find((pp) => pp.id === p.presetId)?.supportsBrowserSignIn && (
+                      p.hasOAuth ? (
+                        <button onClick={() => void signOut(p.id)} className="btn-secondary" title="Remove the browser sign-in session">
+                          Sign out
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void startSignIn(p.id)}
+                          disabled={oauthFlow?.providerId === p.id && oauthFlow.status.state === 'pending'}
+                          className="btn-secondary text-accent"
+                          title="Sign in with your account in the browser — no API key needed"
+                        >
+                          Sign in
+                        </button>
+                      )
+                    )}
                     <button
                       onClick={() => void handleRefreshModels(p.id)}
                       disabled={refreshing === p.id}
@@ -175,6 +222,30 @@ export function ProvidersPanel(): JSX.Element {
                     <button onClick={() => { if (confirm(`Delete ${p.name}?`)) void deleteProvider(p.id); }} className="btn-secondary text-danger">×</button>
                   </div>
                 </div>
+                {oauthFlow?.providerId === p.id && oauthFlow.status.state === 'pending' && (
+                  <div className="mt-2 p-2 rounded-lg bg-accent-soft/40 border border-accent/30 text-xs space-y-1">
+                    <div className="text-fg">
+                      Confirm the sign-in in your browser. Your code:{' '}
+                      <span className="font-mono font-semibold tracking-wider">{oauthFlow.status.userCode}</span>
+                    </div>
+                    <div className="text-fg-muted">
+                      No browser window?{' '}
+                      <button
+                        onClick={() => { const s = oauthFlow.status; if (s.state === 'pending') void window.hive.openExternal(s.verificationUri); }}
+                        className="text-accent hover:underline"
+                      >
+                        Open the verification page
+                      </button>
+                      {' '}·{' '}
+                      <button onClick={() => void signOut(p.id)} className="text-fg-subtle hover:text-fg hover:underline">Cancel</button>
+                    </div>
+                  </div>
+                )}
+                {oauthFlow?.providerId === p.id && oauthFlow.status.state === 'error' && (
+                  <div className="mt-2 p-2 rounded-lg bg-danger/10 border border-danger/30 text-xs text-danger">
+                    {oauthFlow.status.error}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -241,7 +312,15 @@ export function ProvidersPanel(): JSX.Element {
               </>
             )}
             {editing.presetId !== 'codex' && (
-              <Field label="API key (optional)" hint={editing.hasApiKey ? 'Key saved. Leave blank to keep current; type a new value to replace.' : 'Paste your API key if required. Some providers (e.g. local Ollama) do not need one.'}>
+              <Field
+                label="API key (optional)"
+                hint={
+                  editing.hasApiKey ? 'Key saved. Leave blank to keep current; type a new value to replace.'
+                  : presets.find((pp) => pp.id === editing.presetId)?.supportsBrowserSignIn
+                    ? 'Optional — this provider supports browser sign-in. Save it, then click "Sign in" on the provider card to use your account without an API key.'
+                    : 'Paste your API key if required. Some providers (e.g. local Ollama) do not need one.'
+                }
+              >
                 <input
                   type="password"
                   value={apiKey}

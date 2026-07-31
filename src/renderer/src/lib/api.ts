@@ -51,7 +51,8 @@ import type {
   MediaJobRecord,
   PermissionRule,
   ToolExecutionRecord,
-  FileCheckpoint
+  FileCheckpoint,
+  OAuthStatus
 } from '@shared/types';
 import type { DvmLintResult } from '@shared/dvm';
 
@@ -91,6 +92,9 @@ declare global {
       providerRefreshModels: (id: string) => Promise<{ ok: boolean; error?: string; models?: string[]; fetchedAt?: number }>;
       providerProbeModels: (cfg: { baseUrl: string; apiKey: string; presetId?: string; customHeaders?: Record<string, string> }) =>
         Promise<{ ok: boolean; error?: string; models?: string[] }>;
+      providerOauthStart: (id: string) => Promise<OAuthStatus>;
+      providerOauthStatus: (id: string) => Promise<OAuthStatus>;
+      providerOauthSignOut: (id: string) => Promise<{ ok: boolean }>;
 
       mcpList: () => Promise<McpServerConfig[]>;
       mcpSave: (cfg: McpServerConfig) => Promise<{ ok: boolean }>;

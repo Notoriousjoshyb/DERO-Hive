@@ -4,6 +4,7 @@ import { OpenAICompatibleAdapter } from './openai-compatible';
 import { AnthropicAdapter } from './anthropic';
 import { CodexAcpAdapter } from './codex-acp';
 import { getSecret } from '../utils/secrets';
+import { getOAuthAccessToken, hasOAuthTokens } from './oauth';
 import { getDb } from '../db/client';
 import { logger } from '../utils/logger';
 
@@ -21,8 +22,11 @@ export function adapterFor(cfg: ProviderConfig): ProviderAdapter | null {
   if (cfg.presetId === 'anthropic' || /anthropic\.com/.test(cfg.baseUrl)) {
     return new AnthropicAdapter(cfg, apiKey || '');
   }
-  // OpenCode Zen / Go / OpenAI / Groq / OpenRouter / Ollama / Kimi all use OpenAI-compatible
-  return new OpenAICompatibleAdapter(cfg, apiKey || '');
+  // OpenCode Zen / Go / OpenAI / Groq / OpenRouter / Ollama / Kimi all use OpenAI-compatible.
+  // The token source resolves per request so a browser sign-in (or refresh)
+  // takes effect without rebuilding cached adapters; it returns undefined when
+  // the provider has no OAuth session and the static key is used instead.
+  return new OpenAICompatibleAdapter(cfg, apiKey || '', () => getOAuthAccessToken(cfg.id));
 }
 
 export function getAdapter(id: string): ProviderAdapter | null {
@@ -71,6 +75,7 @@ function rowToConfig(row: Record<string, unknown>): ProviderConfig {
     baseUrl: row.base_url as string,
     apiKey: '', // intentionally blank — renderer never sees the real key
     hasApiKey: !!getSecret(`provider:${row.id}`),
+    hasOAuth: hasOAuthTokens(row.id as string),
     enabled: row.enabled === 1,
     models: safeJson(row.models as string, []),
     customHeaders: safeJson(row.custom_headers as string, {}),

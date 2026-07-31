@@ -58,12 +58,27 @@ export function openAICachedTokens(u: OpenAIUsage): number | undefined {
 // implements that format (OpenAI, OpenCode Zen/Go, Groq, OpenRouter, Moonshot, Ollama, etc.)
 export class OpenAICompatibleAdapter implements ProviderAdapter {
   readonly id: string;
-  constructor(private readonly cfg: ProviderConfig, private readonly apiKey: string) {
+  constructor(
+    private readonly cfg: ProviderConfig,
+    private readonly apiKey: string,
+    // Browser sign-in (OAuth) token source. Resolved per request so token
+    // refresh in the background is always picked up; undefined = no session.
+    private readonly oauthToken?: () => Promise<string | undefined>
+  ) {
     this.id = cfg.id;
+  }
+
+  private async bearerToken(): Promise<string> {
+    try {
+      const oauth = await this.oauthToken?.();
+      if (oauth) return oauth;
+    } catch { /* fall back to the static key */ }
+    return this.apiKey;
   }
 
   async testConnection(): Promise<{ ok: boolean; error?: string; models?: string[]; hint?: string }> {
     const baseUrl = this.cfg.baseUrl.replace(/\/$/, '');
+    const bearer = await this.bearerToken();
 
     // 1. Try a tiny chat completion first — this is the real auth test.
     //    /models is often public and doesn't prove the key can actually chat.
@@ -71,7 +86,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       const probeModel = this.cfg.models[0]?.id || 'test';
       const r = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: this.headers(),
+        headers: this.headers(bearer),
         body: JSON.stringify({
           model: probeModel,
           messages: [{ role: 'user', content: 'ping' }],
@@ -119,7 +134,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
     // 2. Fallback: GET /models (useful for local/ollama or public gateways)
     try {
-      const r = await fetch(`${baseUrl}/models`, { headers: this.headers() });
+      const r = await fetch(`${baseUrl}/models`, { headers: this.headers(bearer) });
       if (r.ok) {
         const data = (await r.json()) as { data?: { id: string }[] };
         return { ok: true, models: (data.data || []).map((m) => m.id) };
@@ -176,7 +191,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
   private async probeUrl(url: string): Promise<string | null> {
     try {
-      const r = await fetch(url, { headers: this.headers(), method: 'GET' });
+      const r = await fetch(url, { headers: this.headers(await this.bearerToken()), method: 'GET' });
       if (r.ok || r.status === 401) {
         // 200 or auth-required means this URL is the right shape
         return url.replace(/\/models$/, '');
@@ -189,13 +204,13 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return this.cfg.presetId === 'kimi' || /api\.kimi\.com\/coding/i.test(this.cfg.baseUrl);
   }
 
-  private headers(): Record<string, string> {
+  private headers(bearer: string): Record<string, string> {
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': this.isKimiCoding() ? KIMI_CODING_USER_AGENT : USER_AGENT,
       ...(this.cfg.customHeaders || {})
     };
-    if (this.apiKey) h['Authorization'] = `Bearer ${this.apiKey}`;
+    if (bearer) h['Authorization'] = `Bearer ${bearer}`;
     return h;
   }
 
@@ -349,7 +364,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: this.headers(),
+      headers: this.headers(await this.bearerToken()),
       body: JSON.stringify(body),
       signal: req.signal
     });

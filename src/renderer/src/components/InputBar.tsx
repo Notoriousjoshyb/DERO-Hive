@@ -439,10 +439,9 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     if (isFinal) dictationBaseRef.current = null;
   };
 
-  const openGhModal = (): void => {
-    const url = window.prompt('Paste a GitHub issue or PR URL:');
-    if (url) setGhModal({ url });
-  };
+  // window.prompt() is unsupported in Electron (it throws), so the URL is
+  // collected inside the modal instead.
+  const openGhModal = (): void => setGhModal({ url: '' });
 
   const wordCount = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
   const deroRefItems = useMemo(() => extractDeroReferenceItems(text), [text]);
@@ -617,7 +616,12 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             focusComposer={() => textareaRef.current?.focus({ preventScroll: true })}
           />
           {scheduleMenuOpen && (
-            <div className="px-3 pb-3 flex flex-wrap gap-2">
+            <div className="px-3 pb-3 flex flex-wrap items-center gap-2">
+              {!text.trim() && (
+                <span className="w-full text-[10px] text-fg-subtle">
+                  Type the message first, then pick when to send it.
+                </span>
+              )}
               {[
                 { label: '5 min', ms: 5 * 60 * 1000 },
                 { label: '30 min', ms: 30 * 60 * 1000 },
@@ -627,7 +631,8 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
                 <button
                   key={o.label}
                   onClick={() => scheduleSend(o.ms)}
-                  className="px-2 py-1 rounded text-xs bg-bg-elev border border-border hover:border-accent hover:text-accent transition"
+                  disabled={!text.trim()}
+                  className="px-2 py-1 rounded text-xs bg-bg-elev border border-border hover:border-accent hover:text-accent transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-inherit"
                 >
                   {o.label}
                 </button>
@@ -652,12 +657,22 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
 }
 
 function GhPreviewModal({ url, onClose, onInsert }: { url: string; onClose: () => void; onInsert: (md: string) => void }): JSX.Element {
+  const [targetUrl, setTargetUrl] = useState(url);
+  const [inputValue, setInputValue] = useState(url);
   const [data, setData] = useState<Awaited<ReturnType<typeof window.hive.ghFetchUrl>> | null>(null);
   useEffect(() => {
+    if (!targetUrl) return;
     let cancelled = false;
-    window.hive.ghFetchUrl(url).then((res) => { if (!cancelled) setData(res); }).catch(() => { if (!cancelled) setData({ error: 'fetch failed' } as never); });
+    setData(null);
+    window.hive.ghFetchUrl(targetUrl).then((res) => { if (!cancelled) setData(res); }).catch(() => { if (!cancelled) setData({ error: 'fetch failed' } as never); });
     return () => { cancelled = true; };
-  }, [url]);
+  }, [targetUrl]);
+
+  const submitUrl = (): void => {
+    const trimmed = inputValue.trim();
+    if (trimmed) setTargetUrl(trimmed);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="bg-bg-elev border border-border rounded-xl shadow-2xl max-w-2xl w-full p-4 space-y-3">
@@ -665,7 +680,31 @@ function GhPreviewModal({ url, onClose, onInsert }: { url: string; onClose: () =
           <h3 className="font-semibold text-fg">GitHub reference</h3>
           <button onClick={onClose} className="text-fg-subtle hover:text-fg">×</button>
         </div>
-        {!data && <div className="text-xs text-fg-muted">Fetching {url}…</div>}
+        {!targetUrl && (
+          <div className="space-y-2">
+            <label className="text-xs text-fg-muted block">Paste a GitHub issue or PR URL:</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submitUrl(); }}
+                autoFocus
+                spellCheck={false}
+                placeholder="https://github.com/owner/repo/issues/123"
+                className="flex-1 rounded-lg border border-border bg-bg-input px-3 py-2 text-sm text-fg outline-none transition focus:border-accent/60"
+              />
+              <button
+                onClick={submitUrl}
+                disabled={!inputValue.trim()}
+                className="px-3 py-1 text-xs rounded bg-accent text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Fetch
+              </button>
+            </div>
+          </div>
+        )}
+        {targetUrl && !data && <div className="text-xs text-fg-muted">Fetching {targetUrl}…</div>}
         {data && 'error' in data && <div className="text-xs text-danger">{data.error}</div>}
         {data && !('error' in data) && (
           <>

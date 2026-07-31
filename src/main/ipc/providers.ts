@@ -7,6 +7,7 @@ import { clearAdapterCache, listProviders, testConnection, getProviderConfig, ge
 import { PROVIDER_PRESETS, findPreset } from '@shared/presets';
 import { logger } from '../utils/logger';
 import { fetchLiveModels } from '../providers/models';
+import { getOAuthAccessToken, getOAuthStatus, setOAuthSignedInListener, signOut, startDeviceFlow } from '../providers/oauth';
 import { applyKnownMetadata } from '@shared/modelMetadata';
 
 // Keep model lists fresh: refresh on startup, on a timer, and opportunistically
@@ -108,6 +109,7 @@ export function registerProviderHandlers(): void {
   ipcMain.handle(IPC.PROVIDER_DELETE, async (_e, id: string) => {
     getDb().prepare('DELETE FROM providers WHERE id = ?').run(id);
     deleteSecret(`provider:${id}`);
+    signOut(id); // drop any browser sign-in tokens with the provider
     clearAdapterCache();
     return { ok: true };
   });
@@ -127,6 +129,27 @@ export function registerProviderHandlers(): void {
   ipcMain.handle(IPC.PROVIDER_PROBE_MODELS, async (_e, cfg: { baseUrl: string; apiKey: string; presetId?: string; customHeaders?: Record<string, string> }) => {
     if (!cfg.baseUrl) return { ok: false, error: 'Base URL is required' };
     return await fetchLiveModels(cfg.baseUrl, cfg.apiKey, cfg.presetId, cfg.customHeaders);
+  });
+
+  // Browser sign-in (OAuth device flow). A completed sign-in refreshes the
+  // model list so the picker is usable immediately.
+  setOAuthSignedInListener((providerId) => {
+    clearAdapterCache();
+    void refreshModelsInBackground(providerId);
+  });
+
+  ipcMain.handle(IPC.PROVIDER_OAUTH_START, async (_e, id: string) => {
+    const cfg = getProviderConfig(id);
+    if (!cfg) return { state: 'error', error: 'Provider not found — save it first.' };
+    return startDeviceFlow(id, cfg.presetId);
+  });
+
+  ipcMain.handle(IPC.PROVIDER_OAUTH_STATUS, (_e, id: string) => getOAuthStatus(id));
+
+  ipcMain.handle(IPC.PROVIDER_OAUTH_SIGNOUT, (_e, id: string) => {
+    signOut(id);
+    clearAdapterCache();
+    return { ok: true };
   });
 }
 
@@ -160,8 +183,9 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
     return updateProviderModels(id, r.models, cfg, r.modelDetails);
   }
 
-  // Read the secret directly — the loaded config has apiKey stripped for safety
-  const apiKey = getSecret(`provider:${id}`) || '';
+  // Prefer a browser sign-in token; otherwise read the secret directly — the
+  // loaded config has apiKey stripped for safety.
+  const apiKey = (await getOAuthAccessToken(id)) || getSecret(`provider:${id}`) || '';
 
   const live = await fetchLiveModels(cfg.baseUrl, apiKey, cfg.presetId, cfg.customHeaders);
   if (!live.ok) return live;

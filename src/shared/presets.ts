@@ -46,7 +46,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     docsUrl: 'https://www.kimi.com',
     defaultModel: 'kimi-for-coding',
     supportsTools: true,
-    notes: 'Kimi Code subscription endpoint — exposes only the coding models (kimi-for-coding and, for Allegretto+ plans, kimi-for-coding-highspeed). HighSpeed ≈ 5–6× output speed but costs ~3× quota. The base URL already includes /coding/v1; do not edit. For the full Kimi/Moonshot catalog use the Moonshot AI preset.',
+    supportsBrowserSignIn: true,
+    notes: 'Kimi Code subscription endpoint — exposes only the coding models (kimi-for-coding and, for Allegretto+ plans, kimi-for-coding-highspeed). HighSpeed ≈ 5–6× output speed but costs ~3× quota. Supports browser sign-in with your Kimi account (no API key needed): save the provider, then click "Sign in". The base URL already includes /coding/v1; do not edit. For the full Kimi/Moonshot catalog use the Moonshot AI preset.',
     models: []
   },
   {
@@ -80,7 +81,20 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     supportsTools: true,
     supportsVision: true,
     supportsReasoning: true,
-    notes: 'Native Anthropic Messages API. Model list fetched live when you save.',
+    notes: 'Native Anthropic Messages API. Model list fetched live when you save. Browser sign-in is not offered: Anthropic\'s terms restrict Claude Pro/Max OAuth to Claude Code and claude.ai, with server-side enforcement — an API key is required here.',
+    models: []
+  },
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    apiKeyUrl: 'https://aistudio.google.com/apikey',
+    docsUrl: 'https://ai.google.dev/gemini-api/docs/openai',
+    defaultModel: 'gemini-2.5-flash',
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    notes: 'Gemini via Google\'s OpenAI-compatible endpoint. Get a free API key from Google AI Studio (one click with your Google account). Browser sign-in is not offered: Google prohibits third-party use of the Gemini CLI OAuth client and has suspended accounts for it — the AI Studio key is the supported route.',
     models: []
   },
   {
