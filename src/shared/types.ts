@@ -130,6 +130,8 @@ export interface ProviderPreset {
   supportsVision?: boolean;
   supportsAudio?: boolean;
   supportsReasoning?: boolean;
+  /** Preset supports browser sign-in (OAuth device flow) as an alternative to an API key. */
+  supportsBrowserSignIn?: boolean;
   notes?: string;
 }
 
@@ -169,11 +171,20 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey?: string; // never sent to renderer; presence implied by hasApiKey
   hasApiKey?: boolean; // renderer-safe indicator
+  hasOAuth?: boolean; // renderer-safe indicator: browser sign-in tokens saved
   models: ProviderModel[];
   enabled: boolean;
   customHeaders?: Record<string, string>;
   modelsFetchedAt?: number;
 }
+
+// Browser sign-in (OAuth device flow) state for a provider, as reported to the
+// renderer. Tokens themselves never leave the main process.
+export type OAuthStatus =
+  | { state: 'none' }
+  | { state: 'pending'; userCode: string; verificationUri: string; expiresAt: number }
+  | { state: 'signed-in'; expiresAt?: number }
+  | { state: 'error'; error: string };
 
 export interface ProviderFallback {
   providerId: string;
@@ -649,6 +660,9 @@ export const IPC = {
   PROVIDER_REFRESH_MODELS: 'provider:refreshModels',
   PROVIDER_PROBE_MODELS: 'provider:probeModels',
   PROVIDER_MODELS_UPDATED: 'provider:models-updated', // event
+  PROVIDER_OAUTH_START: 'provider:oauthStart',
+  PROVIDER_OAUTH_STATUS: 'provider:oauthStatus',
+  PROVIDER_OAUTH_SIGNOUT: 'provider:oauthSignOut',
 
   // MCP
   MCP_LIST: 'mcp:list',
