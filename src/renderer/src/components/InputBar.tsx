@@ -402,26 +402,52 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
     void abortChat();
   };
 
-  // OS file drop → attach. Directories arrive with size 0 and no type; skip them.
-  // Bytes are read client-side (drag-and-drop hands us a File, not a path) then
+  // Bytes are read client-side (drop and paste hand us a File, not a path) then
   // handed to main immediately so the attachment is disk-backed like every
   // other path, not held as base64 in renderer state.
+  // Directories arrive with size 0 and no type; skip them.
+  const attachBlob = async (f: File, filename = f.name): Promise<void> => {
+    if (f.size === 0 && !f.type) return;
+    if (f.size > 20 * 1024 * 1024) {
+      useAppStore.getState().setChatError(`"${filename}" is larger than 20 MB — attach a smaller file.`);
+      return;
+    }
+    try {
+      const data = await fileToBase64(f);
+      const stored = await window.hive.attachFromBytes({ data, filename, mimeType: f.type || 'application/octet-stream' });
+      addAttachment(stored);
+    } catch { /* unreadable file — skip */ }
+  };
+
+  // OS file drop → attach.
   const handleFileDrop = async (e: React.DragEvent): Promise<void> => {
     e.preventDefault();
     setFileDropActive(false);
-    const files = Array.from(e.dataTransfer.files);
-    for (const f of files) {
-      if (f.size === 0 && !f.type) continue;
-      if (f.size > 20 * 1024 * 1024) {
-        useAppStore.getState().setChatError(`"${f.name}" is larger than 20 MB — attach a smaller file.`);
-        continue;
+    for (const f of Array.from(e.dataTransfer.files)) await attachBlob(f);
+  };
+
+  // Clipboard → attach. Screenshot tools put an image on the clipboard as a
+  // File named "image.png"; several such pastes in one conversation would all
+  // land on the same name, so stamp them. Plain text pastes normally — only a
+  // paste large enough to swamp the composer becomes an attachment instead,
+  // and it shows up as a removable chip so the behaviour is reversible.
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
+    const files = Array.from(e.clipboardData.files);
+    if (files.length > 0) {
+      e.preventDefault();
+      const stamp = Date.now();
+      for (const [i, f] of files.entries()) {
+        const generic = !f.name || f.name === 'image.png';
+        await attachBlob(f, generic ? `pasted-${stamp}-${i}.${extensionFor(f.type)}` : f.name);
       }
-      try {
-        const data = await fileToBase64(f);
-        const stored = await window.hive.attachFromBytes({ data, filename: f.name, mimeType: f.type || 'application/octet-stream' });
-        addAttachment(stored);
-      } catch { /* unreadable file — skip */ }
+      return;
     }
+
+    const pasted = e.clipboardData.getData('text/plain');
+    if (pasted.length <= PASTE_ATTACH_THRESHOLD) return; // normal paste
+    e.preventDefault();
+    const blob = new File([pasted], `pasted-text-${Date.now()}.txt`, { type: 'text/plain' });
+    await attachBlob(blob);
   };
 
   // Live dictation: VoiceInput emits the full transcript of the current
@@ -565,6 +591,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
+            onPaste={(e) => { void handlePaste(e); }}
             rows={composerFocusMode ? 8 : 3}
             spellCheck={settings.spellcheckEnabled !== false}
             lang={settings.spellcheckLanguage || 'en'}
@@ -582,7 +609,7 @@ export function InputBar({ conversationId, hasMessages }: Props): JSX.Element {
                 const actionKey = ref.type === 'scid' ? 'explain' : ref.type === 'address' ? 'balance' : 'telaInspect';
                 return (
                   <span key={i} className="flex items-center gap-0.5 flex-shrink-0">
-                    <span className="px-1.5 py-0.5 rounded bg-accent-soft/50 text-fg">{ref.label}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-accent-soft text-fg">{ref.label}</span>
                     <button
                       onClick={() => handleChainAction(ref, actionKey)}
                       className="px-1.5 py-0.5 rounded hover:bg-bg-elev text-accent hover:underline"
@@ -729,6 +756,17 @@ function GhPreviewModal({ url, onClose, onInsert }: { url: string; onClose: () =
       </div>
     </div>
   );
+}
+
+// A paste longer than this becomes an attachment instead of composer text —
+// set well above anything hand-written so ordinary pasting is untouched.
+const PASTE_ATTACH_THRESHOLD = 8000;
+
+// Filename extension for a clipboard blob whose own name is generic.
+function extensionFor(mimeType: string): string {
+  const subtype = mimeType.split('/')[1];
+  if (!subtype) return 'bin';
+  return subtype.replace(/\+.*$/, '').replace(/[^a-z0-9]/gi, '') || 'bin';
 }
 
 // Read a dropped File into base64 (dataURL minus the "data:...;base64," prefix).

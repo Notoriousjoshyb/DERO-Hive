@@ -52,14 +52,17 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   'gpt-3.5-turbo': { contextWindow: 16_385, maxOutput: 4_096, supportsVision: false, supportsTools: true, inputPrice: 0.5, outputPrice: 1.5 },
 
   // Anthropic
-  'claude-fable-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-opus-4.8': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-opus-4.7': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-opus-4.6': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
+  'claude-fable-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 10, outputPrice: 50 },
+  'claude-opus-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
+  'claude-opus-4.8': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
+  'claude-opus-4.7': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
+  'claude-opus-4.6': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
   'claude-opus-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
   'claude-opus-4.1': { contextWindow: 200_000, maxOutput: 32_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 15, outputPrice: 75 },
-  'claude-sonnet-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
-  'claude-sonnet-4.6': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
+  // Sonnet 5 carries introductory pricing ($2/$10) through 2026-08-31; the
+  // standard rate is listed so estimates don't under-report after it lapses.
+  'claude-sonnet-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
+  'claude-sonnet-4.6': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
   // sonnet 4 / 4.5: a 1M-context beta exists but needs an opt-in header — assume the standard 200k
   'claude-sonnet-4.5': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
   'claude-sonnet-4': { contextWindow: 200_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 3, outputPrice: 15 },
@@ -152,6 +155,9 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
 
   // OpenRouter known models (OpenRouter reports live metadata that overrides these)
   'anthropic/claude-sonnet-4.5': { contextWindow: 1_000_000, maxOutput: 64_000, supportsVision: true, supportsTools: true, supportsReasoning: true },
+  'anthropic/claude-opus-5': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 5, outputPrice: 25 },
+  // Fast mode is the same model at 2x price for higher output speed.
+  'anthropic/claude-opus-5-fast': { contextWindow: 1_000_000, maxOutput: 128_000, supportsVision: true, supportsTools: true, supportsReasoning: true, inputPrice: 10, outputPrice: 50 },
   'openai/gpt-4o': { contextWindow: 128_000, maxOutput: 16_384, supportsVision: true, supportsTools: true },
   'openai/gpt-5.5': { contextWindow: 1_050_000, maxOutput: 128_000, supportsVision: true, supportsTools: true },
   'openai/gpt-5.4': { contextWindow: 1_050_000, maxOutput: 128_000, supportsVision: true, supportsTools: true },

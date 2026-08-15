@@ -104,7 +104,7 @@ export function HiveCompanionPanel(): JSX.Element {
           <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">The DERO Hive Browser Companion connects locally once paired with a one-time code.</p>
         </section>
 
-        <section className="rounded-xl border border-accent/25 bg-accent-soft/30 p-3">
+        <section className="rounded-xl border border-accent/25 bg-accent-soft p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="text-xs font-medium text-fg">Context scope</span>
             <span className="rounded-full bg-bg-elev px-2 py-0.5 text-[10px] text-fg-muted">{included} source{included === 1 ? '' : 's'}</span>

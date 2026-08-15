@@ -22,6 +22,8 @@ export function applyTheme(theme: AppSettings['theme'], osPrefersDark?: boolean)
   root.classList.toggle('dark', isDark);
   root.classList.toggle('light', !isDark);
   root.style.colorScheme = isDark ? 'dark' : 'light';
+  // Light and dark carry different accents — re-mirror after the swap.
+  syncColorChannels();
 }
 
 export function applyFontSize(size: AppSettings['fontSize']): void {
@@ -55,6 +57,8 @@ export function applyAppearance(settings: AppSettings): void {
   applyAccent(settings.accentColor);
   applyThemePreset(settings.themePreset);
   applyCustomCss(settings.customCss);
+  // Last: the preset and custom CSS can both redefine --accent.
+  syncColorChannels();
 }
 
 const THEME_PRESETS: Record<string, string> = {
@@ -72,6 +76,12 @@ const THEME_PRESETS: Record<string, string> = {
     --accent-hover: #cb4b16;
     --accent-soft: rgba(181, 137, 0, 0.15);
     --accent-glow: rgba(181, 137, 0, 0.35);
+    --accent-rgb: 181 137 0;
+    --accent-hover-rgb: 203 75 22;
+    --success: 133 153 0;
+    --warn: 181 137 0;
+    --danger: 220 50 47;
+    --info: 38 139 210;
     --user-bubble: #073642;
     --code-bg: #002b36;
   }`,
@@ -89,6 +99,12 @@ const THEME_PRESETS: Record<string, string> = {
     --accent-hover: #8fbcbb;
     --accent-soft: rgba(136, 192, 208, 0.15);
     --accent-glow: rgba(136, 192, 208, 0.35);
+    --accent-rgb: 136 192 208;
+    --accent-hover-rgb: 143 188 187;
+    --success: 163 190 140;
+    --warn: 235 203 139;
+    --danger: 191 97 106;
+    --info: 129 161 193;
     --user-bubble: #3b4252;
     --code-bg: #2e3440;
   }`,
@@ -106,6 +122,12 @@ const THEME_PRESETS: Record<string, string> = {
     --accent-hover: #fab387;
     --accent-soft: rgba(243, 139, 168, 0.15);
     --accent-glow: rgba(243, 139, 168, 0.35);
+    --accent-rgb: 243 139 168;
+    --accent-hover-rgb: 250 179 135;
+    --success: 166 227 161;
+    --warn: 249 226 175;
+    --danger: 243 139 168;
+    --info: 137 180 250;
     --user-bubble: #313244;
     --code-bg: #1e1e2e;
   }`,
@@ -123,6 +145,12 @@ const THEME_PRESETS: Record<string, string> = {
     --accent-hover: #98971a;
     --accent-soft: rgba(184, 187, 38, 0.15);
     --accent-glow: rgba(184, 187, 38, 0.35);
+    --accent-rgb: 184 187 38;
+    --accent-hover-rgb: 152 151 26;
+    --success: 184 187 38;
+    --warn: 250 189 47;
+    --danger: 251 73 52;
+    --info: 131 165 152;
     --user-bubble: #3c3836;
     --code-bg: #282828;
   }`
@@ -169,6 +197,54 @@ export function applyAccent(accent?: string): void {
   root.style.setProperty('--accent-hover', `rgb(${darken(rgb.r)}, ${darken(rgb.g)}, ${darken(rgb.b)})`);
   root.style.setProperty('--accent-soft', `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`);
   root.style.setProperty('--accent-glow', `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.28)`);
+}
+
+/**
+ * Parse any CSS colour we put in a theme token into an "r g b" channel triplet.
+ * Accepts #rgb, #rrggbb, rgb()/rgba() — the three forms the presets, the
+ * stylesheet defaults and applyAccent() actually emit. Alpha is dropped: the
+ * channels exist so Tailwind can compose its own alpha on top.
+ */
+export function cssColorToChannels(value: string): string | null {
+  const v = value.trim();
+  if (!v) return null;
+
+  const short = v.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+  if (short) return short.slice(1, 4).map((c) => parseInt(c + c, 16)).join(' ');
+
+  const long = v.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (long) return long.slice(1, 4).map((c) => parseInt(c, 16)).join(' ');
+
+  const fn = v.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  if (fn) return fn.slice(1, 4).map((n) => Math.max(0, Math.min(255, Math.round(Number(n))))).join(' ');
+
+  // Already a bare triplet (a preset or custom CSS set the -rgb var directly).
+  const triplet = v.match(/^(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})$/);
+  if (triplet) return `${triplet[1]} ${triplet[2]} ${triplet[3]}`;
+
+  return null;
+}
+
+// Tailwind can only apply an opacity modifier (bg-accent/10) to a colour
+// written as `rgb(var(--x) / <alpha-value>)`; given a bare var() it drops the
+// utility entirely. The palette is authored as hex/rgba for direct use in CSS,
+// so mirror the accent pair into channel triplets after every change — this is
+// what makes accent opacity work under theme presets and user-picked accents,
+// which set --accent from CSS rather than from the static stylesheet.
+const CHANNEL_MIRRORS: ReadonlyArray<readonly [string, string]> = [
+  ['--accent', '--accent-rgb'],
+  ['--accent-hover', '--accent-hover-rgb']
+];
+
+export function syncColorChannels(): void {
+  const root = document.documentElement;
+  const computed = getComputedStyle(root);
+  for (const [source, target] of CHANNEL_MIRRORS) {
+    const channels = cssColorToChannels(computed.getPropertyValue(source));
+    // Leave the stylesheet's static fallback in place if we can't parse it,
+    // rather than blanking the colour out.
+    if (channels) root.style.setProperty(target, channels);
+  }
 }
 
 // Inject user CSS as the last <style> in <head> so it wins the cascade.

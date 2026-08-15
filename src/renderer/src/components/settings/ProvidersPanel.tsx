@@ -291,7 +291,7 @@ export function ProvidersPanel(): JSX.Element {
                   </div>
                 </div>
                 {oauthFlow?.providerId === p.id && oauthFlow.status.state === 'pending' && (
-                  <div className="mt-2 p-2 rounded-lg bg-accent-soft/40 border border-accent/30 text-xs space-y-1">
+                  <div className="mt-2 p-2 rounded-lg bg-accent-soft border border-accent/30 text-xs space-y-1">
                     <div className="text-fg">
                       Confirm the sign-in in your browser. Your code:{' '}
                       <span className="font-mono font-semibold tracking-wider">{oauthFlow.status.userCode}</span>

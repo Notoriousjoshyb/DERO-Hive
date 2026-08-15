@@ -258,7 +258,7 @@ export function SwarmModal(): JSX.Element | null {
                 const checked = selected.includes(agent.id);
                 const status = workerStates[agent.id];
                 return (
-                  <label key={agent.id} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition ${checked ? 'border-accent/50 bg-accent-soft/40' : 'border-border bg-bg-input/40'} ${launching ? 'cursor-default' : 'hover:border-border-strong'}`}>
+                  <label key={agent.id} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition ${checked ? 'border-accent/50 bg-accent-soft' : 'border-border bg-bg-input/40'} ${launching ? 'cursor-default' : 'hover:border-border-strong'}`}>
                     <input type="checkbox" checked={checked} disabled={launching} onChange={() => toggleAgent(agent.id)} className="mt-0.5 accent-accent" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2 text-xs text-fg"><span>{agent.name}</span>{status && <WorkerBadge status={status} />}</span>

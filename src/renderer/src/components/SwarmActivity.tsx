@@ -8,7 +8,7 @@ export function SwarmActivity({ conversationId }: { conversationId?: string }): 
   if (!run) return null;
 
   return (
-    <section className="mb-4 rounded-xl border border-accent/25 bg-accent-soft/30 p-3 animate-msg-in">
+    <section className="mb-4 rounded-xl border border-accent/25 bg-accent-soft p-3 animate-msg-in">
       <div className="mb-2 flex items-center gap-2">
         <span className="flex h-5 w-5 items-center justify-center rounded-md bg-accent text-[10px] font-bold text-white">S</span>
         <div className="text-xs font-medium text-fg">Swarm task</div>
@@ -52,7 +52,7 @@ function WorkerDialogue({ worker, onClose }: { worker: SwarmWorkerActivity; onCl
           {worker.dialogue.length === 0 ? (
             <p className="text-xs text-fg-subtle">No worker dialogue was returned.</p>
           ) : worker.dialogue.map((message) => (
-            <article key={message.id} className={`rounded-lg border p-3 ${message.role === 'assistant' ? 'border-accent/20 bg-accent-soft/20' : 'border-border bg-bg'}`}>
+            <article key={message.id} className={`rounded-lg border p-3 ${message.role === 'assistant' ? 'border-accent/20 bg-accent-soft' : 'border-border bg-bg'}`}>
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">{message.role}</div>
               <pre className="whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-fg-muted">{contentText(message.content)}</pre>
             </article>
