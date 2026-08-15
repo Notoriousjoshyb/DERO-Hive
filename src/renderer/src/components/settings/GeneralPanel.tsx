@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/app';
-import type { WhisperStatus, AppSettings, ToolApprovalMode, ProviderConfig, ProviderFallback } from '@shared/types';
+import type { WhisperStatus, AppSettings, ToolApprovalMode, ProviderConfig, ProviderFallback, WebSearchProvider, LspServerConfig } from '@shared/types';
 
 interface AudioDevice {
   deviceId: string;
@@ -13,6 +13,11 @@ export function GeneralPanel(): JSX.Element {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const [audioInputDevices, setAudioInputDevices] = useState<AudioDevice[]>([]);
   const [whisper, setWhisper] = useState<WhisperStatus | null>(null);
+  // The key itself is never read back from the main process — only whether one
+  // is stored — so the box starts empty even when a key is saved.
+  const [searchKey, setSearchKey] = useState('');
+  const [searchKeySaved, setSearchKeySaved] = useState(false);
+  const searchProvider = settings.webSearch?.provider;
 
   useEffect(() => {
     async function loadDevices(): Promise<void> {
@@ -31,6 +36,19 @@ export function GeneralPanel(): JSX.Element {
     const off = window.hive.onWhisperStatus(setWhisper);
     return () => off();
   }, []);
+
+  useEffect(() => {
+    if (searchProvider !== 'brave' && searchProvider !== 'tavily') { setSearchKeySaved(false); return; }
+    setSearchKey('');
+    void window.hive.settingsHasSecret(`websearch:${searchProvider}`).then(setSearchKeySaved);
+  }, [searchProvider]);
+
+  const saveSearchKey = async (): Promise<void> => {
+    if (searchProvider !== 'brave' && searchProvider !== 'tavily') return;
+    const res = await window.hive.settingsSetSecret(`websearch:${searchProvider}`, searchKey.trim());
+    setSearchKeySaved(res.hasValue);
+    setSearchKey('');
+  };
 
   const toggleWhisper = async (enabled: boolean): Promise<void> => {
     await updateSettings({ whisperEnabled: enabled });
@@ -276,6 +294,57 @@ export function GeneralPanel(): JSX.Element {
             <option value="project">Ask once per project</option>
             <option value="never">Never ask</option>
           </select>
+        </Field>
+        <Field label="Language servers" hint="Lets the agent use the lsp tool for definitions, references, hover and diagnostics. The command must already be installed and on PATH; nothing is downloaded.">
+          <LspServersEditor
+            servers={settings.lspServers || []}
+            onChange={(lspServers) => updateSettings({ lspServers })}
+          />
+        </Field>
+        <Field label="Web search" hint="Which backend web_search uses. With none configured the tool is hidden from the agent rather than failing when it is called.">
+          <select
+            value={settings.webSearch?.provider || 'none'}
+            onChange={(e) => updateSettings({ webSearch: { ...settings.webSearch, provider: e.target.value as WebSearchProvider } })}
+            className="input"
+          >
+            <option value="none">Off</option>
+            <option value="brave">Brave Search (API key)</option>
+            <option value="tavily">Tavily (API key)</option>
+            <option value="searxng">SearXNG (self-hosted)</option>
+          </select>
+        </Field>
+        {(settings.webSearch?.provider === 'brave' || settings.webSearch?.provider === 'tavily') && (
+          <Field label="Search API key" hint={searchKeySaved ? 'A key is saved. Type a new one to replace it, or clear the box to remove it.' : 'Stored in the OS-backed secret store, never in settings.'}>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={searchKey}
+                placeholder={searchKeySaved ? '••••••••' : 'Paste key'}
+                onChange={(e) => setSearchKey(e.target.value)}
+                className="input w-56"
+              />
+              <button className="btn" onClick={() => void saveSearchKey()}>Save</button>
+            </div>
+          </Field>
+        )}
+        {settings.webSearch?.provider === 'searxng' && (
+          <Field label="SearXNG endpoint" hint="Base URL of your instance, e.g. http://127.0.0.1:8888. Its settings.yml must allow the json format.">
+            <input
+              type="text"
+              value={settings.webSearch?.endpoint || ''}
+              placeholder="http://127.0.0.1:8888"
+              onChange={(e) => updateSettings({ webSearch: { ...settings.webSearch, endpoint: e.target.value } })}
+              className="input w-56"
+            />
+          </Field>
+        )}
+        <Field label="Background jobs" hint="Lets the agent start long commands (servers, watchers, builds) without blocking the turn, then read them with job_output. Turned off, the tools are removed from the agent's list rather than refused.">
+          <input
+            type="checkbox"
+            checked={settings.backgroundJobs !== false}
+            onChange={(e) => updateSettings({ backgroundJobs: e.target.checked })}
+            className="accent-accent w-4 h-4"
+          />
         </Field>
         <Field label="Provider fallback chain" hint="If the selected provider errors before producing any output, Hive tries these next, in order.">
           <FallbackChainEditor
@@ -534,6 +603,75 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle mb-3">{title}</h3>
       <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+/** Ready-made rows for the servers people most often already have installed. */
+const LSP_PRESETS: Array<{ label: string; server: LspServerConfig }> = [
+  { label: 'TypeScript / JavaScript', server: { id: 'typescript', command: 'typescript-language-server', args: ['--stdio'], extensions: ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'] } },
+  { label: 'Python (Pyright)', server: { id: 'pyright', command: 'pyright-langserver', args: ['--stdio'], extensions: ['.py'] } },
+  { label: 'Rust (rust-analyzer)', server: { id: 'rust', command: 'rust-analyzer', args: [], extensions: ['.rs'] } },
+  { label: 'Go (gopls)', server: { id: 'gopls', command: 'gopls', args: [], extensions: ['.go'] } }
+];
+
+function LspServersEditor({ servers, onChange }: {
+  servers: LspServerConfig[];
+  onChange: (servers: LspServerConfig[]) => void;
+}): JSX.Element {
+  const update = (index: number, patch: Partial<LspServerConfig>): void =>
+    onChange(servers.map((s, i) => i === index ? { ...s, ...patch } : s));
+  const remove = (index: number): void => onChange(servers.filter((_, i) => i !== index));
+  const addPreset = (label: string): void => {
+    const preset = LSP_PRESETS.find((p) => p.label === label);
+    if (!preset) return;
+    // Same id twice would mean two processes fighting over one workspace key.
+    const id = servers.some((s) => s.id === preset.server.id) ? `${preset.server.id}-${servers.length + 1}` : preset.server.id;
+    onChange([...servers, { ...preset.server, id }]);
+  };
+
+  return (
+    <div className="space-y-1.5 w-64">
+      {servers.length === 0 && <div className="text-xs text-fg-subtle">No server configured — lsp answers LSP_UNAVAILABLE.</div>}
+      {servers.map((server, index) => (
+        <div key={index} className="space-y-1 border border-border rounded p-1.5">
+          <div className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={server.enabled !== false}
+              onChange={(e) => update(index, { enabled: e.target.checked })}
+              className="accent-accent w-3.5 h-3.5"
+              title="Enabled"
+            />
+            <input
+              type="text"
+              value={server.command}
+              onChange={(e) => update(index, { command: e.target.value })}
+              placeholder="command on PATH"
+              className="input text-xs flex-1 min-w-0"
+            />
+            <button onClick={() => remove(index)} className="text-fg-subtle hover:text-danger" title="Remove">×</button>
+          </div>
+          <input
+            type="text"
+            value={(server.args || []).join(' ')}
+            onChange={(e) => update(index, { args: e.target.value.split(/\s+/).filter(Boolean) })}
+            placeholder="arguments, e.g. --stdio"
+            className="input text-xs w-full"
+          />
+          <input
+            type="text"
+            value={server.extensions.join(', ')}
+            onChange={(e) => update(index, { extensions: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })}
+            placeholder=".ts, .tsx"
+            className="input text-xs w-full"
+          />
+        </div>
+      ))}
+      <select value="" onChange={(e) => addPreset(e.target.value)} className="input text-xs w-full">
+        <option value="">Add a server…</option>
+        {LSP_PRESETS.map((p) => <option key={p.label} value={p.label}>{p.label}</option>)}
+      </select>
     </div>
   );
 }

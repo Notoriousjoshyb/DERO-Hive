@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type MediaJobStatusEvent, type ToolExecutionRecord, type FileCheckpoint } from '../shared/types';
+import { IPC, type StreamEvent, type McpServerStatus, type PermissionRule, type ToolDefinition, type AppSettings, type Conversation, type Skill, type ProviderConfig, type ProviderModel, type McpServerConfig, type Message, type Project, type ThinkingEffort, type WhisperStatus, type SimulatorStatus, type SimulatorStartOptions, type SimulatorHealth, type SimulatorChainInfo, type BrowserBridgeActiveProject, type BrowserBridgeStatus, type MediaJobStatusEvent, type ToolExecutionRecord, type FileCheckpoint, type UserQuestionRequest, type UserQuestionAnswer } from '../shared/types';
 import type { DvmLintResult } from '../shared/dvm';
 
 // Type-safe wrapper for renderer -> main IPC
@@ -118,6 +118,15 @@ const api = {
     ipcRenderer.on(IPC.TOOL_PERMISSION_REQUEST, l);
     return () => ipcRenderer.off(IPC.TOOL_PERMISSION_REQUEST, l);
   },
+
+  // ask_user_question
+  onUserQuestion: (cb: (req: UserQuestionRequest) => void) => {
+    const l = (_: IpcRendererEvent, d: UserQuestionRequest) => cb(d);
+    ipcRenderer.on(IPC.USER_QUESTION_ASK, l);
+    return () => ipcRenderer.off(IPC.USER_QUESTION_ASK, l);
+  },
+  answerUserQuestion: (requestId: string, answers: UserQuestionAnswer[]) =>
+    ipcRenderer.invoke(IPC.USER_QUESTION_ANSWER, { requestId, answers }) as Promise<{ ok: boolean }>,
   onToolResult: (cb: (data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => void) => {
     const l = (_: IpcRendererEvent, d: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => cb(d);
     ipcRenderer.on('chat:tool-result', l);
@@ -164,6 +173,8 @@ const api = {
   // Settings
   settingsGet: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   settingsSet: (s: Partial<AppSettings>) => ipcRenderer.invoke(IPC.SETTINGS_SET, s),
+  settingsSetSecret: (key: string, value: string) => ipcRenderer.invoke(IPC.SETTINGS_SET_SECRET, key, value),
+  settingsHasSecret: (key: string) => ipcRenderer.invoke(IPC.SETTINGS_HAS_SECRET, key),
 
   // Attachments
   attachFromFile: () => ipcRenderer.invoke(IPC.ATTACH_FROM_FILE),

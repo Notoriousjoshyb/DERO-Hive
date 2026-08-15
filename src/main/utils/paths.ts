@@ -55,6 +55,7 @@ export const paths = {
   get attachments() { return join(getUserDataPath(), 'attachments'); },
   get artifacts() { return join(getUserDataPath(), 'artifacts'); },
   get media() { return join(getUserDataPath(), 'media'); },
+  get spill() { return join(getUserDataPath(), 'spill'); },
   get mcpConfigs() { return join(getUserDataPath(), 'mcp.json'); },
   get whisperBundled() { return join(getResourcesRoot(), 'whisper'); },
   get whisperUser() { return join(getUserDataPath(), 'whisper'); }
@@ -82,7 +83,7 @@ export function getDefaultWorkspace(): string {
 }
 
 export function ensureDirs(): void {
-  for (const dir of [paths.logs, paths.cache, paths.skills, paths.attachments, paths.artifacts, paths.media]) {
+  for (const dir of [paths.logs, paths.cache, paths.skills, paths.attachments, paths.artifacts, paths.media, paths.spill]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

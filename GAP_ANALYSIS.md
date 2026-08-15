@@ -127,7 +127,7 @@ Where we are: secrets in Electron safeStorage (v2) with documented v1 obfuscatio
 | Log redaction utility (Bearer/sk-/AKIA patterns) applied at all call sites | S | med | `HIVE_DEBUG` SSE fragments are logged unredacted today |
 | Per-project trust level gating auto-run modes (untrusted ⇒ always ask) | M | low | `never`/autopilot is offered globally today |
 | Harden `SHELL_RUN` IPC (arbitrary exec, only cwd validated) | M | med | Gate behind trust + approval like `run_shell` |
-| OS sandbox for tool execution (FS scope + network egress control + touched-files audit) | L | high | ADL-2; Windows Job Objects don't do FS/net — realistic path is container (WSL2/Docker) opt-in per project |
+| OS sandbox for tool execution (FS scope + network egress control + touched-files audit) | M–L | high | ADL-2 **(revised)**; a restricted-token + ACL runner governs FS on Windows with no container. Network egress is a separate, still-unsolved mechanism |
 | Scope FS allowed-roots to *active* project only | S | med | Today every registered project widens renderer FS reach globally |
 
 ### 8. Extensibility
@@ -207,7 +207,20 @@ Explicitly NOT in any phase (guardrails honored): no second config format (all c
 
 **ADL-1 · Vector store for semantic search (Phase 4).** Options: (a) `sqlite-vec` extension in the existing better-sqlite3 DB; (b) `hnswlib-node`; (c) pure-JS index (voy-search) in a sidecar file. **Recommend (a)**: one DB file, WAL, no new service, matches existing native-module build pipeline (sqlite-vec ships prebuilds loadable via better-sqlite3 `loadExtension`). Embeddings: local-first via Ollama `nomic-embed-text` or transformers.js MiniLM — keeps free default intact; provider embeddings (OpenAI voyage etc.) as opt-in. *Review point: extension loading under asar + CLI dual-build (`patch-sqlite3-dual.mjs`).*
 
-**ADL-2 · Sandbox approach for `run_shell` (Phase 5; baseline in Phase 1).** Windows truth: Job Objects restrict processes/resources but not filesystem paths or network. Options: (a) approval + audit only (status quo+); (b) per-project WSL2/Docker container execution with mounted workspace and `--network none` unless allowed; (c) Windows Sandbox (heavy, Pro-only); (d) restricted-token child processes (partial). **Recommend staged: Phase 1 ships (a) done properly (trust levels + audit trail); Phase 5 adds (b) as opt-in per project trust=standard+**, which is the only option that delivers the stated "scoped FS + no network unless allowed" with real enforcement. *Review point: Docker/WSL2 dependency for a desktop app; fallback when absent = approval mode.*
+**ADL-2 · Sandbox approach for `run_shell` (Phase 5; baseline in Phase 1).** ~~Windows truth: Job Objects restrict processes/resources but not filesystem paths or network. Options: (a) approval + audit only (status quo+); (b) per-project WSL2/Docker container execution with mounted workspace and `--network none` unless allowed; (c) Windows Sandbox (heavy, Pro-only); (d) restricted-token child processes (partial). **Recommend staged: Phase 1 ships (a) done properly (trust levels + audit trail); Phase 5 adds (b) as opt-in per project trust=standard+**, which is the only option that delivers the stated "scoped FS + no network unless allowed" with real enforcement.~~
+
+> **Revised 2026-08-15 — the "container is the only realistic path" conclusion was wrong.** DeepSeek Harness ships `dsh-sandbox-windows-acl`, a working **restricted-token + ACL** runner that governs file effects with no container, no WSL2 and no Docker (option (d), which this entry dismissed as merely "partial"). Its design answers the objections that led to (b):
+>
+> - Modes are `read-only` / `workspace-write` / `danger-full-access`; the last never calls the sandbox at all.
+> - **Enforcement is a reported fact, not a promise** — `full` or `partial`. Windows reports `partial` honestly, because the restricted token must retain `Everyone` for process initialisation (so external objects granting `Everyone` write stay writable) and NTFS hard links alias one file object across paths. Consumers requiring the absolute promise can reject on that signal.
+> - A deterministic per-workspace write SID and standing ACE, plus a **random private temp directory with its own SID and revocable ACE per session/workspace pair** — sessions sharing a workspace share its write authority without inheriting each other's temp authority.
+> - A fresh provider always picks a new temp path and SID, so crash residue can neither block nor authorise a resumed session.
+> - A workspace equal to or containing the platform temp root **fails before any ACL mutation**, because its inheritable ACE would otherwise reach every private temp child.
+> - Unusable runners **fail closed** with `SANDBOX_UNAVAILABLE`; execution never silently falls through unconfined.
+>
+> **Revised recommendation: (d) done properly, opt-in per project, Phase 4-ish rather than Phase 5** — it drops the desktop-app Docker/WSL2 dependency entirely. Network egress control is still out of scope for this mechanism (dsh explicitly excludes network and process visibility from its sandbox vocabulary), so "no network unless allowed" remains unsolved and would need a separate mechanism. Container execution stays available as a sibling capability-seam implementation for anyone who wants it, not as the baseline. Tracked as item 4.1 in [REMAINING_WORK.md](REMAINING_WORK.md).
+
+*Review point: Docker/WSL2 dependency for a desktop app; fallback when absent = approval mode.*
 
 **ADL-3 · Checkpoint storage (Phase 1).** Options: (a) shadow git repo per project (aider-style); (b) content-addressed snapshot store in userData + db index; (c) in-project `.hive/checkpoints/`. **Recommend (b)**: no repo pollution, works for non-git projects, dedupes by hash; snapshots keyed by tool_call_id so Activity entries, per-hunk review, and self-evolve diffs all read the same store. Full before-content captured (no 50 KB cap for persistence; cap display only). *Review point: storage growth — prune policy tied to conversation deletion.*
 

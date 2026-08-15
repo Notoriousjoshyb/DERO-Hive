@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The repo's postinstall downloads a whisper model, the derohe simulator
+      # tarball and the bundled MCP binaries — none of which typecheck, lint or
+      # the test suites touch, and all of which are slow and network-fragile.
+      # It also runs electron-rebuild, which needs Electron and a toolchain.
+      # Skip every install script, then rebuild the one native module the
+      # main-process tests actually load (src/main/db/client.ts pulls in
+      # better-sqlite3, and src/main/ipc/chat.ts imports it transitively).
+      # HIVE_SKIP_ASSETS is belt-and-braces: it keeps the asset downloads off
+      # even if someone later drops --ignore-scripts.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          HIVE_SKIP_ASSETS: '1'
+
+      - name: Build native modules needed by the tests
+        run: npm rebuild better-sqlite3
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: |
+          npm run lint
+          npm run lint:cli
+
+      # Split rather than using test:all so a failure names the suite.
+      - name: Test — shared and main process
+        run: npm run test:shared
+
+      - name: Test — renderer
+        run: npm run test:renderer
+
+      - name: Test — vision
+        run: npm run test:vision
+
+      - name: Test — CLI
+        run: npm run test:cli

@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
+import { skipAssets } from './lib/assets.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const binDir = join(__dirname, '..', 'resources', 'simulator', 'bin');
@@ -54,6 +55,10 @@ function hasGo() {
 }
 
 async function main() {
+  if (skipAssets()) {
+    console.log('[simulator] HIVE_SKIP_ASSETS set — skipping derohe simulator build');
+    return;
+  }
   if (existsSync(binPath)) {
     console.log(`[simulator] up to date (${binPath})`);
     return;

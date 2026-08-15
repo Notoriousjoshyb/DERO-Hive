@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, statSync, createWriteStream, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { skipAssets, verifyInstalled, recordInstalled } from './lib/assets.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modelsDir = join(__dirname, '..', 'resources', 'whisper', 'models');
@@ -19,11 +20,33 @@ const MODEL = process.env.WHISPER_MODEL || 'ggml-base.en.bin';
 const URL = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL}`;
 const MIN_BYTES = 10 * 1024 * 1024; // sanity floor — real models are >30MB
 
+// Upstream publishes no checksum alongside these files, so there is no pin to
+// assert. The manifest records the hash observed on first download, which
+// still catches later truncation or corruption — see scripts/lib/assets.mjs.
+const PINNED_SHA256 = null;
+
 async function main() {
   const dest = join(modelsDir, MODEL);
+  const manifestPath = join(modelsDir, `${MODEL}.manifest.json`);
 
-  if (existsSync(dest) && statSync(dest).size > MIN_BYTES) {
-    console.log(`[whisper] model present: ${MODEL} (${mb(statSync(dest).size)})`);
+  if (skipAssets()) {
+    console.log(`[whisper] HIVE_SKIP_ASSETS set — skipping ${MODEL}${existsSync(dest) ? ' (already present)' : ''}`);
+    return;
+  }
+
+  const check = await verifyInstalled(dest, manifestPath, { pinnedSha256: PINNED_SHA256, minBytes: MIN_BYTES });
+  if (check.ok) {
+    console.log(`[whisper] model present: ${MODEL} (${mb(statSync(dest).size)}) — ${check.reason}`);
+    return;
+  }
+  if (existsSync(dest) && check.stale) {
+    console.warn(`[whisper] re-downloading: ${check.reason}`);
+    rmSync(dest, { force: true });
+  } else if (existsSync(dest)) {
+    // Present and the right size, just unrecorded — hash it and move on
+    // rather than re-downloading 150 MB to learn what we already have.
+    const sha = await recordInstalled(dest, manifestPath, { kind: 'whisper-model', version: MODEL, asset: MODEL, url: URL, pinnedSha256: PINNED_SHA256 });
+    console.log(`[whisper] model present: ${MODEL} (${mb(statSync(dest).size)}) — recorded ${sha.slice(0, 12)}`);
     return;
   }
 
@@ -35,7 +58,8 @@ async function main() {
     await download(URL, dest);
     const size = statSync(dest).size;
     if (size < MIN_BYTES) throw new Error(`downloaded file too small (${size} bytes)`);
-    console.log(`[whisper] done — ${MODEL} (${mb(size)})`);
+    const sha = await recordInstalled(dest, manifestPath, { kind: 'whisper-model', version: MODEL, asset: MODEL, url: URL, pinnedSha256: PINNED_SHA256 });
+    console.log(`[whisper] done — ${MODEL} (${mb(size)}) sha256 ${sha.slice(0, 12)}`);
   } catch (err) {
     try { rmSync(dest, { force: true }); } catch { /* ignore */ }
     // Never fail the install — dictation just stays disabled until the model exists.

@@ -1,6 +1,16 @@
 import { ipcMain } from 'electron';
 import { IPC, normalizeToolApprovalMode, type AppSettings } from '@shared/types';
 import { getSetting, setSetting } from '../db/client';
+import { setSecret, getSecret, deleteSecret } from '../utils/secrets';
+
+/**
+ * Secrets the settings UI may write, by exact name. An allowlist, not a
+ * pattern: this channel exists so one panel can store one kind of API key, and
+ * a renderer bug must not be able to overwrite provider credentials through it.
+ * Values are write-only from the renderer — it can ask whether a key is set,
+ * never what it is.
+ */
+const WRITABLE_SECRETS = new Set(['websearch:brave', 'websearch:tavily']);
 
 const DEFAULTS: AppSettings = {
   theme: 'dark',
@@ -42,6 +52,18 @@ export function registerSettingsHandlers(): void {
     const next = normalizeSettings({ ...cur, ...partial });
     setSetting('appSettings', next);
     return next;
+  });
+
+  ipcMain.handle(IPC.SETTINGS_SET_SECRET, (_e, key: string, value: string) => {
+    if (!WRITABLE_SECRETS.has(key)) throw new Error(`Not a settings secret: ${key}`);
+    if (value) setSecret(key, value);
+    else deleteSecret(key);
+    return { ok: true, hasValue: !!value };
+  });
+
+  ipcMain.handle(IPC.SETTINGS_HAS_SECRET, (_e, key: string) => {
+    if (!WRITABLE_SECRETS.has(key)) return false;
+    return !!getSecret(key);
   });
 }
 

@@ -2,13 +2,14 @@ import { ipcMain, BrowserWindow, Notification } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel, type HiveErrorInfo, type ToolDefinition } from '@shared/types';
+import { IPC, type AppSettings, type ChatRequest, type StreamEvent, type Message, type ProviderConfig, type ProviderFallback, type ProviderModel, type HiveErrorInfo, type ToolDefinition, type UserQuestionRequest, type UserQuestionAnswer } from '@shared/types';
 import { classifyProviderError, toHiveError } from '@shared/errors';
 import { DEFAULT_SYSTEM_PROMPT } from '@shared/defaults';
 import { logger } from '../utils/logger';
 import { getAdapter, listProviders } from '../providers/registry';
 import type { ProviderStreamEvent } from '../providers/base';
 import { ToolRegistry } from '../tools/registry';
+import { userQuestions } from '../tools/userQuestions';
 import { McpManager } from '../mcp/manager';
 import { getDb } from '../db/client';
 import { getSetting } from '../db/client';
@@ -311,9 +312,21 @@ export function registerChatHandlers(getWin: () => BrowserWindow | null, mcpMana
     return { ok: true };
   });
 
+  // ask_user_question: the model parks a tool call until the renderer answers.
+  userQuestions.on('ask', (req: UserQuestionRequest) => {
+    getWin()?.webContents.send(IPC.USER_QUESTION_ASK, req);
+  });
+
+  ipcMain.handle(IPC.USER_QUESTION_ANSWER, (_e, { requestId, answers }: { requestId: string; answers: UserQuestionAnswer[] }) => {
+    userQuestions.answer(requestId, Array.isArray(answers) ? answers : []);
+    return { ok: true };
+  });
+
   ipcMain.handle(IPC.CHAT_ABORT, (_e, conversationId: string) => {
     const c = activeRequests.get(conversationId);
     if (c) { c.abort(); activeRequests.delete(conversationId); }
+    // A parked ask_user_question would otherwise outlive the turn that asked it.
+    userQuestions.cancelForConversation(conversationId);
     return { ok: true };
   });
 
