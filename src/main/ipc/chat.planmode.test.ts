@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { ToolDefinition } from '../../shared/types';
 import { classifyProviderError } from '../../shared/errors';
-import { filterPlanSafeTools, shouldAbortFallbackChain, retryDelayForError } from './chat';
+import { filterPlanSafeTools, shouldAbortFallbackChain, retryDelayForError } from './chatPolicy';
 
 // ─── filterPlanSafeTools ────────────────────────────────────────────────────
 
