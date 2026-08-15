@@ -12,6 +12,7 @@ import { CodeTab } from './components/code/CodeTab';
 import { ProjectCockpit } from './components/ProjectCockpit';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { PermissionDialog } from './components/PermissionDialog';
+import { AskUserDialog } from './components/AskUserDialog';
 import { ShortcutsCheatsheet } from './components/ShortcutsCheatsheet';
 import { SystemPromptModal } from './components/SystemPromptModal';
 import { AgentsModal } from './components/AgentsModal';
@@ -132,6 +133,7 @@ export default function App(): JSX.Element {
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <PermissionDialog />
+      <AskUserDialog />
       <ShortcutsCheatsheet />
       <SystemPromptModal />
       <AgentsModal />

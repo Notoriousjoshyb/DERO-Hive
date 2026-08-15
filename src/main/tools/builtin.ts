@@ -1,4 +1,4 @@
-import type { ToolDefinition, MediaKind, MediaGenerationRequest } from '@shared/types';
+import type { ToolDefinition, MediaKind, MediaGenerationRequest, UserQuestion } from '@shared/types';
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,6 +9,15 @@ import { resolveAndValidate } from '../utils/pathPolicy';
 import type { ToolExecutor, ToolContext, ToolResult } from './registry';
 import { getMediaManager } from '../media/instance';
 import { getSimulatorManager } from '../simulator/instance';
+import { userQuestions, formatAnswers } from './userQuestions';
+import { rgFiles, rgSearch } from './ripgrep';
+import { jobs, startShellJob } from './jobs';
+import { applyEdits, parseEditArgs } from './edits';
+import { runGit, isRepo, parseStatus, parseLog, formatStatus, assertSafeArg, LOG_FORMAT } from './git';
+import { fetchUrl } from './webFetch';
+import { webSearch, webSearchAvailable, formatResults } from './webSearch';
+import { runLsp, type LspAction } from './lsp';
+import { getSetting } from '../db/client';
 import { lintDvmBasic } from '@shared/dvm';
 import type { IndexQuery } from '@shared/gnomon';
 import { diffLines, diffCounts } from '@shared/diff';
@@ -87,16 +96,31 @@ const WRITE_FILE_DEF: ToolDefinition = {
 
 const EDIT_FILE_DEF: ToolDefinition = {
   name: 'edit_file',
-  description: 'Replace exact text in a file. old_text must match uniquely.',
+  description:
+    'Replace exact text in a file. Pass "edits" to apply several replacements to the same file in one atomic call — either all of them apply or the file is left untouched. Each old_text must match uniquely unless replace_all is set.',
   source: 'builtin',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string' },
-      old_text: { type: 'string', description: 'Exact text to replace' },
-      new_text: { type: 'string' }
+      edits: {
+        type: 'array',
+        description: 'Ordered replacements. Each one sees the result of the previous. Preferred over old_text/new_text.',
+        items: {
+          type: 'object',
+          properties: {
+            old_text: { type: 'string', description: 'Exact text to replace, with enough context to be unique.' },
+            new_text: { type: 'string' },
+            replace_all: { type: 'boolean', description: 'Replace every occurrence instead of requiring a unique match.' }
+          },
+          required: ['old_text', 'new_text']
+        }
+      },
+      old_text: { type: 'string', description: 'Single-edit form. Exact text to replace.' },
+      new_text: { type: 'string', description: 'Single-edit form. Replacement text.' },
+      replace_all: { type: 'boolean', description: 'Single-edit form. Replace every occurrence.' }
     },
-    required: ['path', 'old_text', 'new_text']
+    required: ['path']
   }
 };
 
@@ -120,7 +144,7 @@ const GLOB_DEF: ToolDefinition = {
     properties: {
       pattern: { type: 'string' },
       cwd: { type: 'string' },
-      ignore: { type: 'array', items: { type: 'string' } }
+      ignore: { type: 'array', items: { type: 'string' }, description: 'Glob patterns to skip. Defaults skip node_modules, .git and dist.' }
     },
     required: ['pattern']
   }
@@ -128,7 +152,7 @@ const GLOB_DEF: ToolDefinition = {
 
 const GREP_DEF: ToolDefinition = {
   name: 'grep_files',
-  description: 'Search for a regex pattern across files. Returns file:line:content matches.',
+  description: 'Search for a regex pattern across files. Returns file:line:content matches. Skips binary files and anything gitignored.',
   source: 'builtin',
   parameters: {
     type: 'object',
@@ -136,10 +160,49 @@ const GREP_DEF: ToolDefinition = {
       pattern: { type: 'string' },
       cwd: { type: 'string' },
       include: { type: 'string', description: 'Glob filter, e.g. "*.ts"' },
-      ignore: { type: 'array', items: { type: 'string' } },
-      max_results: { type: 'integer', default: 100 }
+      ignore: { type: 'array', items: { type: 'string' }, description: 'Glob patterns to skip.' },
+      max_results: { type: 'integer', default: 100, description: 'Stop after this many matching lines.' }
     },
     required: ['pattern']
+  }
+};
+
+const ASK_USER_DEF: ToolDefinition = {
+  name: 'ask_user_question',
+  description:
+    'Ask the user a question when you need a decision, a choice, or information only they have, and proceeding on a guess would produce materially different work. Blocks until they answer. Prefer making routine judgement calls yourself.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      questions: {
+        type: 'array',
+        description: 'One or more questions to ask before continuing.',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Stable id for this question; echoed in the answer.' },
+            question: { type: 'string', description: 'The specific question to ask.' },
+            header: { type: 'string', description: 'Optional short heading, e.g. "Confirm" or "Choose mode".' },
+            options: {
+              type: 'array',
+              description: 'Optional choices. If you recommend one, put it first and append "(Recommended)" to its label.',
+              items: {
+                type: 'object',
+                properties: {
+                  label: { type: 'string', description: 'Short option label. This exact text comes back as the answer.' },
+                  description: { type: 'string', description: 'One sentence on the tradeoff or impact.' }
+                },
+                required: ['label']
+              }
+            },
+            multi_select: { type: 'boolean', description: 'Whether more than one option may be chosen. Defaults to false.' }
+          },
+          required: ['id', 'question']
+        }
+      }
+    },
+    required: ['questions']
   }
 };
 
@@ -152,9 +215,193 @@ const SHELL_DEF: ToolDefinition = {
     properties: {
       command: { type: 'string' },
       cwd: { type: 'string' },
-      timeout_ms: { type: 'integer', default: 30_000 }
+      timeout_ms: { type: 'integer', default: 30_000, description: 'Kill the command after this long. Ignored for background jobs.' }
     },
     required: ['command']
+  }
+};
+
+/**
+ * The background half of run_shell, and the three tools that manage whatever is
+ * running. These are advertised only when background jobs are enabled — a
+ * parameter that is present but always refused is worse than one that is
+ * absent, because the model spends a turn discovering the refusal.
+ */
+const SHELL_BACKGROUND_PARAM = {
+  run_in_background: {
+    type: 'boolean',
+    description: 'Start the command and return immediately with a job id instead of waiting. Use for servers, watchers and long builds, then read it with job_output.'
+  }
+} as const;
+
+const JOB_LIST_DEF: ToolDefinition = {
+  name: 'job_list',
+  description: 'List background jobs for this conversation: id, what is running, status and exit code.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      all: { type: 'boolean', description: 'Include jobs started by other conversations. Defaults to false.' }
+    }
+  }
+};
+
+const JOB_OUTPUT_DEF: ToolDefinition = {
+  name: 'job_output',
+  description: 'Read output from a background job. Pass the cursor returned by the previous call to read only what is new.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      job_id: { type: 'string' },
+      cursor: { type: 'integer', description: 'Character offset to resume from. Omit to read from the start.' },
+      max_chars: { type: 'integer', description: 'Most characters to return in this call. Default 20000.' }
+    },
+    required: ['job_id']
+  }
+};
+
+const JOB_KILL_DEF: ToolDefinition = {
+  name: 'job_kill',
+  description: 'Stop a running background job and its child processes.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: { job_id: { type: 'string' } },
+    required: ['job_id']
+  }
+};
+
+const GIT_STATUS_DEF: ToolDefinition = {
+  name: 'git_status',
+  description: 'Show the working tree status: branch, tracking, staged, unstaged and untracked files. Read-only.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: { cwd: { type: 'string', description: 'Repository path. Defaults to the working directory.' } }
+  }
+};
+
+const GIT_DIFF_DEF: ToolDefinition = {
+  name: 'git_diff',
+  description: 'Show a unified diff of the working tree. Read-only.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      cwd: { type: 'string' },
+      path: { type: 'string', description: 'Limit the diff to one file or directory.' },
+      staged: { type: 'boolean', description: 'Diff the index against HEAD instead of the working tree.' },
+      base: { type: 'string', description: 'Diff against this ref (branch, tag or commit) instead of HEAD.' },
+      stat: { type: 'boolean', description: 'Return a per-file summary instead of the full diff.' }
+    }
+  }
+};
+
+const GIT_LOG_DEF: ToolDefinition = {
+  name: 'git_log',
+  description: 'List recent commits: hash, author, date and subject. Read-only.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      cwd: { type: 'string' },
+      max_count: { type: 'integer', description: 'How many commits to return. Default 20, max 200.' },
+      path: { type: 'string', description: 'Only commits touching this path.' },
+      author: { type: 'string', description: 'Only commits by this author (substring match).' }
+    }
+  }
+};
+
+const GIT_BRANCH_DEF: ToolDefinition = {
+  name: 'git_branch',
+  description: 'List branches, or create and switch to one. Listing is read-only; create and switch change the checkout.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      cwd: { type: 'string' },
+      create: { type: 'string', description: 'Create this branch from the current HEAD and switch to it.' },
+      switch_to: { type: 'string', description: 'Switch to an existing branch.' },
+      remote: { type: 'boolean', description: 'Include remote-tracking branches when listing.' }
+    }
+  }
+};
+
+const GIT_COMMIT_DEF: ToolDefinition = {
+  name: 'git_commit',
+  description: 'Commit staged changes. Set all to stage tracked modifications first. Never bypasses hooks.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      cwd: { type: 'string' },
+      message: { type: 'string', description: 'Commit message. The first line is the subject.' },
+      all: { type: 'boolean', description: 'Stage every tracked modified file first (git commit -a). Does not add untracked files.' },
+      paths: { type: 'array', items: { type: 'string' }, description: 'Stage exactly these paths before committing.' }
+    },
+    required: ['message']
+  }
+};
+
+const GIT_PUSH_DEF: ToolDefinition = {
+  name: 'git_push',
+  description: 'Push commits to a remote. Always asks the user first, in every approval mode.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      cwd: { type: 'string' },
+      remote: { type: 'string', description: 'Remote name. Default origin.' },
+      branch: { type: 'string', description: 'Branch to push. Defaults to the current branch.' },
+      set_upstream: { type: 'boolean', description: 'Set the pushed branch as upstream (-u).' }
+    }
+  }
+};
+
+const LSP_DEF: ToolDefinition = {
+  name: 'lsp',
+  description:
+    'Ask a language server about code: where a symbol is defined, what references it, what its type is, what is wrong with a file, or what it contains. Far more accurate than grep for these questions. Lines and columns are 1-based, as shown in editors and compiler errors. Returns LSP_UNAVAILABLE if no server is configured for this file type — fall back to grep_files then.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['definition', 'references', 'hover', 'diagnostics', 'symbols'],
+        description: 'definition/references/hover need line and character; diagnostics and symbols work on the whole file.'
+      },
+      path: { type: 'string', description: 'File to ask about.' },
+      line: { type: 'integer', description: '1-based line of the symbol.' },
+      character: { type: 'integer', description: '1-based column of the symbol.' }
+    },
+    required: ['action', 'path']
+  }
+};
+
+const WEB_SEARCH_DEF: ToolDefinition = {
+  name: 'web_search',
+  description: 'Search the web and return ranked results with titles, URLs and snippets. Follow a result with web_fetch to read the page.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'What to search for. Plain words work better than operators.' },
+      count: { type: 'integer', description: 'How many results to return. Default 5, max 20.' }
+    },
+    required: ['query']
+  }
+};
+
+const WEB_FETCH_DEF: ToolDefinition = {
+  name: 'web_fetch',
+  description: 'Fetch a public http/https URL and return its text as markdown. Follows up to 5 redirects, caps the body at 2 MB, and refuses private, loopback and non-text targets.',
+  source: 'builtin',
+  parameters: {
+    type: 'object',
+    properties: { url: { type: 'string', description: 'Absolute http or https URL.' } },
+    required: ['url']
   }
 };
 
@@ -167,6 +414,7 @@ const TODO_DEF: ToolDefinition = {
     properties: {
       todos: {
         type: 'array',
+        description: 'The complete list, resent in full each time. Exactly one task should be in_progress.',
         items: {
           type: 'object',
           properties: {
@@ -340,7 +588,11 @@ const DISCOVER_CONTRACTS_DEF: ToolDefinition = {
 export const BUILTIN_TOOLS: ToolDefinition[] = [
   READ_FILE_DEF, WRITE_FILE_DEF, EDIT_FILE_DEF,
   LIST_DIR_DEF, GLOB_DEF, GREP_DEF,
-  SHELL_DEF, TODO_DEF, DVM_LINT_DEF, SIMULATOR_INFO_DEF,
+  SHELL_DEF, TODO_DEF, ASK_USER_DEF,
+  JOB_LIST_DEF, JOB_OUTPUT_DEF, JOB_KILL_DEF,
+  GIT_STATUS_DEF, GIT_DIFF_DEF, GIT_LOG_DEF, GIT_BRANCH_DEF, GIT_COMMIT_DEF, GIT_PUSH_DEF,
+  LSP_DEF, WEB_SEARCH_DEF, WEB_FETCH_DEF,
+  DVM_LINT_DEF, SIMULATOR_INFO_DEF,
   SIMULATOR_CREATE_WALLET_DEF, SIMULATOR_GET_BALANCE_DEF, SIMULATOR_GET_CONTRACT_STATE_DEF, SIMULATOR_GET_HEIGHT_DEF,
   GENERATE_IMAGE_DEF, GENERATE_AUDIO_DEF, GENERATE_VIDEO_DEF,
   GENERATE_DVM_CONTRACT_DEF,
@@ -348,6 +600,40 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   GENERATE_TELA_DAPP_DEF,
   DISCOVER_CONTRACTS_DEF
 ];
+
+/** Background jobs are on unless the user turned them off in settings. */
+export function backgroundJobsEnabled(): boolean {
+  try {
+    return (getSetting<{ backgroundJobs?: unknown }>('appSettings') || {}).backgroundJobs !== false;
+  } catch {
+    // No database (tests, early boot) — the capability is not the place to fail.
+    return true;
+  }
+}
+
+/**
+ * The tools as the model actually sees them right now. Capability-dependent
+ * pieces are added here rather than advertised and refused later: with
+ * background jobs off, `run_in_background` is not in the schema and the three
+ * job tools are not in the list at all.
+ */
+export function listBuiltinTools(): ToolDefinition[] {
+  const background = backgroundJobsEnabled();
+  const search = webSearchAvailable();
+  let tools = BUILTIN_TOOLS;
+  if (!background) {
+    tools = tools.filter((t) => t.name !== 'job_list' && t.name !== 'job_output' && t.name !== 'job_kill');
+  }
+  // No search provider configured means no search tool. The model must never
+  // be shown a tool whose only possible answer is "ask your user for a key".
+  if (!search) tools = tools.filter((t) => t.name !== 'web_search');
+  if (!background) return tools;
+  return tools.map((t) =>
+    t.name === 'run_shell'
+      ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters.properties as object), ...SHELL_BACKGROUND_PARAM } } }
+      : t
+  );
+}
 
 export const builtinExecutors: Record<string, ToolExecutor> = {
   async read_file(args, ctx: ToolContext) {
@@ -411,48 +697,65 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
   },
 
   async edit_file(args, ctx) {
-    const { path, old_text, new_text } = args as { path: string; old_text: string; new_text: string };
+    const { path } = args as { path: string };
+    const hunks = parseEditArgs(args);
+    if (!hunks) return { content: 'Error: pass either "edits" (an array) or "old_text"/"new_text".', isError: true };
+
     const abs = safeResolve(path, ctx.cwd);
     const prevBytes = await readFile(abs);
     const text = prevBytes.toString('utf-8');
-    const occurrences = text.split(old_text).length - 1;
-    if (occurrences === 0) return { content: `Error: old_text not found in ${abs}`, isError: true };
-    if (occurrences > 1) return { content: `Error: old_text matches ${occurrences} locations; make it unique.`, isError: true };
-    // Function replacement so `$&`/`$'` patterns in new_text are written literally
-    const updated = text.replace(old_text, () => new_text);
-    const stats = diffCounts(diffLines(old_text, new_text));
+
+    // Atomic: applyEdits either returns the fully edited text or an error
+    // naming the hunk that missed. Nothing is written on failure.
+    const result = applyEdits(text, hunks);
+    if (!result.ok) return { content: `Error editing ${abs}: ${result.error}`, isError: true };
+    const updated = result.text;
+
     await writeFile(abs, updated, 'utf-8');
     const checkpointId = captureEditCheckpoint(ctx, abs, prevBytes, Buffer.from(updated, 'utf-8'));
-    // Build a hunk-level snapshot: 3 lines of context before + old_text +
-    // 3 lines of context after, both sides — enough to give the renderer the
-    // line numbers and surrounding context a `git diff`-style view needs.
-    const editLineNo = text.slice(0, text.indexOf(old_text)).split('\n').length;
-    const beforeLines = text.split('\n');
-    const afterLines = updated.split('\n');
+    const stats = diffCounts(diffLines(text, updated));
+
+    // One hunk keeps the tight hunk-level snapshot (3 lines of context each
+    // side). Several hunks are scattered through the file, so the renderer gets
+    // the whole before/after instead of a misleading single window.
+    const single = hunks.length === 1 ? hunks[0] : null;
     const contextLines = 3;
-    const oldHunk = [
-      ...beforeLines.slice(Math.max(0, editLineNo - 1 - contextLines), editLineNo - 1),
-      ...old_text.split('\n')
-    ].join('\n');
-    const newHunkStart = editLineNo;
-    const newHunk = [
-      ...afterLines.slice(Math.max(0, newHunkStart - 1 - contextLines), newHunkStart - 1),
-      ...new_text.split('\n')
-    ].join('\n');
-    const beforeSnap = snapshotForDiff(oldHunk);
-    const afterSnap = snapshotForDiff(newHunk);
+    let hunkStartLine = 1;
+    let beforeText = text;
+    let afterText = updated;
+    if (single) {
+      const editLineNo = result.applied[0].line;
+      const beforeLines = text.split('\n');
+      const afterLines = updated.split('\n');
+      beforeText = [
+        ...beforeLines.slice(Math.max(0, editLineNo - 1 - contextLines), editLineNo - 1),
+        ...single.oldText.split('\n')
+      ].join('\n');
+      afterText = [
+        ...afterLines.slice(Math.max(0, editLineNo - 1 - contextLines), editLineNo - 1),
+        ...single.newText.split('\n')
+      ].join('\n');
+      hunkStartLine = Math.max(1, editLineNo - contextLines);
+    }
+    const beforeSnap = snapshotForDiff(beforeText);
+    const afterSnap = snapshotForDiff(afterText);
+
+    const summary = hunks.length === 1
+      ? `Edited ${abs}`
+      : `Edited ${abs} — ${result.applied.length} edits applied at lines ${result.applied.map((a) => a.line).join(', ')}`;
     return {
-      content: `Edited ${abs}`,
+      content: summary,
       meta: {
         path: abs,
         kind: 'edit',
         checkpointId,
-        bytesAdded: new_text.length - old_text.length,
+        editCount: result.applied.length,
+        bytesAdded: updated.length - text.length,
         linesAdded: stats.added,
         linesRemoved: stats.removed,
         // Hunk-relative start line (1-based) — the renderer adds/subtracts
         // context lines to compute absolute line numbers.
-        hunkStartLine: Math.max(1, editLineNo - contextLines),
+        hunkStartLine,
         before: beforeSnap.text,
         after: afterSnap.text,
         beforeTruncated: beforeSnap.truncated,
@@ -475,13 +778,37 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
   async glob_files(args, ctx) {
     const { pattern, cwd, ignore } = args as { pattern: string; cwd?: string; ignore?: string[] };
     const base = cwd ? safeResolve(cwd, ctx.cwd) : ctx.cwd;
-    const matches = await fg(pattern, { cwd: base, ignore: ignore || ['**/node_modules/**', '**/.git/**', '**/dist/**'], dot: false });
-    return { content: matches.slice(0, 500).join('\n') + (matches.length > 500 ? `\n... [${matches.length - 500} more]` : '') };
+
+    const viaRg = await rgFiles(pattern, base, ignore).catch(() => null);
+    const matches = viaRg ?? await fg(pattern, {
+      cwd: base,
+      ignore: ignore || ['**/node_modules/**', '**/.git/**', '**/dist/**'],
+      dot: false
+    });
+
+    return { content: matches.slice(0, 500).join('\n') + (matches.length > 500 ? `\n... [${matches.length - 500} more]` : '') || '(no matches)' };
   },
 
   async grep_files(args, ctx) {
     const { pattern, cwd, include, ignore, max_results } = args as { pattern: string; cwd?: string; include?: string; ignore?: string[]; max_results?: number };
     const base = cwd ? safeResolve(cwd, ctx.cwd) : ctx.cwd;
+    const limit = max_results || 100;
+
+    // ripgrep skips binaries and honours .gitignore; the JS path below is the
+    // fallback for platforms with no bundled binary.
+    const viaRg = await rgSearch(pattern, base, include, ignore, limit).catch((err: unknown) => {
+      // A bad regex is the model's problem to fix, not something to silently
+      // retry with different semantics under the JS engine.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/regex|parse|syntax/i.test(msg)) throw err;
+      return null;
+    });
+    if (viaRg) {
+      const out = [...viaRg.lines];
+      if (viaRg.truncated) out.push(`... [truncated at ${limit}]`);
+      return { content: out.join('\n') || '(no matches)' };
+    }
+
     const matches = await fg(include || '**/*', {
       cwd: base,
       ignore: ignore || ['**/node_modules/**', '**/.git/**', '**/dist/**'],
@@ -489,7 +816,6 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
     });
     const re = new RegExp(pattern, 'gm');
     const out: string[] = [];
-    const limit = max_results || 100;
     for (const file of matches) {
       const abs = join(base, file);
       let content: string;
@@ -508,10 +834,46 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
     return { content: out.join('\n') || '(no matches)' };
   },
 
+  async ask_user_question(args, ctx) {
+    const raw = (args as { questions?: unknown }).questions;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return { content: 'ask_user_question requires a non-empty "questions" array.', isError: true };
+    }
+    // Normalize before it reaches the UI: the model supplies snake_case
+    // (multi_select) and may omit ids or options entirely.
+    const questions: UserQuestion[] = raw.map((q, i) => {
+      const o = (q ?? {}) as Record<string, unknown>;
+      const options = Array.isArray(o.options)
+        ? (o.options as Array<Record<string, unknown>>)
+            .filter((opt) => opt && typeof opt.label === 'string' && opt.label.trim())
+            .map((opt) => ({ label: String(opt.label), description: typeof opt.description === 'string' ? opt.description : undefined }))
+        : undefined;
+      return {
+        id: typeof o.id === 'string' && o.id.trim() ? o.id : `q${i + 1}`,
+        question: String(o.question ?? '').trim() || '(no question text)',
+        header: typeof o.header === 'string' ? o.header : undefined,
+        options: options && options.length ? options : undefined,
+        multiSelect: o.multi_select === true || o.multiSelect === true
+      };
+    });
+
+    const answers = await userQuestions.ask(questions, ctx.conversationId);
+    return { content: formatAnswers(questions, answers), meta: { answers } };
+  },
+
   async run_shell(args, ctx) {
-    const { command, cwd, timeout_ms } = args as { command: string; cwd?: string; timeout_ms?: number };
+    const { command, cwd, timeout_ms } = args as { command: string; cwd?: string; timeout_ms?: number; run_in_background?: boolean };
     const base = cwd ? safeResolve(cwd, ctx.cwd) : ctx.cwd;
     const timeout = timeout_ms || 30_000;
+
+    if ((args as { run_in_background?: unknown }).run_in_background === true && backgroundJobsEnabled()) {
+      const job = startShellJob({ command, cwd: base, conversationId: ctx.conversationId });
+      return {
+        content: `Started ${job.id} in the background: ${command}\nRead it with job_output({ job_id: "${job.id}" }), stop it with job_kill. Nothing is waiting on it.`,
+        meta: { jobId: job.id, background: true }
+      };
+    }
+
     try {
       const { stdout, stderr } = await execAsync(command, {
         cwd: base,
@@ -524,6 +886,224 @@ export const builtinExecutors: Record<string, ToolExecutor> = {
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string };
       return { content: `[exit ${(err as { code?: number }).code ?? 'err'}]\n${e.stdout || ''}${e.stderr ? '\n[stderr]\n' + e.stderr : ''}\n${e.message || ''}`, isError: true };
+    }
+  },
+
+  async job_list(args, ctx) {
+    const all = (args as { all?: unknown }).all === true;
+    const records = jobs.list(all ? undefined : ctx.conversationId);
+    if (records.length === 0) return { content: 'No background jobs.', meta: { jobs: [] } };
+    const lines = records.map((r) => {
+      const ran = Math.round(((r.endedAt ?? Date.now()) - r.startedAt) / 1000);
+      const state = r.status === 'running' ? 'running' : r.status === 'exited' ? `exited ${r.exitCode ?? '?'}` : r.status;
+      return `${r.id}  [${state}]  ${ran}s  ${r.totalChars} chars  ${r.label}`;
+    });
+    return { content: lines.join('\n'), meta: { jobs: records } };
+  },
+
+  async job_output(args, ctx) {
+    const { job_id, cursor, max_chars } = args as { job_id?: string; cursor?: number; max_chars?: number };
+    if (!job_id) return { content: 'job_id is required.', isError: true };
+    const record = jobs.get(job_id);
+    if (!record) return { content: `Unknown job: ${job_id}. Use job_list to see what is running.`, isError: true };
+    // A job belongs to the conversation that started it; reading another
+    // conversation's output would leak across sessions.
+    if (record.conversationId !== ctx.conversationId) {
+      return { content: `${job_id} belongs to another conversation.`, isError: true };
+    }
+    const read = jobs.read(job_id, Math.max(0, Number(cursor) || 0), max_chars ? Math.max(1, Number(max_chars)) : undefined);
+    if (!read) return { content: `Unknown job: ${job_id}`, isError: true };
+
+    const header = [
+      `${job_id} [${record.status}${record.status === 'exited' ? ` ${record.exitCode ?? '?'}` : ''}]`,
+      read.dropped ? ` — ${read.dropped} characters scrolled out of the buffer before this read` : '',
+      read.done ? ' — end of output' : ` — next cursor ${read.cursor}`
+    ].join('');
+    return {
+      content: `${header}\n${read.text || '(no new output)'}`,
+      meta: { jobId: job_id, cursor: read.cursor, done: read.done, status: record.status, exitCode: record.exitCode }
+    };
+  },
+
+  async job_kill(args, ctx) {
+    const { job_id } = args as { job_id?: string };
+    if (!job_id) return { content: 'job_id is required.', isError: true };
+    const record = jobs.get(job_id);
+    if (!record) return { content: `Unknown job: ${job_id}`, isError: true };
+    if (record.conversationId !== ctx.conversationId) return { content: `${job_id} belongs to another conversation.`, isError: true };
+    const killed = jobs.kill(job_id);
+    return { content: killed ? `Killed ${job_id}.` : `${job_id} had already finished (${record.status}).` };
+  },
+
+  async git_status(args, ctx) {
+    const cwd = await gitCwd(args, ctx);
+    if (typeof cwd !== 'string') return cwd;
+    const r = await runGit(['status', '--porcelain=v1', '-b', '-z'], cwd);
+    if (r.code !== 0) return { content: `git status failed: ${r.stderr.trim()}`, isError: true };
+    const status = parseStatus(r.stdout);
+    return { content: formatStatus(status), meta: { git: status } };
+  },
+
+  async git_diff(args, ctx) {
+    const cwd = await gitCwd(args, ctx);
+    if (typeof cwd !== 'string') return cwd;
+    const { path, staged, base, stat } = args as { path?: string; staged?: boolean; base?: string; stat?: boolean };
+    const argv = ['diff'];
+    if (staged) argv.push('--staged');
+    if (stat) argv.push('--stat');
+    if (base) { assertSafeArg('base', base); argv.push(base); }
+    // Everything after `--` is a path, so a file called "-x" cannot become a flag.
+    if (path) argv.push('--', path);
+    const r = await runGit(argv, cwd);
+    if (r.code !== 0) return { content: `git diff failed: ${r.stderr.trim()}`, isError: true };
+    const out = r.stdout.trim();
+    return { content: out || '(no changes)', meta: { staged: !!staged, base: base ?? null } };
+  },
+
+  async git_log(args, ctx) {
+    const cwd = await gitCwd(args, ctx);
+    if (typeof cwd !== 'string') return cwd;
+    const { max_count, path, author } = args as { max_count?: number; path?: string; author?: string };
+    const count = Math.min(200, Math.max(1, Number(max_count) || 20));
+    const argv = ['log', `--max-count=${count}`, `--pretty=format:${LOG_FORMAT}`];
+    if (author) { assertSafeArg('author', author); argv.push(`--author=${author}`); }
+    if (path) argv.push('--', path);
+    const r = await runGit(argv, cwd);
+    if (r.code !== 0) return { content: `git log failed: ${r.stderr.trim()}`, isError: true };
+    const commits = parseLog(r.stdout);
+    if (!commits.length) return { content: '(no commits)', meta: { commits: [] } };
+    return {
+      content: commits.map((c) => `${c.shortHash}  ${c.date.slice(0, 10)}  ${c.author}  ${c.subject}`).join('\n'),
+      meta: { commits }
+    };
+  },
+
+  async git_branch(args, ctx) {
+    const cwd = await gitCwd(args, ctx);
+    if (typeof cwd !== 'string') return cwd;
+    const { create, switch_to, remote } = args as { create?: string; switch_to?: string; remote?: boolean };
+    if (create && switch_to) return { content: 'Pass either create or switch_to, not both.', isError: true };
+
+    if (create) {
+      assertSafeArg('branch name', create);
+      const r = await runGit(['checkout', '-b', create], cwd);
+      if (r.code !== 0) return { content: `git checkout -b failed: ${r.stderr.trim()}`, isError: true };
+      return { content: `Created and switched to ${create}.`, meta: { branch: create, created: true } };
+    }
+    if (switch_to) {
+      assertSafeArg('branch name', switch_to);
+      const r = await runGit(['checkout', switch_to], cwd);
+      if (r.code !== 0) return { content: `git checkout failed: ${r.stderr.trim()}`, isError: true };
+      return { content: `Switched to ${switch_to}.`, meta: { branch: switch_to } };
+    }
+
+    const argv = ['branch', '--format=%(refname:short)%09%(HEAD)'];
+    if (remote) argv.push('-a');
+    const r = await runGit(argv, cwd);
+    if (r.code !== 0) return { content: `git branch failed: ${r.stderr.trim()}`, isError: true };
+    const branches = r.stdout.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+      const [name, head] = l.split('\t');
+      return { name, current: head === '*' };
+    });
+    return {
+      content: branches.map((b) => `${b.current ? '*' : ' '} ${b.name}`).join('\n') || '(no branches)',
+      meta: { branches, current: branches.find((b) => b.current)?.name ?? null }
+    };
+  },
+
+  async git_commit(args, ctx) {
+    const cwd = await gitCwd(args, ctx);
+    if (typeof cwd !== 'string') return cwd;
+    const { message, all, paths } = args as { message?: string; all?: boolean; paths?: string[] };
+    if (!message || !message.trim()) return { content: 'A commit message is required.', isError: true };
+
+    if (Array.isArray(paths) && paths.length) {
+      const add = await runGit(['add', '--', ...paths.map(String)], cwd);
+      if (add.code !== 0) return { content: `git add failed: ${add.stderr.trim()}`, isError: true };
+    }
+    // No --no-verify: a hook that fails is telling the truth about the change.
+    const argv = ['commit', '-m', message];
+    if (all) argv.push('-a');
+    const r = await runGit(argv, cwd);
+    if (r.code !== 0) {
+      const detail = (r.stdout + '\n' + r.stderr).trim();
+      return { content: `git commit failed:\n${detail}`, isError: true };
+    }
+    const head = await runGit(['rev-parse', '--short', 'HEAD'], cwd);
+    return {
+      content: `Committed ${head.stdout.trim() || '(unknown)'}: ${message.split('\n')[0]}`,
+      meta: { commit: head.stdout.trim(), message }
+    };
+  },
+
+  async git_push(args, ctx) {
+    const cwd = await gitCwd(args, ctx);
+    if (typeof cwd !== 'string') return cwd;
+    const { remote, branch, set_upstream } = args as { remote?: string; branch?: string; set_upstream?: boolean };
+    const remoteName = remote || 'origin';
+    assertSafeArg('remote', remoteName);
+    const argv = ['push'];
+    if (set_upstream) argv.push('-u');
+    argv.push(remoteName);
+    if (branch) { assertSafeArg('branch', branch); argv.push(branch); }
+    const r = await runGit(argv, cwd, 120_000);
+    if (r.code !== 0) return { content: `git push failed:\n${(r.stdout + '\n' + r.stderr).trim()}`, isError: true };
+    return { content: `Pushed to ${remoteName}${branch ? `/${branch}` : ''}.\n${(r.stderr || r.stdout).trim()}` };
+  },
+
+  async lsp(args, ctx) {
+    const action = String((args as { action?: unknown }).action || '') as LspAction;
+    const path = String((args as { path?: unknown }).path || '');
+    if (!['definition', 'references', 'hover', 'diagnostics', 'symbols'].includes(action)) {
+      return { content: `Unknown action: ${action || '(none)'}. Use definition, references, hover, diagnostics or symbols.`, isError: true };
+    }
+    if (!path) return { content: 'path is required.', isError: true };
+    const abs = safeResolve(path, ctx.cwd);
+    if (!existsSync(abs)) return { content: `Error: file not found: ${abs}`, isError: true };
+    if ((action === 'definition' || action === 'references' || action === 'hover') && !(args as { line?: unknown }).line) {
+      return { content: `${action} needs a 1-based line (and ideally character) pointing at the symbol.`, isError: true };
+    }
+    try {
+      return await runLsp({
+        action,
+        path: abs,
+        line: Number((args as { line?: unknown }).line) || 1,
+        character: Number((args as { character?: unknown }).character) || 1,
+        root: ctx.cwd
+      });
+    } catch (err) {
+      return { content: `lsp ${action} failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    }
+  },
+
+  async web_search(args) {
+    const query = String((args as { query?: unknown }).query || '').trim();
+    if (!query) return { content: 'A query is required.', isError: true };
+    const count = Number((args as { count?: unknown }).count) || 5;
+    try {
+      const results = await webSearch(query, count);
+      return { content: formatResults(query, results), meta: { query, results } };
+    } catch (err) {
+      return { content: `web_search failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    }
+  },
+
+  async web_fetch(args) {
+    const url = String((args as { url?: unknown }).url || '').trim();
+    if (!url) return { content: 'A url is required.', isError: true };
+    try {
+      const res = await fetchUrl(url);
+      if (!res.ok) return { content: res.text, isError: true, meta: { url, finalUrl: res.finalUrl, status: res.status } };
+      const note = [
+        res.finalUrl !== url ? `Redirected to ${res.finalUrl}` : '',
+        res.truncated ? `Body truncated at 2 MB (${res.bytes} bytes read)` : ''
+      ].filter(Boolean).join(' · ');
+      return {
+        content: `${note ? `[${note}]\n\n` : ''}${res.text || '(empty response)'}`,
+        meta: { url, finalUrl: res.finalUrl, status: res.status, contentType: res.contentType, bytes: res.bytes, truncated: res.truncated }
+      };
+    } catch (err) {
+      return { content: `web_fetch failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
     }
   },
 
@@ -822,6 +1402,29 @@ Present results with: SCID, name, deploy height, key functions, and related cont
     return runMediaGeneration('video', String(prompt || ''), ctx, { durationSeconds: duration_seconds });
   }
 };
+
+/**
+ * Resolve the repository directory for a git tool, or return the error result
+ * the caller should hand back. Every git tool starts here so "not a repo" reads
+ * the same way, and so a `cwd` argument goes through the same path policy as
+ * every other file-taking tool.
+ */
+async function gitCwd(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolResult> {
+  const raw = typeof args.cwd === 'string' && args.cwd ? args.cwd : null;
+  let dir: string;
+  try {
+    dir = raw ? safeResolve(raw, ctx.cwd) : ctx.cwd;
+  } catch (err) {
+    return { content: `Error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+  }
+  if (!existsSync(dir)) return { content: `Error: directory not found: ${dir}`, isError: true };
+  try {
+    if (!(await isRepo(dir))) return { content: `Not a git repository: ${dir}`, isError: true };
+  } catch (err) {
+    return { content: `Error: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+  }
+  return dir;
+}
 
 const MEDIA_ASPECTS: Record<string, { width: number; height: number }> = {
   square: { width: 1024, height: 1024 },

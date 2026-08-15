@@ -12,6 +12,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { McpServerInstance } from './client';
+import { assignUniqueNames } from './namespace';
 
 const RECONNECT_DELAY_MS = 2000;
 const RECONNECT_MAX_DELAY_MS = 60_000;
@@ -349,11 +350,20 @@ export class McpManager extends EventEmitter {
       ]);
 
       if (toolsRes.status === 'fulfilled') {
-        instance.tools = (toolsRes.value.tools || []).map((t) => ({
-          name: t.name,
+        const discovered = toolsRes.value.tools || [];
+        // Namespace on the way in, against the names every *other* connected
+        // server is already using, so two servers offering `search` both stay
+        // reachable instead of one silently winning.
+        const advertised = assignUniqueNames(
+          discovered.map((t) => ({ serverName: cfg.name, toolName: t.name })),
+          this.advertisedNames(cfg.id)
+        );
+        instance.tools = discovered.map((t, i) => ({
+          name: advertised[i],
           description: `[${cfg.name}] ${t.description || 'MCP tool'}`,
           parameters: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
-          source: `mcp:${cfg.id}` as const
+          source: `mcp:${cfg.id}` as const,
+          mcpToolName: t.name
         }));
       }
       if (resourcesRes.status === 'fulfilled') {
@@ -436,12 +446,34 @@ export class McpManager extends EventEmitter {
       if (!inst) return null;
       return { serverId, serverName: this.configName(serverId), toolName: rest.join(':'), trusted: !!inst.trust };
     }
+    // The namespaced name the model was given.
     for (const inst of this.servers.values()) {
-      if (inst.tools.some((t) => t.name === name)) {
+      const tool = inst.tools.find((t) => t.name === name);
+      if (tool) {
+        return { serverId: inst.id, serverName: this.configName(inst.id), toolName: tool.mcpToolName ?? tool.name, trusted: !!inst.trust };
+      }
+    }
+    // Fall back to the raw server-side name. This is what a conversation
+    // resumed from before namespacing replays, so it stays first-match-wins —
+    // deliberately, because there is no server information in the name to do
+    // better with.
+    for (const inst of this.servers.values()) {
+      const tool = inst.tools.find((t) => t.mcpToolName === name);
+      if (tool) {
         return { serverId: inst.id, serverName: this.configName(inst.id), toolName: name, trusted: !!inst.trust };
       }
     }
     return null;
+  }
+
+  /** Advertised tool names in use by every server except `exceptId`. */
+  private advertisedNames(exceptId: string): Set<string> {
+    const taken = new Set<string>();
+    for (const inst of this.servers.values()) {
+      if (inst.id === exceptId) continue;
+      for (const t of inst.tools) taken.add(t.name);
+    }
+    return taken;
   }
 
   private configName(id: string): string {

@@ -4,7 +4,7 @@ import { IPC, type ProviderConfig, type ProviderModel } from '@shared/types';
 import { getDb } from '../db/client';
 import { setSecret, deleteSecret, getSecret } from '../utils/secrets';
 import { clearAdapterCache, listProviders, testConnection, getProviderConfig, getAdapter } from '../providers/registry';
-import { PROVIDER_PRESETS, findPreset } from '@shared/presets';
+import { PROVIDER_PRESETS, findPreset, isAcpPreset } from '@shared/presets';
 import { logger } from '../utils/logger';
 import { fetchLiveModels } from '../providers/models';
 import { getOAuthAccessToken, getOAuthStatus, setOAuthSignedInListener, signOut, startDeviceFlow } from '../providers/oauth';
@@ -90,12 +90,12 @@ export function registerProviderHandlers(): void {
     clearAdapterCache();
     logger.info('providers', `saved ${final.name}`);
 
-    // Saving Codex is an explicit user action, so immediately start its
-    // ChatGPT OAuth-backed discovery. Startup/list refreshes still skip it to
-    // avoid opening a browser unexpectedly later.
-    if (final.presetId === 'codex') {
+    // Saving an ACP provider (Codex, Claude Code) is an explicit user action,
+    // so immediately start its browser-auth-backed discovery. Startup/list
+    // refreshes still skip these to avoid opening a login unexpectedly later.
+    if (isAcpPreset(final.presetId)) {
       void refreshModelsNow(final.id).then((result) => {
-        if (!result.ok) logger.warn('providers', `Codex model discovery failed for ${final.id}: ${result.error}`);
+        if (!result.ok) logger.warn('providers', `ACP model discovery failed for ${final.id}: ${result.error}`);
       });
     } else {
       // Auto-fetch live models in the background so the list is current.
@@ -156,8 +156,8 @@ export function registerProviderHandlers(): void {
 async function refreshModelsInBackground(id: string): Promise<void> {
   if (refreshInFlight.has(id)) return;
   const cfg = getProviderConfig(id);
-  // Codex requires interactive browser login; don't auto-refresh it silently.
-  if (cfg?.presetId === 'codex') return;
+  // ACP agents require interactive browser login; don't auto-refresh silently.
+  if (isAcpPreset(cfg?.presetId)) return;
   refreshInFlight.add(id);
   try {
     const r = await refreshModelsNow(id);
@@ -174,10 +174,11 @@ async function refreshModelsNow(id: string): Promise<{ ok: boolean; error?: stri
   const cfg = getProviderConfig(id);
   if (!cfg) return { ok: false, error: 'Provider not found' };
 
-  // Codex (ACP) discovers models through its own adapter, not an OpenAI /models endpoint.
-  if (cfg.presetId === 'codex') {
+  // ACP agents (Codex, Claude Code) discover models through their own
+  // adapter, not an OpenAI /models endpoint.
+  if (isAcpPreset(cfg.presetId)) {
     const adapter = getAdapter(id);
-    if (!adapter) return { ok: false, error: 'Codex provider not enabled' };
+    if (!adapter) return { ok: false, error: 'Provider not enabled' };
     const r = await adapter.testConnection();
     if (!r.ok || !r.models) return { ok: false, error: r.error || 'No models found' };
     return updateProviderModels(id, r.models, cfg, r.modelDetails);

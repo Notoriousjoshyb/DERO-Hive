@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { cssColorToChannels } from './theme';
 
 // ── helpers from theme.ts ──────────────────────────────────────────
 function hexToRgb(hex: string): [number, number, number] | null {
@@ -78,5 +79,33 @@ assert(brighter !== '#808080');
 const darker = adjustBrightness('#808080', -50);
 assert(darker !== '#808080');
 assert.equal(adjustBrightness('#invalid', 10), '#invalid');
+
+// ── cssColorToChannels ─────────────────────────────────────────────
+// Feeds Tailwind's `rgb(var(--x) / <alpha-value>)` colours. A null here means
+// the accent silently falls back to the stylesheet default.
+
+// every form the presets / globals.css / applyAccent actually emit
+assert.equal(cssColorToChannels('#c26647'), '194 102 71');       // :root accent
+assert.equal(cssColorToChannels('#d97757'), '217 119 87');       // .dark accent
+assert.equal(cssColorToChannels('#B8BB26'), '184 187 38');       // uppercase (gruvbox)
+assert.equal(cssColorToChannels('#abc'), '170 187 204');         // 3-digit shorthand
+assert.equal(cssColorToChannels('rgb(155, 79, 55)'), '155 79 55'); // applyAccent hover
+assert.equal(cssColorToChannels('rgba(194, 102, 71, 0.12)'), '194 102 71'); // alpha dropped
+assert.equal(cssColorToChannels('rgb(194 102 71)'), '194 102 71'); // space-separated
+assert.equal(cssColorToChannels('  #c26647  '), '194 102 71');   // getPropertyValue pads
+
+// already-a-triplet passes through, so custom CSS can set --accent-rgb directly
+assert.equal(cssColorToChannels('194 102 71'), '194 102 71');
+
+// out-of-range / fractional channels are clamped and rounded
+assert.equal(cssColorToChannels('rgb(300, 10, 128)'), '255 10 128');
+assert.equal(cssColorToChannels('rgb(194.6, 102.2, 71)'), '195 102 71');
+
+// unparseable input returns null so the caller keeps the static fallback
+assert.equal(cssColorToChannels(''), null);
+assert.equal(cssColorToChannels('   '), null);
+assert.equal(cssColorToChannels('hsl(20, 50%, 50%)'), null);
+assert.equal(cssColorToChannels('rebeccapurple'), null);
+assert.equal(cssColorToChannels('#12345'), null);
 
 console.log('theme.test.ts — all assertions passed');

@@ -36,6 +36,8 @@ import { SimulatorManager } from './simulator/manager';
 import { setSimulatorManager } from './simulator/instance';
 import { BrowserBridge } from './browserBridge';
 import { terminalDisposeAll } from './terminal/session';
+import { jobs } from './tools/jobs';
+import { lspManager } from './lsp/manager';
 import { shutdownAdapterCache } from './providers/registry';
 import { initializeKnowledgeService, getKnowledgeService } from './knowledge/service';
 import { KnowledgeAutomationScheduler } from './knowledge/automation';
@@ -401,6 +403,10 @@ app.on('before-quit', async (event) => {
   isQuitting = true;
   event.preventDefault();
   try { terminalDisposeAll(); } catch { /* ignore */ }
+  // Background shell jobs are children of this process; quitting without
+  // killing them would leave servers and watchers running with no owner.
+  try { jobs.killAll(); } catch { /* ignore */ }
+  try { await lspManager.disposeAll(); } catch { /* ignore */ }
   try { await shutdownAdapterCache(); } catch { /* ignore */ }
   try { await simulatorManager?.stop(); } catch { /* ignore */ }
   try { await knowledgeAutomations?.shutdown(); } catch { /* ignore */ }

@@ -37,6 +37,32 @@ const orModel = getModelMetadata('anthropic/claude-sonnet-4.5');
 assert.notEqual(orModel, null);
 assert.ok(orModel!.supportsTools);
 
+// Gateway-prefixed flagship ids resolve too — these are the openrouter and
+// opencode-zen preset defaults, so a miss here means those presets start with
+// no context window and no price.
+const orOpus5 = getModelMetadata('anthropic/claude-opus-5');
+assert.notEqual(orOpus5, null);
+assert.equal(orOpus5!.contextWindow, 1_000_000);
+assert.equal(orOpus5!.inputPrice, 5);
+const orOpus5Fast = getModelMetadata('anthropic/claude-opus-5-fast');
+assert.equal(orOpus5Fast!.inputPrice, 10, 'fast mode is 2x the standard rate');
+
+// Current Anthropic flagship — the preset default resolves to real metadata
+const opus5 = getModelMetadata('claude-opus-5');
+assert.notEqual(opus5, null);
+assert.equal(opus5!.contextWindow, 1_000_000);
+assert.equal(opus5!.maxOutput, 128_000);
+assert.ok(opus5!.supportsVision && opus5!.supportsTools && opus5!.supportsReasoning);
+
+// Every current-generation Claude carries a price, or the cost dashboard
+// silently renders "—" for the models people actually use.
+for (const id of ['claude-opus-5', 'claude-opus-4.8', 'claude-opus-4.7', 'claude-opus-4.6', 'claude-sonnet-5', 'claude-sonnet-4.6', 'claude-fable-5', 'claude-haiku-4.5']) {
+  const meta = getModelMetadata(id);
+  assert.notEqual(meta, null, `${id} missing from KNOWN_MODELS`);
+  assert.ok(typeof meta!.inputPrice === 'number' && meta!.inputPrice > 0, `${id} has no inputPrice`);
+  assert.ok(typeof meta!.outputPrice === 'number' && meta!.outputPrice > 0, `${id} has no outputPrice`);
+}
+
 // ─── applyKnownMetadata ───────────────────────────────────────────────────
 
 const input: Parameters<typeof applyKnownMetadata>[0] = [{ id: 'gpt-5.5', name: 'GPT-5.5' }];

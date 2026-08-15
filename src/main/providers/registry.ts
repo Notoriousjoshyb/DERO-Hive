@@ -2,7 +2,7 @@ import type { ProviderConfig } from '@shared/types';
 import type { ProviderAdapter } from './base';
 import { OpenAICompatibleAdapter } from './openai-compatible';
 import { AnthropicAdapter } from './anthropic';
-import { CodexAcpAdapter } from './codex-acp';
+import { ClaudeAcpAdapter, CodexAcpAdapter } from './codex-acp';
 import { getSecret } from '../utils/secrets';
 import { getOAuthAccessToken, hasOAuthTokens } from './oauth';
 import { getDb } from '../db/client';
@@ -13,9 +13,13 @@ const providers = new Map<string, ProviderAdapter>();
 // Heuristic to pick the right adapter based on baseUrl / presetId
 export function adapterFor(cfg: ProviderConfig): ProviderAdapter | null {
   if (!cfg.enabled) return null;
-  // Codex uses the Agent Client Protocol adapter; it handles ChatGPT auth itself.
+  // ACP-backed agents handle their own auth (ChatGPT / Claude subscription):
+  // the vendor's own binary signs in, Hive never touches the tokens.
   if (cfg.presetId === 'codex') {
     return new CodexAcpAdapter(cfg);
+  }
+  if (cfg.presetId === 'claude-code') {
+    return new ClaudeAcpAdapter(cfg);
   }
   const apiKey = getSecret(`provider:${cfg.id}`);
   // Anthropic has its own API shape; only use AnthropicAdapter for actual Anthropic hosts

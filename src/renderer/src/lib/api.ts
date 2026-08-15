@@ -1,5 +1,7 @@
 import type {
   Attachment,
+  UserQuestionRequest,
+  UserQuestionAnswer,
   BookmarkEntry,
   ChatRequest,
   Conversation,
@@ -135,6 +137,8 @@ declare global {
       toolList: () => Promise<ToolDefinition[]>;
       toolPermissionDecide: (rule: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ ok: boolean }>;
       onToolPermissionRequest: (cb: (req: { requestId: string; toolName: string; args: unknown; description?: string }) => void) => () => void;
+      onUserQuestion: (cb: (req: UserQuestionRequest) => void) => () => void;
+      answerUserQuestion: (requestId: string, answers: UserQuestionAnswer[]) => Promise<{ ok: boolean }>;
       onToolResult: (cb: (data: { messageId: string; toolCallId: string; toolName?: string; result: string; isError: boolean; durationMs: number; meta?: Record<string, unknown> }) => void) => () => void;
 
       auditList: (filter?: { conversationId?: string; limit?: number; offset?: number }) => Promise<ToolExecutionRecord[]>;
@@ -168,6 +172,9 @@ declare global {
 
       settingsGet: () => Promise<AppSettings>;
       settingsSet: (s: Partial<AppSettings>) => Promise<AppSettings>;
+      /** Write-only: an empty value clears the secret. Allowlisted keys only. */
+      settingsSetSecret: (key: string, value: string) => Promise<{ ok: boolean; hasValue: boolean }>;
+      settingsHasSecret: (key: string) => Promise<boolean>;
 
       attachFromFile: () => Promise<Attachment[] | null>;
       attachFromBytes: (a: { data: string; filename: string; mimeType: string }) => Promise<Attachment>;

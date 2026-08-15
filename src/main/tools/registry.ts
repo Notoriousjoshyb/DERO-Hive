@@ -5,7 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { getDb, getSetting } from '../db/client';
 import { logger } from '../utils/logger';
 import { redactArgs } from '../utils/redact';
-import { BUILTIN_TOOLS, builtinExecutors } from './builtin';
+import { listBuiltinTools, builtinExecutors } from './builtin';
+import { applySpill } from './spill';
+import { jobs } from './jobs';
 import { McpManager } from '../mcp/manager';
 
 export interface ToolContext {
@@ -39,6 +41,13 @@ type ProjectTrust = 'untrusted' | 'standard' | 'trusted';
 /** Trust lookups are cached per normalized cwd for 30s — a plain TTL, no fs watching. */
 const TRUST_CACHE_TTL_MS = 30_000;
 
+/**
+ * Tools that always ask, whatever the approval mode says and whatever rules
+ * are saved. Reserved for actions that publish outside the machine, where a
+ * remembered "allow" would be a decision the user made about a different push.
+ */
+const ALWAYS_CONFIRM = new Set(['git_push']);
+
 export class ToolRegistry extends EventEmitter {
   private executors = new Map<string, ToolExecutor>();
   private pendingRequests = new Map<string, {
@@ -56,8 +65,31 @@ export class ToolRegistry extends EventEmitter {
     }
   }
 
+  /**
+   * Keep an oversized tool result out of the model's context: the full text
+   * goes to disk and the model gets a preview plus the path. Applied to every
+   * executed result, builtin or MCP, on the way out of execute().
+   */
+  private spill(result: ToolResult, name: string, ctx: ToolContext): ToolResult {
+    const { content, spilled } = applySpill(result.content, ctx.conversationId, name);
+    if (!spilled) return result;
+    logger.info('tools', `spilled ${spilled.bytes} bytes of ${name} output to ${spilled.path}`);
+    return { ...result, content, meta: { ...result.meta, spilledTo: spilled.path, spilledBytes: spilled.bytes } };
+  }
+
+  /**
+   * Tell the model about background jobs that finished since its last tool
+   * call. Without this it would only learn by polling job_list, which it has no
+   * reason to do. Notices are drained, so each one is delivered once.
+   */
+  private withJobNotices(result: ToolResult, ctx: ToolContext): ToolResult {
+    const notices = jobs.drainNotices(ctx.conversationId);
+    if (notices.length === 0) return result;
+    return { ...result, content: `${result.content}\n\n[Background jobs]\n${notices.join('\n')}` };
+  }
+
   listTools(): ToolDefinition[] {
-    const builtin = BUILTIN_TOOLS;
+    const builtin = listBuiltinTools();
     const mcp = this.mcpManager?.getAllTools() || [];
     return [...builtin, ...mcp];
   }
@@ -77,8 +109,10 @@ export class ToolRegistry extends EventEmitter {
       // whether the tool needs approval depends on that server's trust flag.
       const mcp = this.executors.has(name) ? null : (this.mcpManager?.resolveTool(name) ?? null);
 
-      // Check permissions
-      const rule = this.matchRule(name, args, ctx);
+      // Check permissions. An MCP tool also answers to its raw server-side
+      // name, so rules saved before tools were namespaced keep working without
+      // a migration that would have to guess which server a bare name meant.
+      const rule = this.matchRule(name, args, ctx, mcp ? [mcp.toolName] : undefined);
       if (rule?.action === 'deny') {
         audit.decision = 'deny';
         audit.status = 'denied';
@@ -99,15 +133,18 @@ export class ToolRegistry extends EventEmitter {
       // A trusted server still prompts when the resolved tool name matches the
       // write heuristic (requiresApproval) — server trust is not a blanket pass
       // for irreversible actions.
-      const mcpRisk = mcp !== null && (!mcp.trusted || this.requiresApproval(mcp.toolName));
-      const implicitRisk = !rule && (this.requiresApproval(name) || mcpRisk);
-      if (forceAsk || rule?.action === 'ask' || implicitRisk) {
+      const mcpRisk = mcp !== null && (!mcp.trusted || this.requiresApproval(mcp.toolName, args));
+      const implicitRisk = !rule && (this.requiresApproval(name, args) || mcpRisk);
+      // An always-confirm tool asks even under a saved allow rule or 'never'
+      // mode, so it is both a reason to prompt and an explicit ask.
+      const mustConfirm = ALWAYS_CONFIRM.has(name);
+      if (forceAsk || mustConfirm || rule?.action === 'ask' || implicitRisk) {
         const allowed = await this.authorize({
           requestId: cryptoRandom(),
           toolName: name,
           args,
           description: mcp?.serverName ? `MCP server: ${mcp.serverName}` : undefined
-        }, ctx, forceAsk || rule?.action === 'ask');
+        }, ctx, forceAsk || mustConfirm || rule?.action === 'ask');
         if (!allowed) {
           audit.decision = 'deny';
           audit.status = 'denied';
@@ -124,7 +161,7 @@ export class ToolRegistry extends EventEmitter {
         catch (err) { result = { content: `Error: ${err instanceof Error ? err.message : String(err)}`, isError: true }; }
         if (result.isError) audit.status = 'error';
         audit.filesTouched = this.filesTouchedFor(name, args, ctx, result);
-        return result;
+        return this.withJobNotices(this.spill(result, name, ctx), ctx);
       }
 
       if (mcp) {
@@ -145,7 +182,7 @@ export class ToolRegistry extends EventEmitter {
         if (result.isError) audit.status = 'error';
         // filesTouched stays [] — the registry cannot know which files (if
         // any) a remote MCP tool touched.
-        return result;
+        return this.withJobNotices(this.spill(result, name, ctx), ctx);
       }
 
       audit.status = 'error';
@@ -160,7 +197,7 @@ export class ToolRegistry extends EventEmitter {
     }
   }
 
-  matchRule(toolName: string, args: Record<string, unknown>, ctx?: ToolContext): PermissionRule | null {
+  matchRule(toolName: string, args: Record<string, unknown>, ctx?: ToolContext, aliases?: string[]): PermissionRule | null {
     const rows = getDb().prepare('SELECT * FROM permissions').all() as Array<Record<string, unknown>>;
     let askRule: PermissionRule | null = null;
     let allowRule: PermissionRule | null = null;
@@ -173,7 +210,7 @@ export class ToolRegistry extends EventEmitter {
         scope: row.scope as 'project' | 'global' | undefined,
         projectPath: row.project_path as string | undefined
       };
-      if (rule.toolName !== '*' && rule.toolName !== toolName) continue;
+      if (rule.toolName !== '*' && rule.toolName !== toolName && !aliases?.includes(rule.toolName)) continue;
       if (rule.pattern && !matchPattern(rule.pattern, args)) continue;
       if (rule.scope === 'project') {
         if (!rule.projectPath || !ctx) continue;
@@ -228,14 +265,24 @@ export class ToolRegistry extends EventEmitter {
     }
   }
 
-  private requiresApproval(name: string): boolean {
+  private requiresApproval(name: string, args?: Record<string, unknown>): boolean {
+    // A few actions leave the machine and cannot be taken back. They ask in
+    // every approval mode, including 'never' — "don't ask me about tools" is a
+    // statement about local work, not about publishing to a remote.
+    if (ALWAYS_CONFIRM.has(name)) return true;
     // 'always'/'session'/'project' all ask for sensitive built-ins; 'never' never does.
     // The scope of what "remembering" a decision means is handled in authorize().
     if (this.approvalMode() === 'never') return false;
+    // git_branch only changes the checkout when asked to create or switch;
+    // listing branches is a read and should not prompt.
+    if (name === 'git_branch') return !!args && (typeof args.create === 'string' || typeof args.switch_to === 'string');
     // Media generation, dapp scaffolding and wallet creation spend money or
     // have side effects beyond the workspace — they gate like shell/file writes.
+    // web_fetch is here because it sends a request off the machine, and
+    // git_commit because it rewrites history the user owns.
     const sensitiveBuiltins = [
       'run_shell', 'write_file', 'edit_file',
+      'git_commit', 'web_fetch', 'web_search',
       'generate_tela_dapp', 'generate_image', 'generate_audio', 'generate_video',
       'simulator_create_wallet'
     ];
@@ -342,7 +389,7 @@ export class ToolRegistry extends EventEmitter {
     // Same per-project trust gate as execute(): an 'untrusted' project forces an
     // explicit ask, so persisted allow rules and the 'never' approval mode do
     // not silently pass provider-native (e.g. codex-acp) tool calls through.
-    const forceAsk = this.projectTrust(ctx.cwd) === 'untrusted';
+    const forceAsk = this.projectTrust(ctx.cwd) === 'untrusted' || ALWAYS_CONFIRM.has(req.toolName);
     if (!forceAsk && rule?.action === 'allow') return true;
     return this.authorize(req, ctx, forceAsk || rule?.action === 'ask');
   }

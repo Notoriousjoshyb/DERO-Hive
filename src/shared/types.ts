@@ -63,10 +63,13 @@ export interface ToolCall {
 }
 
 export interface ToolDefinition {
+  /** The name the model calls. For MCP tools this is namespaced: mcp__server__tool. */
   name: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
   source: 'builtin' | `mcp:${string}`;
+  /** MCP only: the raw name the server advertises, before namespacing. */
+  mcpToolName?: string;
 }
 
 export interface ChatRequest {
@@ -519,6 +522,27 @@ export function normalizeToolApprovalMode(value: unknown): ToolApprovalMode {
   return value === 'session' || value === 'project' || value === 'never' ? value : 'always';
 }
 
+/** One language server the `lsp` tool may start, matched to files by extension. */
+export interface LspServerConfig {
+  id: string;
+  name?: string;
+  /** Executable to run, e.g. "typescript-language-server". Must be on PATH or absolute. */
+  command: string;
+  args?: string[];
+  /** File extensions this server handles, with the leading dot. */
+  extensions: string[];
+  enabled?: boolean;
+}
+
+/** Search backends web_search can sit on. 'none' (or unset) means no search tool. */
+export type WebSearchProvider = 'none' | 'brave' | 'tavily' | 'searxng';
+
+export interface WebSearchSettings {
+  provider?: WebSearchProvider;
+  /** SearXNG only: base URL of the instance. Loopback is expected and allowed. */
+  endpoint?: string;
+}
+
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system';
   fontSize: 'small' | 'medium' | 'large';
@@ -541,6 +565,16 @@ export interface AppSettings {
   /** Maximum model → tools → model cycles for one submitted task (1–50). */
   maxAgenticRounds: number;
   toolApprovalMode: ToolApprovalMode;
+  /** Search provider for the web_search tool. Unconfigured means the tool is absent. */
+  webSearch?: WebSearchSettings;
+  /** Language servers the `lsp` tool may start. None configured means lsp answers LSP_UNAVAILABLE. */
+  lspServers?: LspServerConfig[];
+  /**
+   * Background shell jobs (run_in_background + job_list/job_output/job_kill).
+   * Default true. When false the parameter and the three tools are removed from
+   * the advertised schema rather than advertised and refused.
+   */
+  backgroundJobs?: boolean;
   workingDirectory?: string;
   codeFolder?: string; // last folder opened in the Code tab explorer (persists across sessions)
   codeTheme?: 'vscode' | 'onedark' | 'dracula' | 'monokai'; // editor syntax theme
@@ -578,6 +612,43 @@ export interface AppSettings {
 }
 
 export type Attachment = StoredAttachment;
+
+// ── ask_user_question ─────────────────────────────────────────────────────
+// The model pausing to ask the human. Adapted from the DeepSeek Harness
+// user-questions seam (MIT) — see HARNESS_INTEGRATION_PLAN.md §2.1.
+
+/** One selectable answer. `label` is both the UI text and the model-facing value. */
+export interface UserQuestionOption {
+  label: string;
+  /** Optional one-line explanation of the tradeoff, rendered by capable UIs. */
+  description?: string;
+}
+
+export interface UserQuestion {
+  /** Stable id chosen by the model; echoed back in the answer. */
+  id: string;
+  question: string;
+  /** Short heading, e.g. "Confirm" or "Choose mode". */
+  header?: string;
+  /** Offered choices. With none, the user answers in free text. */
+  options?: UserQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export interface UserQuestionRequest {
+  requestId: string;
+  conversationId?: string;
+  questions: UserQuestion[];
+}
+
+export interface UserQuestionAnswer {
+  /** The question's `id`, so the model can match answers to what it asked. */
+  id: string;
+  /** Chosen option labels, or the free-text reply as a single entry. */
+  answers: string[];
+  /** True when the turn was aborted rather than answered. */
+  cancelled?: boolean;
+}
 
 export interface Artifact {
   id: string;
@@ -717,6 +788,10 @@ export const IPC = {
   TOOL_PERMISSION_DECIDE: 'tool:permission:decide',
   TOOL_PERMISSION_REQUEST: 'tool:permission:request', // event
 
+  // ask_user_question — the model asking the human mid-turn
+  USER_QUESTION_ASK: 'user-question:ask', // event
+  USER_QUESTION_ANSWER: 'user-question:answer',
+
   // Tool-execution audit log
   AUDIT_LIST: 'audit:list',
 
@@ -749,6 +824,8 @@ export const IPC = {
   // Settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
+  SETTINGS_SET_SECRET: 'settings:setSecret',
+  SETTINGS_HAS_SECRET: 'settings:hasSecret',
 
   // Attachments
   ATTACH_FROM_FILE: 'attach:fromFile',

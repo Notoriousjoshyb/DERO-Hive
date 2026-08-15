@@ -26,6 +26,9 @@ resources/mcp/*/dist/
 # Whisper model is downloaded on postinstall (see scripts/setup-whisper.mjs),
 # not committed — it's large (~140MB+). Binaries are kept for reproducibility.
 resources/whisper/models/*.bin
+# Install manifests record the hash/timestamp observed on THIS machine
+# (scripts/lib/assets.mjs); pins, when we have them, live in the setup script.
+resources/**/*.manifest.json
 
 # Binary MCP servers are downloaded on postinstall (see scripts/setup-mcp.mjs);
 # the manifest is platform-specific and written alongside the binary

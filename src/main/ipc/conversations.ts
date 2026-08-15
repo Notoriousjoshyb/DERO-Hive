@@ -5,6 +5,7 @@ import { getDb } from '../db/client';
 import { closeConversationSessions } from '../providers/registry';
 import { deleteStoredAttachments, serializedAttachmentIds } from '../utils/attachments';
 import { pruneConversation } from '../checkpoints/store';
+import { pruneSpill } from '../tools/spill';
 import { logger } from '../utils/logger';
 import { writeFile, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
@@ -85,6 +86,9 @@ export function registerConvHandlers(): void {
     } catch (err) {
       logger.warn('conversations', `failed to prune checkpoints for ${id}`, err);
     }
+
+    // Spilled tool output is keyed by conversation, so it goes the same way.
+    pruneSpill(id);
 
     // A full content scan is fine at local-chat scale; add an attachment
     // table only if profiling proves this scan is material.

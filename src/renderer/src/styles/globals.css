@@ -16,6 +16,17 @@
   --accent-hover: #b15a3e;
   --accent-soft: rgba(194, 102, 71, 0.09);
   --accent-glow: rgba(194, 102, 71, 0.22);
+  /* Channel triplets ("r g b") for Tailwind's alpha modifier. Tailwind v3
+     silently DROPS a utility like `bg-accent/10` when the colour is a bare
+     var(); it only composes alpha over `rgb(var(--x) / <alpha-value>)`.
+     Keep these in sync with the hex vars above — syncColorChannels() in
+     lib/theme.ts re-derives them at runtime for presets and custom accents. */
+  --accent-rgb: 194 102 71;
+  --accent-hover-rgb: 177 90 62;
+  --success: 91 154 106;
+  --warn: 181 142 58;
+  --danger: 185 90 78;
+  --info: 90 134 176;
   --user-bubble: #eeece4;
   --code-bg: #f4f3ee;
   --shadow-sm: 0 1px 2px rgba(31, 30, 28, 0.05);
@@ -45,6 +56,13 @@
   --accent-hover: #e08868;
   --accent-soft: rgba(217, 119, 87, 0.12);
   --accent-glow: rgba(217, 119, 87, 0.28);
+  --accent-rgb: 217 119 87;
+  --accent-hover-rgb: 224 136 104;
+  /* Lifted from the light values so they stay legible on #262624. */
+  --success: 122 184 138;
+  --warn: 212 169 78;
+  --danger: 224 122 107;
+  --info: 122 165 207;
   --user-bubble: #33322f;
   --code-bg: #1f1e1c;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);

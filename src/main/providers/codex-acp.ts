@@ -62,15 +62,87 @@ class AsyncQueue<T> {
   }
 }
 
-function defaultCodexAcpPath(): string {
+/**
+ * Vendor-specific knobs for an ACP-wrapped agent. The protocol handling below
+ * is shared; what differs between Codex (ChatGPT) and Claude Code (Anthropic)
+ * is how the adapter binary is found, which advertised auth method to pick,
+ * and how strictly session config (model/effort) must be honoured.
+ */
+interface AcpVendorSpec {
+  /** Log channel + toolActivity meta.source. */
+  logTag: string;
+  /** Human-readable agent name for errors and permission prompts. */
+  displayName: string;
+  /** node_modules-relative path to the adapter's JS entry. */
+  packagePath: string;
+  /** Bare command fallback when no packaged copy exists. */
+  bareCommand: string;
+  /** Package spec for the `npx -y` fallback. */
+  npxPackage: string;
+  /** Selects the browser-login method among init.authMethods. */
+  authMethodPattern: RegExp;
+  /** When no method matches the pattern, fall back to the first advertised one. */
+  authFallbackToFirst?: boolean;
+  authMissingError: string;
+  authHint: string;
+  /** Extra environment for the spawned adapter process. */
+  extraEnv?: () => Record<string, string>;
+  /** Inherited env vars to remove before spawning the adapter. */
+  stripEnv?: string[];
+  /** Used when the agent does not advertise a model config option. */
+  fallbackModels?: string[];
+  /** Treat session-config failures (model/effort) as non-fatal. */
+  lenientConfig?: boolean;
+}
+
+const CODEX_SPEC: AcpVendorSpec = {
+  logTag: 'codex-acp',
+  displayName: 'Codex',
+  packagePath: '@agentclientprotocol/codex-acp/dist/index.js',
+  bareCommand: 'codex-acp',
+  npxPackage: '@agentclientprotocol/codex-acp',
+  authMethodPattern: /chatgpt|chat-gpt/i,
+  authMissingError: 'Codex ACP did not advertise ChatGPT authentication. Ensure NO_BROWSER is not enabled.',
+  authHint: 'Make sure ChatGPT Codex access is enabled for the account, then try Models again.',
+  extraEnv: (): Record<string, string> => {
+    const codexPath = bundledCodexPath();
+    return codexPath ? { CODEX_PATH: codexPath } : {};
+  }
+};
+
+// Claude Code via Zed's ACP adapter around Anthropic's Claude Agent SDK. This
+// is the sanctioned way to use a Claude Pro/Max subscription outside Claude
+// Code itself: authentication is owned end-to-end by Anthropic's own tooling
+// (the adapter's login flow / `claude /login`), no tokens ever touch Hive.
+const CLAUDE_SPEC: AcpVendorSpec = {
+  logTag: 'claude-acp',
+  displayName: 'Claude Code',
+  packagePath: '@zed-industries/claude-code-acp/dist/index.js',
+  bareCommand: 'claude-code-acp',
+  npxPackage: '@zed-industries/claude-code-acp',
+  authMethodPattern: /claude|anthropic|log.?in/i,
+  authFallbackToFirst: true,
+  authMissingError: 'Claude Code ACP did not advertise a login method. Run `claude /login` in a terminal to sign in with your Claude subscription, then try again.',
+  authHint: 'Sign in with your Claude (Pro/Max) account. If no browser login appears, run `claude /login` in a terminal, then click Models again.',
+  // The adapter may not expose a model selector; the Agent SDK accepts these
+  // aliases and otherwise uses the account default.
+  fallbackModels: ['sonnet', 'opus', 'haiku'],
+  lenientConfig: true,
+  // The Agent SDK refuses to start when it thinks it is nested inside another
+  // Claude Code session. If Hive itself was launched from a Claude Code
+  // terminal these leak in and break every session.
+  stripEnv: ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SSE_PORT']
+};
+
+function defaultAcpPath(spec: AcpVendorSpec): string {
   const appRoot = process.env.HIVE_APP_ROOT || process.cwd();
   const candidates = [
-    join(process.resourcesPath || '', 'app.asar.unpacked/node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
-    join(appRoot, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
-    join(process.cwd(), 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'),
-    'codex-acp'
+    join(process.resourcesPath || '', `app.asar.unpacked/node_modules/${spec.packagePath}`),
+    join(appRoot, `node_modules/${spec.packagePath}`),
+    join(process.cwd(), `node_modules/${spec.packagePath}`),
+    spec.bareCommand
   ];
-  return candidates.find((candidate) => candidate === 'codex-acp' || existsSync(candidate)) || candidates[0];
+  return candidates.find((candidate) => candidate === spec.bareCommand || existsSync(candidate)) || candidates[0];
 }
 
 function bundledCodexPath(): string | undefined {
@@ -147,7 +219,7 @@ function toolArgs(value: unknown): Record<string, unknown> {
     : { input: value ?? null };
 }
 
-function toolResult(update: acp.ToolCall | acp.ToolCallUpdate): { content: string; meta: Record<string, unknown> } {
+function toolResult(update: acp.ToolCall | acp.ToolCallUpdate, spec: AcpVendorSpec): { content: string; meta: Record<string, unknown> } {
   const rendered: string[] = [];
   let linesAdded = 0;
   let linesRemoved = 0;
@@ -170,9 +242,9 @@ function toolResult(update: acp.ToolCall | acp.ToolCallUpdate): { content: strin
     rendered.push(typeof update.rawOutput === 'string' ? update.rawOutput : JSON.stringify(update.rawOutput, null, 2));
   }
   return {
-    content: rendered.filter(Boolean).join('\n') || (update.status === 'failed' ? 'Codex tool failed.' : 'Codex tool completed.'),
+    content: rendered.filter(Boolean).join('\n') || (update.status === 'failed' ? `${spec.displayName} tool failed.` : `${spec.displayName} tool completed.`),
     meta: {
-      source: 'codex-acp',
+      source: spec.logTag,
       ...(update.kind ? { kind: update.kind } : {}),
       ...(update.locations?.length ? { locations: update.locations } : {}),
       ...(linesAdded || linesRemoved ? { linesAdded, linesRemoved } : {})
@@ -181,10 +253,11 @@ function toolResult(update: acp.ToolCall | acp.ToolCallUpdate): { content: strin
 }
 
 /** Routes ACP notifications to the queue for the session that produced them. */
-class CodexAcpClient implements Client {
+class AcpClientImpl implements Client {
   private readonly tools = new Map<string, { name: string; args: Record<string, unknown>; startedAt: number; kind?: acp.ToolKind }>();
 
   constructor(
+    private readonly spec: AcpVendorSpec,
     private readonly queues: Map<string, AsyncQueue<AcpEvent>>,
     private readonly permissionHandlers: Runtime['permissionHandlers'],
     private readonly readOnlySessions: Set<string>
@@ -200,10 +273,10 @@ class CodexAcpClient implements Client {
       ? rawInput as Record<string, unknown>
       : { input: rawInput ?? null };
     const allowed = await handler({
-      requestId: `codex-${randomUUID()}`,
-      toolName: params.toolCall.title || params.toolCall.kind || 'Codex tool',
+      requestId: `${this.spec.logTag}-${randomUUID()}`,
+      toolName: params.toolCall.title || params.toolCall.kind || `${this.spec.displayName} tool`,
       args,
-      description: 'Codex needs permission to perform this action.'
+      description: `${this.spec.displayName} needs permission to perform this action.`
     });
     if (!allowed) return { outcome: { outcome: 'cancelled' } };
 
@@ -225,10 +298,10 @@ class CodexAcpClient implements Client {
       this.tools.set(`${params.sessionId}\0${update.toolCallId}`, state);
       queue.push({
         type: 'tool_start',
-        toolActivity: { id: update.toolCallId, name: update.title, args: state.args, status: 'running', meta: { source: 'codex-acp', kind: update.kind } }
+        toolActivity: { id: update.toolCallId, name: update.title, args: state.args, status: 'running', meta: { source: this.spec.logTag, kind: update.kind } }
       });
       if (update.status === 'completed' || update.status === 'failed') {
-        const result = toolResult(update);
+        const result = toolResult(update, this.spec);
         queue.push({
           type: 'tool_result',
           toolActivity: {
@@ -242,17 +315,17 @@ class CodexAcpClient implements Client {
     } else if (update.sessionUpdate === 'tool_call_update') {
       const key = `${params.sessionId}\0${update.toolCallId}`;
       const current = this.tools.get(key) || {
-        name: update.title || update.kind || 'Codex tool', args: toolArgs(update.rawInput), startedAt: Date.now(), kind: update.kind || undefined
+        name: update.title || update.kind || `${this.spec.displayName} tool`, args: toolArgs(update.rawInput), startedAt: Date.now(), kind: update.kind || undefined
       };
       if (update.title) current.name = update.title;
       if (update.rawInput !== undefined) current.args = toolArgs(update.rawInput);
       if (update.kind) current.kind = update.kind;
       if (!this.tools.has(key)) {
         this.tools.set(key, current);
-        queue.push({ type: 'tool_start', toolActivity: { id: update.toolCallId, name: current.name, args: current.args, status: 'running', meta: { source: 'codex-acp', kind: current.kind } } });
+        queue.push({ type: 'tool_start', toolActivity: { id: update.toolCallId, name: current.name, args: current.args, status: 'running', meta: { source: this.spec.logTag, kind: current.kind } } });
       }
       if (update.status === 'completed' || update.status === 'failed') {
-        const result = toolResult(update);
+        const result = toolResult(update, this.spec);
         queue.push({
           type: 'tool_result',
           toolActivity: {
@@ -278,7 +351,7 @@ class CodexAcpClient implements Client {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, params.content, 'utf-8');
     } catch (error) {
-      logger.warn('codex-acp', `write failed: ${String(error)}`);
+      logger.warn(this.spec.logTag, `write failed: ${String(error)}`);
     }
   }
 }
@@ -299,41 +372,39 @@ function extractAcpError(error: unknown): { message: string; details?: string } 
   return { message, details: data?.details || data?.message };
 }
 
-export class CodexAcpAdapter implements ProviderAdapter {
+export class AcpAdapter implements ProviderAdapter {
   readonly id: string;
   private runtimePromise: Promise<Runtime> | null = null;
   private disposed = false;
 
-  constructor(private readonly cfg: ProviderConfig) {
+  constructor(private readonly cfg: ProviderConfig, protected readonly spec: AcpVendorSpec) {
     this.id = cfg.id;
   }
 
   private async createRuntime(): Promise<Runtime> {
     const sdk = await loadAcp();
-    const commandPath = this.cfg.customHeaders?.commandPath || defaultCodexAcpPath();
+    const commandPath = this.cfg.customHeaders?.commandPath || defaultAcpPath(this.spec);
     const isJs = commandPath.endsWith('.js');
     const command = isJs ? process.execPath : commandPath;
-    const args = isJs ? [commandPath] : commandPath === 'npx' ? ['-y', '@agentclientprotocol/codex-acp'] : [];
+    const args = isJs ? [commandPath] : commandPath === 'npx' ? ['-y', this.spec.npxPackage] : [];
 
-    logger.info('codex-acp', `starting persistent adapter: ${command} ${args.join(' ')}`);
-    const codexPath = bundledCodexPath();
-    const proc = spawn(command, args, {
-      env: {
-        ...process.env,
-        ...(isJs ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-        ...(this.cfg.customHeaders?.noBrowser === '1' ? { NO_BROWSER: '1' } : {}),
-        ...(codexPath ? { CODEX_PATH: codexPath } : {})
-      },
-      windowsHide: true
-    });
+    logger.info(this.spec.logTag, `starting persistent adapter: ${command} ${args.join(' ')}`);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(isJs ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+      ...(this.cfg.customHeaders?.noBrowser === '1' ? { NO_BROWSER: '1' } : {}),
+      ...(this.spec.extraEnv?.() || {})
+    };
+    for (const key of this.spec.stripEnv || []) delete env[key];
+    const proc = spawn(command, args, { env, windowsHide: true });
     const queues = new Map<string, AsyncQueue<AcpEvent>>();
     const permissionHandlers = new Map<string, Runtime['permissionHandlers'] extends Map<string, infer T> ? T : never>();
     const readOnlySessions = new Set<string>();
-    proc.stderr.on('data', (data: Buffer) => logger.debug('codex-acp', data.toString().trim()));
-    proc.on('error', (error) => logger.error('codex-acp', `process error: ${error.message}`));
+    proc.stderr.on('data', (data: Buffer) => logger.debug(this.spec.logTag, data.toString().trim()));
+    proc.on('error', (error) => logger.error(this.spec.logTag, `process error: ${error.message}`));
     proc.on('exit', (code) => {
-      logger.info('codex-acp', `process exited (${code ?? 'signal'})`);
-      for (const queue of queues.values()) queue.push({ type: 'error', error: 'Codex ACP process exited unexpectedly.' });
+      logger.info(this.spec.logTag, `process exited (${code ?? 'signal'})`);
+      for (const queue of queues.values()) queue.push({ type: 'error', error: `${this.spec.displayName} ACP process exited unexpectedly.` });
       this.runtimePromise = null;
     });
 
@@ -341,7 +412,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
       Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>
     );
-    const conn = new sdk.ClientSideConnection(() => new CodexAcpClient(queues, permissionHandlers, readOnlySessions), stream);
+    const conn = new sdk.ClientSideConnection(() => new AcpClientImpl(this.spec, queues, permissionHandlers, readOnlySessions), stream);
     const init = await withTimeout(conn.initialize({
       protocolVersion: ACP_PROTOCOL_VERSION,
       clientInfo: { name: 'DERO Hive', version: '0.1.0' },
@@ -349,13 +420,13 @@ export class CodexAcpAdapter implements ProviderAdapter {
         fs: { readTextFile: true, writeTextFile: true },
         session: { configOptions: { boolean: {} } }
       }
-    }), 30_000, 'ACP initialize timed out. Is codex-acp running?');
+    }), 30_000, `ACP initialize timed out. Is ${this.spec.bareCommand} running?`);
 
     return { proc, conn, init, queues, permissionHandlers, readOnlySessions, sessions: new Map(), authenticationAttempt: null };
   }
 
   private getRuntime(): Promise<Runtime> {
-    if (this.disposed) return Promise.reject(new Error('Codex provider has been disposed'));
+    if (this.disposed) return Promise.reject(new Error(`${this.spec.displayName} provider has been disposed`));
     if (!this.runtimePromise) {
       this.runtimePromise = this.createRuntime().catch((error) => {
         this.runtimePromise = null;
@@ -376,10 +447,11 @@ export class CodexAcpAdapter implements ProviderAdapter {
 
   private async authenticateOnce(runtime: Runtime): Promise<void> {
     const methods = runtime.init.authMethods || [];
-    const method = methods.find((item) => /chatgpt|chat-gpt/i.test(`${item.id} ${item.name}`));
-    if (!method) throw new Error('Codex ACP did not advertise ChatGPT authentication. Ensure NO_BROWSER is not enabled.');
-    logger.info('codex-acp', `starting ChatGPT authentication (${method.id})`);
-    await withTimeout(runtime.conn.authenticate({ methodId: method.id }), 180_000, 'ChatGPT authentication timed out.');
+    const method = methods.find((item) => this.spec.authMethodPattern.test(`${item.id} ${item.name}`))
+      || (this.spec.authFallbackToFirst ? methods[0] : undefined);
+    if (!method) throw new Error(this.spec.authMissingError);
+    logger.info(this.spec.logTag, `starting ${this.spec.displayName} authentication (${method.id})`);
+    await withTimeout(runtime.conn.authenticate({ methodId: method.id }), 180_000, `${this.spec.displayName} authentication timed out.`);
   }
 
   private async newSession(runtime: Runtime, cwd: string): Promise<acp.NewSessionResponse> {
@@ -423,27 +495,37 @@ export class CodexAcpAdapter implements ProviderAdapter {
     let sessionId: string | undefined;
     try {
       const runtime = await this.getRuntime();
-      const response = await withTimeout(this.newSession(runtime, getWorkspaceRoot()), 180_000, 'Codex sign-in or session creation timed out.');
+      const response = await withTimeout(this.newSession(runtime, getWorkspaceRoot()), 180_000, `${this.spec.displayName} sign-in or session creation timed out.`);
       sessionId = response.sessionId;
       const modelOption = findSelectOption(response.configOptions, 'model', 'model');
-      const models = flattenSelectOptions(modelOption).map((item) => item.value);
+      let models = flattenSelectOptions(modelOption).map((item) => item.value);
       const details: Record<string, Partial<ProviderModel>> = {};
       const state: SessionState = { sessionId, model: '', bootstrapped: false, cwd: getWorkspaceRoot() };
 
       for (const model of models) {
-        const options = await this.configureSession(runtime, state, model);
-        const thinkingOptions = thinkingOptionsFromConfig(options);
-        details[model] = { supportsReasoning: thinkingOptions.length > 0, thinkingOptions };
+        try {
+          const options = await this.configureSession(runtime, state, model);
+          const thinkingOptions = thinkingOptionsFromConfig(options);
+          details[model] = { supportsReasoning: thinkingOptions.length > 0, thinkingOptions };
+        } catch (configError) {
+          if (!this.spec.lenientConfig) throw configError;
+          details[model] = {};
+        }
       }
-      if (models.length === 0) throw new Error('No models were reported by Codex ACP.');
+      if (models.length === 0) {
+        if (!this.spec.fallbackModels?.length) throw new Error(`No models were reported by ${this.spec.displayName} ACP.`);
+        // Agent runs on the account default and switches by alias; the session
+        // itself worked, which is what this test is for.
+        models = this.spec.fallbackModels;
+      }
       return { ok: true, models, modelDetails: details };
     } catch (error) {
       const { message, details } = extractAcpError(error);
-      logger.error('codex-acp', `connection test failed: ${message}${details ? ` - ${details}` : ''}`);
+      logger.error(this.spec.logTag, `connection test failed: ${message}${details ? ` - ${details}` : ''}`);
       return {
         ok: false,
         error: details || message,
-        hint: 'Make sure ChatGPT Codex access is enabled for the account, then try Models again.'
+        hint: this.spec.authHint
       };
     } finally {
       if (sessionId) {
@@ -470,7 +552,14 @@ export class CodexAcpAdapter implements ProviderAdapter {
       runtime.sessions.set(req.conversationId, session);
     }
 
-    await this.configureSession(runtime, session, req.model, req.reasoning?.effort);
+    try {
+      await this.configureSession(runtime, session, req.model, req.reasoning?.effort);
+    } catch (configError) {
+      // Lenient agents (Claude Code) may not expose model/effort switches;
+      // the session still runs on the account default.
+      if (!this.spec.lenientConfig) throw configError;
+      logger.debug(this.spec.logTag, `session config skipped: ${extractAcpError(configError).message}`);
+    }
     if (req.planMode) runtime.readOnlySessions.add(session.sessionId);
     else runtime.readOnlySessions.delete(session.sessionId);
     const queue = new AsyncQueue<AcpEvent>();
@@ -528,7 +617,7 @@ export class CodexAcpAdapter implements ProviderAdapter {
     runtime.permissionHandlers.delete(session.sessionId);
     runtime.readOnlySessions.delete(session.sessionId);
     try { await runtime.conn.closeSession({ sessionId: session.sessionId }); }
-    catch (error) { logger.debug('codex-acp', `close session failed: ${String(error)}`); }
+    catch (error) { logger.debug(this.spec.logTag, `close session failed: ${String(error)}`); }
   }
 
   async dispose(): Promise<void> {
@@ -540,5 +629,17 @@ export class CodexAcpAdapter implements ProviderAdapter {
     }
     try { runtime.proc.kill(); } catch { /* best effort */ }
     this.runtimePromise = null;
+  }
+}
+
+export class CodexAcpAdapter extends AcpAdapter {
+  constructor(cfg: ProviderConfig) {
+    super(cfg, CODEX_SPEC);
+  }
+}
+
+export class ClaudeAcpAdapter extends AcpAdapter {
+  constructor(cfg: ProviderConfig) {
+    super(cfg, CLAUDE_SPEC);
   }
 }

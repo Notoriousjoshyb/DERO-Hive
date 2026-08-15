@@ -18,9 +18,13 @@ export default {
           muted: 'var(--fg-muted)',
           subtle: 'var(--fg-subtle)'
         },
+        // Channel-triplet form so Tailwind's opacity modifier composes:
+        // `bg-accent/10` with a bare var() colour is silently DROPPED in v3.
+        // accent-soft / accent-glow stay bare — they are already alpha washes,
+        // so a further /NN on them has no coherent meaning.
         accent: {
-          DEFAULT: 'var(--accent)',
-          hover: 'var(--accent-hover)',
+          DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
+          hover: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
           soft: 'var(--accent-soft)',
           glow: 'var(--accent-glow)'
         },
@@ -28,10 +32,12 @@ export default {
           DEFAULT: 'var(--border)',
           strong: 'var(--border-strong)'
         },
-        success: '#5b9a6a',
-        warn: '#b58e3a',
-        danger: '#b95a4e',
-        info: '#5a86b0'
+        // Themed, not hardcoded — each preset redefines these so status chips
+        // match the palette instead of the default one.
+        success: 'rgb(var(--success) / <alpha-value>)',
+        warn: 'rgb(var(--warn) / <alpha-value>)',
+        danger: 'rgb(var(--danger) / <alpha-value>)',
+        info: 'rgb(var(--info) / <alpha-value>)'
       },
       boxShadow: {
         'elev-sm': 'var(--shadow-sm)',

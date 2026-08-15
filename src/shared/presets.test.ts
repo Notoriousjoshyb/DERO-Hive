@@ -11,8 +11,17 @@ assert.equal(openai!.defaultModel, 'gpt-4o-mini');
 
 const anthropic = findPreset('anthropic');
 assert.notEqual(anthropic, undefined);
-assert.equal(anthropic!.defaultModel, 'claude-sonnet-4-5');
+assert.equal(anthropic!.defaultModel, 'claude-opus-5');
 assert.equal(anthropic!.supportsReasoning, true);
+
+// Gateway defaults are only first-run fallbacks (the live /models fetch replaces
+// them on save), but a wrong id breaks the very first request — so they are
+// pinned to ids verified against each gateway's own catalog.
+const zen = findPreset('opencode-zen');
+assert.equal(zen!.defaultModel, 'claude-opus-5');
+
+const openrouter = findPreset('openrouter');
+assert.equal(openrouter!.defaultModel, 'anthropic/claude-opus-5');
 
 const ollama = findPreset('ollama');
 assert.notEqual(ollama, undefined);

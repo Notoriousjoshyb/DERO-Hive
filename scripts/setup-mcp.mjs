@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
+import { skipAssets } from './lib/assets.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const mcpDir = join(__dirname, '..', 'resources', 'mcp');
@@ -125,6 +126,10 @@ function run(cmd, args, cwd) {
 }
 
 async function main() {
+  if (skipAssets()) {
+    console.log('[mcp] HIVE_SKIP_ASSETS set — skipping bundled MCP server setup');
+    return;
+  }
   if (!existsSync(mcpDir)) {
     mkdirSync(mcpDir, { recursive: true });
   }
