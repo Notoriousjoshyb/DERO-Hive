@@ -104,6 +104,9 @@ interface PendingPermission {
   toolName: string;
   args: unknown;
   description?: string;
+  /** Which conversation is asking — with several running, the prompt is ambiguous without it. */
+  conversationId?: string;
+  projectPath?: string;
 }
 
 export interface ChatTurn {
